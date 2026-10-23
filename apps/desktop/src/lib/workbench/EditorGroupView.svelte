@@ -53,6 +53,7 @@
 	import { isMac } from './keys';
 	import * as cmd from './editorCommands.svelte';
 	import { isUntitled } from './untitled';
+	import { t } from '#lib/i18n/index.ts';
 	import { crumbKeyAction, filePathCrumbs, movedCrumb, sortSymbols, symbolCodicon, symbolSiblings, visibleSymbols, type PathMode, type SymbolSortOrder } from './breadcrumbs';
 	import { crumbFocus } from './breadcrumbsCommands.svelte';
 	import { symbolPath, type Crumb } from '#lib/lsp/convert.ts';
@@ -391,7 +392,7 @@
 		}
 	}
 	const folderItems = $derived(
-		folderMenu ? (folderMenu.entries.length ? folderMenu.entries.map((e) => menuItem(e.rel, e.is_dir ? `${e.name}/` : e.name)) : [menuItem('', '(ว่าง)', { enabled: false })]) : []
+		folderMenu ? (folderMenu.entries.length ? folderMenu.entries.map((e) => menuItem(e.rel, e.is_dir ? `${e.name}/` : e.name)) : [menuItem('', t('legacyWorkbench.editorGroupView.emptyFolder'), { enabled: false })]) : []
 	);
 	function runFolderCrumb(rel: string) {
 		const entry = folderMenu?.entries.find((e) => e.rel === rel);
@@ -507,7 +508,7 @@
 								</button>
 							{:else if action === 'close'}
 								<button
-									aria-label={tab.dirty ? `${label(tab.path)} ยังไม่บันทึก: ปิด` : `ปิด ${label(tab.path)}`}
+									aria-label={tab.dirty ? t('legacyWorkbench.editorGroupView.unsavedClose', { name: label(tab.path) }) : t('legacyWorkbench.editorGroupView.closeTab', { name: label(tab.path) })}
 									class={[
 										'size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)',
 										actionsLeft ? 'order-first' : 'mr-1',
@@ -524,7 +525,7 @@
 									{/if}
 								</button>
 							{:else if tab.dirty && !compact}
-								<span class={['grid size-5 shrink-0 place-items-center', actionsLeft ? 'order-first' : 'mr-1']} aria-label="ยังไม่บันทึก"><span class="size-2 rounded-full bg-current"></span></span>
+								<span class={['grid size-5 shrink-0 place-items-center', actionsLeft ? 'order-first' : 'mr-1']} aria-label={t('legacyWorkbench.editorGroupView.unsaved')}><span class="size-2 rounded-full bg-current"></span></span>
 							{/if}
 						</div>
 					{/each}
@@ -559,7 +560,7 @@
 						data-crumb
 						onkeydown={onCrumbKey}
 						class="rounded px-0.5 whitespace-nowrap hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground) focus-visible:outline-1 focus-visible:outline-(--vscode-focusBorder)"
-						title={at < crumbs.length - 1 ? 'ไฟล์ในโฟลเดอร์นี้' : 'ไฟล์ข้างเคียง'}
+						title={at < crumbs.length - 1 ? t('legacyWorkbench.editorGroupView.filesInFolder') : t('legacyWorkbench.editorGroupView.siblingFiles')}
 						onclick={(e) => {
 							const r = e.currentTarget.getBoundingClientRect();
 							// A folder lists itself; the file name lists its folder (its siblings).
@@ -585,7 +586,7 @@
 				<!-- VS Code's "Open Preview to the Side" in the editor title of a Markdown file (and CSV, like Orca). -->
 				<button
 					class="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
-					title="เปิด preview ด้านข้าง (⌘K V)"
+					title={t('legacyWorkbench.editorGroupView.openPreviewToSide')}
 					onclick={() => (editors.focusGroup(group), commands.run('markdown.showPreviewToSide'))}
 				>
 					<Icon name="openExternal" size={13} />Preview
@@ -631,8 +632,8 @@
 		{#if activePath && emptyUntitled.has(activePath) && settings.get('workbench.editor.empty.hint') === 'text'}
 			<!-- workbench.editor.empty.hint (VS Code's EmptyTextEditorHintContribution) -->
 			<div class="pointer-events-none absolute top-0 left-[64px] z-10 text-[13px] leading-[19px] text-(--vscode-editorGhostText-foreground,var(--vscode-descriptionForeground)) italic">
-				<button class="pointer-events-auto text-(--vscode-textLink-foreground) not-italic hover:underline" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>เลือกภาษา</button>
-				หรือเริ่มพิมพ์ (Select a language, or start typing to dismiss.)
+				<button class="pointer-events-auto text-(--vscode-textLink-foreground) not-italic hover:underline" onclick={() => commands.run('workbench.action.editor.changeLanguageMode')}>{t('legacyWorkbench.editorGroupView.selectLanguage')}</button>
+				{t('legacyWorkbench.editorGroupView.orStartTyping')}
 			</div>
 		{/if}
 		{#if activePath && placeholder}

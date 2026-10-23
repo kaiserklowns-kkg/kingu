@@ -61,6 +61,7 @@ describe('t()', () => {
 		expect(resolveUiLanguage('auto', null)).toBe('en');
 		expect(resolveUiLanguage('th', 'en-US')).toBe('th');
 		expect(resolveUiLanguage('en', 'th-TH')).toBe('en');
-		expect(resolveUiLanguage('fr', 'th-TH')).toBe('th');
+		expect(resolveUiLanguage('fr', 'th-TH')).toBe('en');
+		expect(resolveUiLanguage(undefined, 'th-TH')).toBe('en');
 	});
 });

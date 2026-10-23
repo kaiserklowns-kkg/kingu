@@ -30,11 +30,13 @@ export function formatMessage(message: string, params?: Record<string, ParamValu
 }
 
 /**
- * The UI language for a `kingu.uiLanguage` value: `th` / `en` as set; `auto` (or anything else)
- * follows the OS / WebView language — Thai when it starts with `th`, English otherwise.
+ * The UI language for a `kingu.uiLanguage` value: `th` / `en` as set; `auto` follows the OS /
+ * WebView language — Thai when it starts with `th`, English otherwise. Missing or unknown values
+ * use English, the product default.
  */
 export function resolveUiLanguage(setting: unknown, osLanguage: string | null | undefined): Locale {
 	if (setting === 'th' || setting === 'en') return setting;
+	if (setting !== 'auto') return 'en';
 	return (osLanguage ?? '').toLowerCase().startsWith('th') ? 'th' : 'en';
 }
 

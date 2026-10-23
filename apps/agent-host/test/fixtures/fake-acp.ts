@@ -77,9 +77,9 @@ async function prompt(sessionId: string, text: string) {
 	return { stopReason: 'end_turn' };
 }
 
-const thoughtOptions = (current: string) => [
-	{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fake-model', options: [{ value: 'fake-model', name: 'Fake' }] },
-	{
+const modelOption = () => ({ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'fake-model', options: [{ value: 'fake-model', name: 'Fake' }, { value: 'alt-model', name: 'Alt' }] });
+
+const thoughtOption = (current: string) => ({
 		id: 'reasoning',
 		name: 'Reasoning',
 		category: 'thought_level',
@@ -91,8 +91,9 @@ const thoughtOptions = (current: string) => [
 			{ value: 'high', name: 'High' },
 			{ value: 'extra_high', name: 'Extra High' }
 		]
-	}
-];
+	});
+
+const configOptions = () => [...(process.env.FAKE_ACP_MODEL === '1' ? [modelOption()] : []), ...(process.env.FAKE_ACP_THOUGHT === '1' ? [thoughtOption('medium')] : [])];
 
 async function handle(msg: any) {
 	if (msg.method) process.stderr.write(`got ${msg.method}${msg.method === 'session/set_mode' ? ` ${msg.params.modeId}` : msg.method === 'session/set_config_option' ? ` ${msg.params.configId}=${msg.params.value}` : ''}\n`);
@@ -108,7 +109,7 @@ async function handle(msg: any) {
 					sessionId: SESSION,
 					modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] },
 					models: { currentModelId: 'fake-model', availableModels: [] },
-					...(process.env.FAKE_ACP_THOUGHT === '1' ? { configOptions: thoughtOptions('medium') } : {})
+					...(configOptions().length ? { configOptions: configOptions() } : {})
 				}
 			});
 			update(SESSION, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'init', description: 'Write GEMINI.md', input: null }] });
@@ -121,7 +122,7 @@ async function handle(msg: any) {
 		case 'session/set_mode':
 			return send({ id: msg.id, result: null });
 		case 'session/set_config_option':
-			return send({ id: msg.id, result: { configOptions: thoughtOptions(msg.params.value) } });
+			return send({ id: msg.id, result: { configOptions: configOptions().map((o) => (o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o)) } });
 		case 'session/prompt': {
 			// The skill index Kingu puts first (src/skills.ts) is logged, not echoed.
 			if (msg.params.prompt.some((b: any) => b.type === 'text' && b.text.startsWith('# Skills'))) process.stderr.write('got skills\n');

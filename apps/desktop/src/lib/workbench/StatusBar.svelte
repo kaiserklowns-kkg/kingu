@@ -190,7 +190,7 @@
 	{#if repo && show('status.scm')}
 		<!-- git.showProgress: the running operation; git.enableStatusBarSync: the sync item. -->
 		{#if scm.op && settings.get<boolean>('git.showProgress')}
-			<button class={ITEM} title="คลิกเพื่อยกเลิก (Cancel)" onclick={() => scm.cancel()}>
+			<button class={ITEM} title={t('legacyWorkbench.statusBar.cancelRunning')} onclick={() => scm.cancel()}>
 				<span class="inline-block size-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>{scm.op}
 			</button>
 		{:else if sync && !scm.op && settings.get<boolean>('git.enableStatusBarSync')}

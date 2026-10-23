@@ -15,18 +15,48 @@
 //   summary; the levels the thread's model takes come from `model/list` (an `effort_options` event).
 
 import pkg from '../../package.json' with { type: 'json' };
-import { RpcCallError } from './rpc.ts';
-import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
+import { RpcCallError, JsonRpcPeer, linesOf } from './rpc.ts';
+import { ProcessSession, OPEN_TIMEOUT_MS, spawnChild, type SpawnFn, type TurnEnd } from './session.ts';
 import { codexDecision, codexPolicy, codexToolResult, codexToolView, isObj, num, planTodos, str } from './tools.ts';
 import { elicitAsk } from '../mcpAsks.ts';
-import { codexEffort, codexLevels, normalizeLevel } from '../effort.ts';
-import type { PermissionMode, Usage } from '../protocol.ts';
+import { codexEffort, codexLevels, normalizeLevel, type Effort } from '../effort.ts';
+import type { ModelOption, PermissionMode, Usage } from '../protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Waiting = { turnId: string | null; resolve: (end: TurnEnd) => void };
 
+/** `model/list` rows (hidden ones out) as the chat's model choices, the effort levels attached. */
+function codexModels(rows: unknown): ModelOption[] {
+	const shown = (Array.isArray(rows) ? rows : []).filter(isObj).filter((m) => m.hidden !== true);
+	return shown.flatMap((m) => {
+		const raw = str(m.model);
+		if (!raw || raw.length > 128) return [];
+		const efforts = codexLevels(m.supportedReasoningEfforts);
+		return [{ value: raw, display_name: str(m.displayName)?.trim() || raw, description: str(m.description)?.trim() ?? '', ...(efforts.length ? { efforts } : {}) }];
+	});
+}
+
+/**
+ * Codex's model choices before its first run (`host`'s `list_models`, a new chat's picker): a
+ * throwaway `app-server`, its handshake, `model/list` — which answers before any thread exists.
+ */
+export async function probeModels(spawn: SpawnFn | undefined, command: string, args: string[], cwd: string, env: Record<string, string | undefined> = {}): Promise<ModelOption[]> {
+	const child = (spawn ?? spawnChild)([command, ...args], { cwd, env });
+	const peer = new JsonRpcPeer({ write: (line) => void child.stdin.write(line), lines: linesOf(child.stdout) }, { header: false });
+	try {
+		await peer.request<Obj>('initialize', { clientInfo: { name: 'kingu_desktop', title: 'Kingu', version: pkg.version } }, OPEN_TIMEOUT_MS);
+		peer.notify('initialized');
+		const r = await peer.request<Obj>('model/list', {}, 10_000);
+		return codexModels(r?.data);
+	} finally {
+		child.kill();
+	}
+}
+
 export class CodexSession extends ProcessSession {
 	private threadModel: string | null = null;
+	/** The model the next turn and after run on (`turn/start`'s `model`, a chat picker pick). */
+	private turnModel: string | null = null;
 	private turnId: string | null = null;
 	private waiting: Waiting | null = null;
 	/** `turn/completed` that came before `turn/start` answered. */
@@ -64,11 +94,13 @@ export class CodexSession extends ProcessSession {
 		void this.listEfforts();
 	}
 
-	/** The thread model's reasoning levels (`model/list`), for the chat's effort picker; skipped on failure. */
+	/** The proven models (`model/list`), as a `models` event; then the thread model's effort levels (`effort_options`). */
 	private async listEfforts() {
 		try {
 			const r = await this.peer.request<Obj>('model/list', {}, 10_000);
 			const list = Array.isArray(r?.data) ? r.data.filter(isObj) : [];
+			const models = codexModels(list);
+			if (models.length) this.emit({ kind: 'models', models });
 			const m = list.find((x) => str(x.model) === this.threadModel || str(x.id) === this.threadModel) ?? list.find((x) => x.isDefault === true);
 			if (!m) return;
 			const levels = codexLevels(m.supportedReasoningEfforts);
@@ -80,6 +112,12 @@ export class CodexSession extends ProcessSession {
 		}
 	}
 
+	/** `turn/start` from here on runs on the picked model (its `model`: this turn and the turns after). */
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, extra?: unknown, effort?: Effort) {
+		if (model !== undefined) this.turnModel = model.trim();
+		return super.setOptions(undefined, mode, extra, effort);
+	}
+
 	protected model() {
 		return this.threadModel;
 	}
@@ -89,7 +127,7 @@ export class CodexSession extends ProcessSession {
 		this.early.clear();
 		this.interruptWanted = false;
 		const done = new Promise<TurnEnd>((resolve) => (this.waiting = { turnId: null, resolve }));
-		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy, ...codexEffort(this.effort ?? undefined) });
+		const r = await this.peer.request<Obj>('turn/start', { threadId: this.sessionId, input, approvalPolicy: codexPolicy(this.mode).approvalPolicy, ...(this.turnModel ? { model: this.turnModel } : {}), ...codexEffort(this.effort ?? undefined) });
 		const id = isObj(r?.turn) ? str(r.turn.id) : null;
 		this.turnId = id;
 		if (this.waiting) this.waiting.turnId = id;

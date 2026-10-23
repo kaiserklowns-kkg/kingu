@@ -2,6 +2,7 @@
 // `adeTasks.createFromLinearIssue`. Shapes mirror Rust `linear.rs`.
 
 import { slugify } from '#lib/agent/events.ts';
+import { t } from '#lib/i18n/index.ts';
 import type { IssueComment, IssueLabel } from './issues.ts';
 import type { IssueLink, TaskMeta } from './model.ts';
 
@@ -58,13 +59,13 @@ export function linearTaskTitle(issue: Pick<LinearIssue, 'identifier' | 'title'>
 
 /** The agent's instructions: the issue (title, link, state, description, latest comments) and how to reference it. */
 export function linearPrompt(issue: LinearIssue | LinearIssueDetail): string {
-	const parts = [`แก้ Linear issue ${issue.identifier}: ${issue.title.trim()}`, `ลิงก์: ${issue.url}`];
-	const facts = [issue.state && `สถานะ: ${issue.state}`, issue.priority ? `priority: ${issue.priority_label}` : '', issue.labels.length ? `labels: ${issue.labels.map((l) => l.name).join(', ')}` : '']
+	const parts = [t('legacyAde.linear.title', { identifier: issue.identifier, title: issue.title.trim() }), t('legacyAde.issues.prompt.link', { url: issue.url })];
+	const facts = [issue.state && t('legacyAde.linear.state', { state: issue.state }), issue.priority ? `priority: ${issue.priority_label}` : '', issue.labels.length ? `labels: ${issue.labels.map((l) => l.name).join(', ')}` : '']
 		.filter(Boolean)
 		.join(' · ');
 	if (facts) parts.push(facts);
 	const body = issue.description.trim();
-	parts.push(`## รายละเอียดของ issue\n\n${body || '(ไม่มีรายละเอียด)'}${issue.description_truncated ? '\n\n(ตัดเนื้อหาที่เหลือออก ดูฉบับเต็มที่ลิงก์)' : ''}`);
+	parts.push(t('legacyAde.issues.prompt.details', { body: `${body || t('legacyAde.issues.prompt.emptyBody')}${issue.description_truncated ? t('legacyAde.issues.prompt.truncated') : ''}` }));
 	if ('comments' in issue && issue.comments.length) {
 		let size = 0;
 		const kept: string[] = [];
@@ -75,11 +76,10 @@ export function linearPrompt(issue: LinearIssue | LinearIssueDetail): string {
 			kept.unshift(text);
 		}
 		const omitted = issue.comments_omitted + issue.comments.length - kept.length;
-		if (kept.length) parts.push(`## ความคิดเห็น${omitted ? ` (ล่าสุด ${kept.length} จาก ${kept.length + omitted})` : ''}\n\n${kept.join('\n\n')}`);
+		const latest = omitted ? t('legacyAde.issues.prompt.commentsLatest', { kept: kept.length, total: kept.length + omitted }) : '';
+		if (kept.length) parts.push(t('legacyAde.issues.prompt.commentsSection', { latest, comments: kept.join('\n\n') }));
 	}
-	parts.push(
-		`## สิ่งที่ต้องทำ\n\nแก้ปัญหาตาม issue นี้ใน repository นี้ เพิ่มหรือแก้ test ตามสมควร แล้ว commit โดยใส่ "Fixes ${issue.identifier}" ในข้อความ commit (และใน PR ถ้าสร้าง) เพื่อให้ Linear ปิด issue เมื่อ merge`
-	);
+	parts.push(t('legacyAde.linear.todo', { identifier: issue.identifier }));
 	return parts.join('\n\n');
 }
 

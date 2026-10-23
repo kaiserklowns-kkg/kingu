@@ -143,15 +143,15 @@ describe('tasks from rows', () => {
 		expect(gl).toContain('GitLab issue acme/app#12');
 		expect(gl).toContain('"Closes acme/app#12"');
 		expect(gl).toContain('@kawin (2026-10-01)');
-		expect(gl).toContain('(ล่าสุด 1 จาก 2)');
+		expect(gl).toContain('(latest 1 of 2)');
 		const j = jiraPrompt(jira({ body: '', body_truncated: false }));
 		expect(j).toContain('Jira issue ENG-123');
-		expect(j).toContain('(ไม่มีรายละเอียด)');
-		expect(j).toContain('ขึ้นต้นข้อความ commit ด้วย ENG-123');
+		expect(j).toContain('(no details)');
+		expect(j).toContain('starting the commit message with ENG-123');
 		const p = projectPrompt(item(), { ...issue({ number: 42, body: 'from gh', body_truncated: true }), comments: [], comments_omitted: 0 });
 		expect(p).toContain('"Fixes acme/api#42"');
 		expect(p).toContain('from gh');
-		expect(p).toContain('สถานะใน project: Todo');
+		expect(p).toContain('Status in project: Todo');
 	});
 
 	test('finds tasks per tracker without mixing numbers', () => {

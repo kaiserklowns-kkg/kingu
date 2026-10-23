@@ -84,7 +84,7 @@ function handle(msg: any) {
 			msg.method === 'thread/start' || msg.method === 'thread/resume'
 				? ` ${p.approvalPolicy} ${p.sandbox}${typeof p.developerInstructions === 'string' && p.developerInstructions.startsWith('# Skills') ? ' +skills' : ''}`
 				: msg.method === 'turn/start'
-					? ` ${p.approvalPolicy}${p.effort ? ` effort=${p.effort} summary=${p.summary}` : ''}`
+					? ` ${p.approvalPolicy}${p.effort ? ` effort=${p.effort} summary=${p.summary}` : ''}${p.model ? ` model=${p.model}` : ''}`
 					: '';
 		process.stderr.write(`got ${msg.method}${policy}${msg.jsonrpc ? ' (with jsonrpc)' : ''}\n`);
 	}

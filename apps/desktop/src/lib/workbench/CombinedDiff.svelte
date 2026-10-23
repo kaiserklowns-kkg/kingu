@@ -74,9 +74,9 @@
 <div class="flex h-full flex-col bg-(--vscode-editor-background) text-[13px]">
 	<header class="flex h-9 shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-4">
 		<Icon name="git" size={15} />
-		<span class="font-medium">{history ? history.title : slug ? `การเปลี่ยนแปลงของ kingu/${slug}` : 'การเปลี่ยนแปลงทั้งหมด'}</span>
+		<span class="font-medium">{history ? history.title : slug ? t('legacyWorkbench.combinedDiff.kinguChanges', { slug }) : t('legacyWorkbench.combinedDiff.allChanges')}</span>
 		<span class="font-mono text-xs"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
-		<span class="text-xs text-(--vscode-descriptionForeground)">{files.length} ไฟล์</span>
+		<span class="text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.combinedDiff.nFiles', { count: files.length })}</span>
 		<span class="flex-1"></span>
 		{#if history?.kind === 'stash'}
 			{@const s = history}
@@ -84,17 +84,17 @@
 			<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => stashAction(s.repo, s.index, 'pop')}>{t('scmGit.stashPop')}</button>
 			<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => stashAction(s.repo, s.index, 'drop')}>{t('scmGit.stashDrop')}</button>
 		{/if}
-		<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (collapsed = Object.fromEntries(files.map((f) => [f.path, true])))}>ยุบทั้งหมด</button>
-		<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (collapsed = {})}>กางทั้งหมด</button>
-		<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="รีเฟรช" title="รีเฟรช" onclick={load}><Icon name="refresh" size={14} /></button>
+		<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (collapsed = Object.fromEntries(files.map((f) => [f.path, true])))}>{t('legacyWorkbench.combinedDiff.collapseAll')}</button>
+		<button class="rounded-md px-2 py-0.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (collapsed = {})}>{t('legacyWorkbench.combinedDiff.expandAll')}</button>
+		<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('legacyWorkbench.combinedDiff.refresh')} title={t('legacyWorkbench.combinedDiff.refresh')} onclick={load}><Icon name="refresh" size={14} /></button>
 	</header>
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		{#if error}
-			<p class="p-6 text-(--vscode-errorForeground)">โหลด diff ไม่ได้: {error}</p>
+			<p class="p-6 text-(--vscode-errorForeground)">{t('legacyWorkbench.combinedDiff.loadFailed', { error })}</p>
 		{:else if loading && !files.length}
-			<p class="p-6 text-(--vscode-descriptionForeground)">กำลังโหลด…</p>
+			<p class="p-6 text-(--vscode-descriptionForeground)">{t('legacyWorkbench.combinedDiff.loading')}</p>
 		{:else if !files.length}
-			<p class="p-6 text-(--vscode-descriptionForeground)">ไม่มีการเปลี่ยนแปลง</p>
+			<p class="p-6 text-(--vscode-descriptionForeground)">{t('legacyWorkbench.combinedDiff.noChanges')}</p>
 		{/if}
 		{#each files as f (f.path)}
 			{@const shut = collapsed[f.path]}
@@ -108,14 +108,14 @@
 						<span class="font-mono text-xs"><span class="text-[#73C991]">+{f.added}</span> <span class="text-[#F48771]">−{f.deleted}</span></span>
 					</button>
 					{#if f.status !== 'deleted' || history}
-						<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={history ? `${t('scmGraph.openDiff')} ${f.path}` : `เปิดไฟล์ ${f.path}`} title={history ? t('scmGraph.openDiff') : 'เปิดไฟล์'} onclick={() => open(f)}><Icon name="goToFile" size={14} /></button>
+						<button class="grid size-6 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={history ? `${t('scmGraph.openDiff')} ${f.path}` : t('legacyWorkbench.combinedDiff.openFileAria', { path: f.path })} title={history ? t('scmGraph.openDiff') : t('legacyWorkbench.combinedDiff.openFile')} onclick={() => open(f)}><Icon name="goToFile" size={14} /></button>
 					{/if}
 				</div>
 				{#if !shut}
 					{#if f.binary}
-						<p class="px-4 py-2 text-xs text-(--vscode-descriptionForeground)">ไฟล์ binary</p>
+						<p class="px-4 py-2 text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.combinedDiff.binaryFile')}</p>
 					{:else if !f.hunks.length}
-						<p class="px-4 py-2 text-xs text-(--vscode-descriptionForeground)">{f.status === 'renamed' ? 'ย้ายไฟล์โดยไม่แก้เนื้อหา' : 'ไม่มีเนื้อหาที่เปลี่ยน'}</p>
+						<p class="px-4 py-2 text-xs text-(--vscode-descriptionForeground)">{f.status === 'renamed' ? t('legacyWorkbench.combinedDiff.renamedNoContent') : t('legacyWorkbench.combinedDiff.noContentChanges')}</p>
 					{/if}
 					<table class="kg-selectable w-full border-collapse font-mono text-[12px] leading-[19px]">
 						{#each f.hunks as h, hi (hi)}
@@ -135,7 +135,7 @@
 			</section>
 		{/each}
 		{#if truncated}
-			<p class="px-4 py-3 text-xs text-(--vscode-editorWarning-foreground)">diff ยาวเกิน 2 MB แสดงเฉพาะส่วนแรก — ดูไฟล์ที่เหลือได้ที่ Source Control</p>
+			<p class="px-4 py-3 text-xs text-(--vscode-editorWarning-foreground)">{t('legacyWorkbench.combinedDiff.tooLarge')}</p>
 		{/if}
 	</div>
 </div>

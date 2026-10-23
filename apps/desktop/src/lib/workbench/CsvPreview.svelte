@@ -3,6 +3,7 @@
 	import { delimiterFor, parseCsv } from './csv';
 	import { previewTarget } from './viewers';
 	import { watchSource } from './viewerSource';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { previewKey: key }: { previewKey: string } = $props();
 	const rel = $derived(previewTarget(key));
@@ -25,7 +26,7 @@
 
 <div class="h-full overflow-auto bg-(--vscode-editor-background) text-[13px]">
 	{#if error}
-		<p class="p-6 text-(--vscode-errorForeground)">เปิด preview ไม่ได้: {error}</p>
+		<p class="p-6 text-(--vscode-errorForeground)">{t('legacyWorkbench.csvPreview.previewFailed', { error })}</p>
 	{:else}
 		<table class="kg-selectable border-separate border-spacing-0">
 			<thead class="sticky top-0 z-10 bg-(--vscode-editorGroupHeader-tabsBackground)">
@@ -48,7 +49,13 @@
 			</tbody>
 		</table>
 		<p class="px-3 py-2 text-xs text-(--vscode-descriptionForeground)">
-			{Math.max(0, rows.length - 1).toLocaleString()} แถว · {width} คอลัมน์{rows.length - 1 > ROW_LIMIT ? ` · แสดง ${ROW_LIMIT.toLocaleString()} แถวแรก` : ''}
+			{rows.length - 1 > ROW_LIMIT
+				? t('legacyWorkbench.csvPreview.summaryLimited', {
+						rows: Math.max(0, rows.length - 1).toLocaleString(),
+						columns: width,
+						limit: ROW_LIMIT.toLocaleString()
+					})
+				: t('legacyWorkbench.csvPreview.summary', { rows: Math.max(0, rows.length - 1).toLocaleString(), columns: width })}
 		</p>
 	{/if}
 </div>

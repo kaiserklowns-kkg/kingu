@@ -2,6 +2,7 @@
 // requests with `seq`/`request_seq` matching, events, and reverse requests (runInTerminal).
 
 import type { Event, ProtocolMessage, Request } from './protocol.ts';
+import { t } from '#lib/i18n/index.ts';
 
 export class DapError extends Error {
 	readonly command: string;
@@ -73,7 +74,7 @@ export class DapClient {
 		const reply = (success: boolean, body?: unknown, message?: string) =>
 			this.#send({ seq: this.#seq++, type: 'response', request_seq: req.seq, command: req.command, success, body, message });
 		const handler = this.#reverse.get(req.command);
-		if (!handler) return reply(false, undefined, `Kingu ไม่รองรับ ${req.command}`);
+		if (!handler) return reply(false, undefined, t('legacySettings.debugClient.unsupportedRequest', { command: req.command }));
 		try {
 			reply(true, (await handler(req.arguments)) ?? {});
 		} catch (e) {

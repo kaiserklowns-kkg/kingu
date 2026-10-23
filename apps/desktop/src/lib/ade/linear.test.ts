@@ -43,11 +43,11 @@ describe('Linear slugs, titles and links', () => {
 describe('Linear prompts', () => {
 	test('carry the issue, its facts and the Fixes line', () => {
 		const p = linearPrompt(issue());
-		expect(p).toContain('แก้ Linear issue ENG-123: Fix login');
-		expect(p).toContain('สถานะ: In Progress · priority: High · labels: bug');
+		expect(p).toContain('Fix Linear issue ENG-123: Fix login');
+		expect(p).toContain('State: In Progress · priority: High · labels: bug');
 		expect(p).toContain('Steps:\n1. open Safari');
 		expect(p).toContain('"Fixes ENG-123"');
-		expect(linearPrompt(issue({ description: '', priority: 0, labels: [] }))).toContain('(ไม่มีรายละเอียด)');
+		expect(linearPrompt(issue({ description: '', priority: 0, labels: [] }))).toContain('(no details)');
 	});
 
 	test('keep the latest comments within the budget', () => {
@@ -58,7 +58,7 @@ describe('Linear prompts', () => {
 			comments_omitted: 1
 		};
 		const p = linearPrompt(detail);
-		expect(p).toContain('ล่าสุด 2 จาก 5');
+		expect(p).toContain('latest 2 of 5');
 		expect(p).not.toContain('a (2026-10-01)');
 		expect(p).toContain('d (2026-10-04)');
 	});

@@ -3,6 +3,7 @@
 	// The token is typed into a password field and handed to Rust (Keychain); it is never kept here.
 	import { onMount } from 'svelte';
 	import { team } from './team.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	let dialog: HTMLDialogElement | undefined = $state();
 	let token = $state('');
@@ -62,9 +63,9 @@
 	class="m-auto w-[min(480px,90vw)] rounded-md border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-4 text-(--vscode-quickInput-foreground) shadow-[0_0_8px_2px_rgba(0,0,0,0.36)] backdrop:bg-black/40"
 >
 	<form onsubmit={submit} class="flex flex-col gap-3 text-[13px]">
-		<h2 id="kg-team-signin-title" class="text-sm font-semibold">ลงชื่อเข้าใช้เซิร์ฟเวอร์ทีม</h2>
+		<h2 id="kg-team-signin-title" class="text-sm font-semibold">{t('legacySettings.teamStatus.title')}</h2>
 		<p class="text-(--vscode-descriptionForeground)">
-			วาง personal access token (ขึ้นต้นด้วย <code>kgu_</code>) สำหรับ <span class="break-all">{team.serverUrl}</span>. Token จะถูกเก็บใน macOS Keychain เท่านั้น
+			{t('legacySettings.teamStatus.tokenHint', { server: team.serverUrl })}
 		</p>
 		<label class="flex flex-col gap-1">
 			<span>Token</span>
@@ -82,9 +83,9 @@
 		</label>
 		{#if error}<p id="kg-team-signin-error" role="alert" class="text-(--vscode-errorForeground)">{error}</p>{/if}
 		<div class="flex justify-end gap-2">
-			<button type="button" class="rounded-sm px-3 py-1 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (team.signingIn = false)}>ยกเลิก</button>
+			<button type="button" class="rounded-sm px-3 py-1 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (team.signingIn = false)}>{t('common.cancel')}</button>
 			<button type="submit" disabled={busy || !token.trim()} class="rounded-sm bg-(--vscode-button-background) px-3 py-1 text-(--vscode-button-foreground) disabled:opacity-50"
-				>{busy ? 'กำลังตรวจสอบ…' : 'ลงชื่อเข้าใช้'}</button
+				>{busy ? t('legacySettings.teamStatus.checking') : t('legacySettings.teamStatus.signIn')}</button
 			>
 		</div>
 	</form>

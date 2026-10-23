@@ -19,8 +19,8 @@ test('creates a task from the Now page', async ({ page }) => {
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
 
 	await page.getByRole('button', { name: 'Open in Agents' }).click();
-	await page.getByRole('button', { name: 'งานใหม่', exact: true }).click();
-	const description = page.getByRole('textbox', { name: /อธิบายงาน/ });
+	await page.getByRole('button', { name: 'New task', exact: true }).click();
+	const description = page.getByRole('textbox', { name: /Describe the task/ });
 	await description.fill('E2E Task');
 	await description.press('Enter');
 

@@ -7,6 +7,7 @@
 	import StatusPopover from '#lib/workbench/StatusPopover.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { accounts } from './accounts.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { chipText, footerRows, headline, level, pct, PROVIDER_TITLE, resetLabel, rowLevel, updatedAgo, windows, windowTitle, type Level, type Provider, type UsageRow } from './usage';
 
 	const visible = $derived(settings.get<boolean>('kingu.statusBar.usage.visible') !== false);
@@ -31,9 +32,10 @@
 	};
 
 	function tooltip(r: UsageRow): string {
-		const who = r.account_id ? `${r.label}${r.email ? ` (${r.email})` : ''}` : `บัญชีของคุณเอง${r.email ? ` (${r.email})` : ''}`;
+		const email = r.email ? ` (${r.email})` : '';
+		const who = r.account_id ? `${r.label}${email}` : t('legacySettings.usageStatus.yourAccount', { email });
 		const lines = [`${PROVIDER_TITLE[r.provider]}: ${who}`];
-		for (const w of windows(r.usage)) lines.push(`${windowTitle(w.name)}: ${pct(w.window.used_percent)}% · รีเซ็ตใน ${resetLabel(w.window, accounts.now)}`);
+		for (const w of windows(r.usage)) lines.push(t('legacySettings.usageStatus.windowReset', { name: windowTitle(w.name), pct: pct(w.window.used_percent), reset: resetLabel(w.window, accounts.now) }));
 		if (r.error) lines.push(r.error);
 		lines.push(updatedAgo(r.updated_at, accounts.now));
 		return lines.join('\n');
@@ -63,13 +65,13 @@
 				</span>
 			{/each}
 		</button>
-		<button class="{ITEM} px-1" aria-label="รีเฟรช usage" title="รีเฟรช usage" disabled={accounts.refreshing} onclick={() => accounts.refresh(true)}>
+		<button class="{ITEM} px-1" aria-label={t('legacySettings.usageStatus.refreshUsage')} title={t('legacySettings.usageStatus.refreshUsage')} disabled={accounts.refreshing} onclick={() => accounts.refresh(true)}>
 			<span class={accounts.refreshing ? 'animate-spin' : ''}><Icon name="refresh" size={13} /></span>
 		</button>
 	{:else if accounts.rows.length}
 		<!-- Rows came back, none signed in: a way in (Orca's empty-state CTA). -->
-		<button class={ITEM} title="ยังไม่ได้ login บัญชี AI: เพิ่มบัญชี Claude หรือ Codex" onclick={() => accounts.manage()}>
-			<Icon name="signIn" size={14} />บัญชี AI
+		<button class={ITEM} title={t('legacySettings.usageStatus.signInHint')} onclick={() => accounts.manage()}>
+			<Icon name="signIn" size={14} />{t('legacySettings.usageStatus.aiAccounts')}
 		</button>
 	{/if}
 {/if}
@@ -80,11 +82,11 @@
 			<span class="font-medium">Usage</span>
 			<span class="text-xs text-(--vscode-descriptionForeground)">all agents</span>
 			<span class="flex-1"></span>
-			<button class={ROW_BTN} aria-label="รีเฟรช" title="รีเฟรช" disabled={accounts.refreshing} onclick={() => accounts.refresh(true)}>
+			<button class={ROW_BTN} aria-label={t('legacySettings.usageStatus.refresh')} title={t('legacySettings.usageStatus.refresh')} disabled={accounts.refreshing} onclick={() => accounts.refresh(true)}>
 				<span class={accounts.refreshing ? 'animate-spin' : ''}><Icon name="refresh" size={14} /></span>
 			</button>
 		</div>
-		<div class="flex gap-1 border-b border-(--vscode-widget-border) px-3 py-2" role="radiogroup" aria-label="แสดงใน status bar">
+		<div class="flex gap-1 border-b border-(--vscode-widget-border) px-3 py-2" role="radiogroup" aria-label={t('legacySettings.usageStatus.showInStatusBar')}>
 			{#each [['detailed', 'Detailed'], ['compact', 'Compact']] as [id, label] (id)}
 				<button
 					role="radio"
@@ -102,7 +104,7 @@
 					<span class="min-w-0 flex-1 truncate">
 						{PROVIDER_TITLE[r.provider]}
 						{#if r.account_id}<span class="text-(--vscode-descriptionForeground)"> · {r.label}</span>{/if}
-						{#if r.active}<span class="ml-1 text-[11px] text-(--vscode-descriptionForeground)">ใช้อยู่</span>{/if}
+						{#if r.active}<span class="ml-1 text-[11px] text-(--vscode-descriptionForeground)">{t('legacySettings.usageStatus.inUse')}</span>{/if}
 					</span>
 					{#if h}
 						<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{resetLabel(h.window, accounts.now)}</span>
@@ -126,13 +128,13 @@
 							</div>
 						{/each}
 						<div class="text-(--vscode-descriptionForeground)">
-							{r.email ?? (r.account_id ? r.label : 'บัญชีของคุณเอง')}{#if r.usage?.plan} · แพ็กเกจ {r.usage.plan}{/if} · {updatedAgo(r.updated_at, accounts.now)}
+							{r.email ?? (r.account_id ? r.label : t('legacySettings.usageStatus.yourAccount', { email: '' }))}{#if r.usage?.plan}{t('legacySettings.usageStatus.plan', { plan: r.usage.plan })}{/if} · {updatedAgo(r.updated_at, accounts.now)}
 						</div>
 						{#if r.error}<div class="text-(--vscode-editorWarning-foreground)">{r.error}</div>{/if}
 					</div>
 				{/if}
 			{:else}
-				<p class="px-3 py-2 text-xs text-(--vscode-descriptionForeground)">ยังไม่มีบัญชี AI ที่ login ไว้</p>
+				<p class="px-3 py-2 text-xs text-(--vscode-descriptionForeground)">{t('legacySettings.usageStatus.noAccounts')}</p>
 			{/each}
 		</div>
 		<div class="border-t border-(--vscode-widget-border) py-1">

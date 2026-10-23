@@ -33,7 +33,7 @@ test('closes the active editor tab', async ({ page }) => {
 
 	const tab = page.getByRole('tab', { name: /README\.md/ });
 	await tab.hover();
-	await page.getByRole('button', { name: /^ปิด README\.md/ }).click();
+	await page.getByRole('button', { name: /^Close README\.md/ }).click();
 	await expect(tab).toBeHidden();
 	expect(errors).toEqual([]);
 });

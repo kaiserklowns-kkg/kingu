@@ -78,5 +78,24 @@ export const team = {
 	'team.agent.status.idle': 'Ready',
 	'team.agent.status.stopped': 'Stopped',
 	'team.agent.status.failed': 'Failed',
-	'team.agent.status.done': 'Done'
+	'team.agent.status.done': 'Done',
+
+	// Settings › Account & Team
+	'team.accountPage.title': 'Account & Team',
+	'team.accountPage.intro': 'Syncs only task metadata to the team server; no code or secrets are sent. The token is stored only in the Keychain.',
+	'team.accountPage.status': 'Status',
+	'team.accountPage.notConfigured': 'Team server is not configured',
+	'team.accountPage.checking': 'Checking…',
+	'team.accountPage.signedOut': 'Not signed in',
+	'team.accountPage.offline': 'Signed in · Offline',
+	'team.accountPage.signedIn': 'Signed in',
+	'team.accountPage.pending': '{count|# item|# items} pending',
+	'team.accountPage.refresh': 'Check Again',
+	'team.accountPage.signOut': 'Sign Out',
+	'team.accountPage.signIn': 'Sign In',
+	'team.accountPage.server': 'Server',
+	'team.accountPage.serverUrl': 'Team server URL',
+	'team.accountPage.serverUrlHint': 'Must be HTTPS except http://localhost · kingu.team.serverUrl',
+	'team.accountPage.project': 'Project',
+	'team.accountPage.projectHint': 'This folder’s tasks sync to this project · kingu.team.project'
 } as const;

@@ -239,30 +239,30 @@
 		{#if open.team}
 			{#if !team.serverUrl}
 				<p class="py-1 pr-2 pl-5 text-(--vscode-descriptionForeground)">
-					ตั้งค่า <code>kingu.team.serverUrl</code> แล้วลงชื่อเข้าใช้ทีม เพื่อดู Snap ที่ทีมอนุมัติ
-					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => systemSettings.show('Team')}>เปิดการตั้งค่าทีม</button>
+					{t('legacySettings.snapsSideView.teamServerHint')}
+					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => systemSettings.show('Team')}>{t('legacySettings.snapsSideView.openTeamSettings')}</button>
 				</p>
 			{:else if !team.status?.signed_in}
 				<p class="py-1 pr-2 pl-5 text-(--vscode-descriptionForeground)">
-					ลงชื่อเข้าใช้ทีมด้วย token (kgu_…) เพื่อดู Snap ที่ทีมอนุมัติ
-					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => team.startSignIn()}>ลงชื่อเข้าใช้ทีม</button>
+					{t('legacySettings.snapsSideView.teamSignInHint')}
+					<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => team.startSignIn()}>{t('legacySettings.snapsSideView.teamSignIn')}</button>
 				</p>
 			{:else if snaps.teamError}
-				<p role="alert" class="py-1 pr-2 pl-5 text-(--vscode-errorForeground)">โหลด Snap ของทีมไม่สำเร็จ: {snaps.teamError}</p>
+				<p role="alert" class="py-1 pr-2 pl-5 text-(--vscode-errorForeground)">{t('legacySettings.snapsSideView.teamLoadFailed', { error: snaps.teamError })}</p>
 			{:else if !snaps.teamCatalog}
-				<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">กำลังโหลด…</p>
+				<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">{t('legacySettings.snapsSideView.loading')}</p>
 			{:else}
 				{#if teamMissing.length}
 					<p role="status" class="mx-2 my-1 rounded-sm border border-(--vscode-widget-border) px-2 py-1 text-[0.9em] text-(--vscode-descriptionForeground)">
 						<Icon name="info" size={14} />
-						ทีมกำหนดให้ใช้ {teamMissing.map((t) => t.name).join(', ')} แต่เครื่องนี้ยังไม่ได้ติดตั้ง
+						{t('legacySettings.snapsSideView.teamMissing', { names: teamMissing.map((t) => t.name).join(', ') })}
 					</p>
 				{/if}
 				{#each teamFiltered as t (t.snap_id)}
 					{@const st = teamSnapStatus(t, snaps.list)}
 					<div class="group/row flex items-center gap-2 py-1.5 pr-2 pl-3 hover:bg-(--vscode-list-hoverBackground)">
 						<SnapAvatar snap={{ id: t.snap_id, name: t.name }} size={34} />
-						<div class="flex min-w-0 flex-1 flex-col" title={`${t.git_url}${t.git_ref ? `#${t.git_ref}` : ''} @ ${t.commit_sha}\nอนุมัติโดย ${t.approved_by}${t.note ? `\n${t.note}` : ''}`}>
+						<div class="flex min-w-0 flex-1 flex-col" title={tr('legacySettings.snapsSideView.teamSnapTitle', { url: t.git_url, ref: t.git_ref ? `#${t.git_ref}` : '', commit: t.commit_sha, by: t.approved_by, note: t.note ? `\n${t.note}` : '' })}>
 							<span class="flex min-w-0 items-center gap-1.5">
 								<span class="truncate font-semibold">{t.name}</span>
 								<span class="shrink-0 text-[0.9em] text-(--vscode-descriptionForeground)">v{t.version}</span>
@@ -275,7 +275,7 @@
 					</div>
 				{:else}
 					<p class="py-1 pl-5 text-(--vscode-descriptionForeground)">
-						{query ? 'ไม่พบ Snap ที่ตรงกับคำค้น' : isTeamAdmin ? 'ทีมยังไม่ได้อนุมัติ Snap — วางเมาส์บน Snap ที่ติดตั้งจาก git แล้วกด Approve for Team' : 'ทีมยังไม่ได้อนุมัติ Snap'}
+						{query ? tr('legacySettings.snapsSideView.noSearchResults') : isTeamAdmin ? tr('legacySettings.snapsSideView.noTeamApprovalsAdmin') : tr('legacySettings.snapsSideView.noTeamApprovals')}
 					</p>
 				{/each}
 				<p class="pt-1 pl-5 text-[11px] font-bold text-(--vscode-sideBarTitle-foreground) uppercase">{tr('snapPlatform.library.title')}</p>

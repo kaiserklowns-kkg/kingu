@@ -96,7 +96,7 @@
 		if (id === 'reset') return update(s, undefined);
 		const text = id === 'copyId' ? s.id : `"${s.id}": ${JSON.stringify(shown(s))}`;
 		await navigator.clipboard.writeText(text);
-		status.flash(`คัดลอก ${text} แล้ว`, 3000);
+		status.flash(t('legacySettings.settingsEditor.copied', { text }), 3000);
 	}
 
 	/**
@@ -142,14 +142,14 @@
 			const remove = value === undefined || (scope === 'user' && JSON.stringify(value) === JSON.stringify(s.default));
 			await settings.set(s.id, remove ? undefined : value, scope);
 		} catch (e) {
-			notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+			notifications.error(t('legacySettings.settingsEditor.saveFailed', { error: e instanceof Error ? e.message : String(e) }));
 		}
 	}
 
 	function onNumber(s: SettingSchema, el: HTMLInputElement) {
 		const n = el.valueAsNumber;
 		if (validate(s, n) === undefined) {
-			status.flash(`${s.id}: ค่าไม่ถูกต้อง`);
+			status.flash(t('legacySettings.settingsEditor.invalidValue', { id: s.id }));
 			el.value = String(shown(s));
 			return;
 		}
@@ -170,7 +170,7 @@
 				if (lang) await settings.setLanguage(s.id, lang, shown(s), scope);
 				else await settings.set(s.id, shown(s), scope);
 			} catch (e) {
-				notifications.error(`บันทึกการตั้งค่าไม่สำเร็จ: ${e instanceof Error ? e.message : e}`);
+				notifications.error(t('legacySettings.settingsEditor.saveFailed', { error: e instanceof Error ? e.message : String(e) }));
 			}
 		}
 		openJson();
@@ -179,7 +179,7 @@
 	function openJson() {
 		// The per-repository file lives in the app config dir: it is edited here only.
 		if (scope === 'repo') {
-			status.flash(`การตั้งค่า Repository เก็บที่ ${layer.path || 'config ของ Kingu'} — แก้ไขในหน้านี้`);
+			status.flash(t('legacySettings.settingsEditor.repoSettings', { path: layer.path || t('legacySettings.settingsEditor.kinguConfig') }));
 			return;
 		}
 		void commands.run(scope === 'user' ? 'workbench.action.openSettingsJson' : 'workbench.action.openWorkspaceSettingsFile');
@@ -242,15 +242,15 @@
 			<input
 				bind:value={query}
 				autofocus
-				aria-label="ค้นหาการตั้งค่า"
-				placeholder="ค้นหาการตั้งค่า (Search settings)"
+				aria-label={t('legacySettings.settingsEditor.search')}
+				placeholder={t('legacySettings.settingsEditor.search')}
 				class="h-8 min-w-0 flex-1 rounded-md border pl-8 border-(--vscode-input-border) bg-(--vscode-input-background) pr-2 text-sm text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
 			/>
 			</label>
 			{@render jsonButton()}
 		</div>
 		{/if}
-		<div role="tablist" aria-label="ขอบเขตการตั้งค่า" class="flex items-center gap-1.5 text-[13px]">
+		<div role="tablist" aria-label={t('legacySettings.settingsEditor.scopeAria')} class="flex items-center gap-1.5 text-[13px]">
 			{#each SCOPES as [id, label] (id)}
 				<button
 					role="tab"
@@ -290,7 +290,7 @@
 								{/if}
 								<button
 									class="grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) opacity-0 group-hover/setting:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:opacity-100"
-									aria-label="การทำงานของ {s.id}"
+									aria-label={t('legacySettings.settingsEditor.actionsAria', { id: s.id })}
 									title="More Actions…"
 									aria-haspopup="menu"
 									onclick={(e) => {
@@ -380,7 +380,7 @@
 				{/each}
 				{/each}
 			{:else}
-				<p class="mt-6 text-(--vscode-descriptionForeground)">ไม่พบการตั้งค่าที่ตรงกับ “{query}”</p>
+				<p class="mt-6 text-(--vscode-descriptionForeground)">{t('legacySettings.settingsEditor.noMatches', { query })}</p>
 			{/each}
 		</div>
 	</div>
@@ -400,12 +400,12 @@
 {#snippet alerts()}
 		{#if scopeProblems.length}
 			<p role="alert" class="rounded-sm border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
-				มี {scopeProblems.length} ค่าใน settings.json ที่ใช้ไม่ได้และถูกละไว้: {scopeProblems.map((p) => p.id).join(', ')} (Invalid values fall back to the next layer.)
+				{t('legacySettings.settingsEditor.invalidIgnored', { count: scopeProblems.length, ids: scopeProblems.map((p) => p.id).join(', ') })}
 			</p>
 		{/if}
 		{#if layer.error}
 			<p role="alert" class="rounded-sm border border-(--vscode-editorError-foreground) px-2 py-1 text-xs text-(--vscode-errorForeground)">
-				อ่าน settings.json ไม่ได้ ({layer.error}) — ใช้ค่าล่าสุดที่อ่านได้ แก้ไฟล์ผ่าน Open Settings (JSON)
+				{t('legacySettings.settingsEditor.readFailed', { error: layer.error })}
 			</p>
 		{/if}
 {/snippet}
@@ -428,7 +428,7 @@
 					{/if}
 					<button
 						class="grid size-6 place-items-center rounded-md text-(--vscode-descriptionForeground) opacity-0 group-hover/setting:opacity-100 hover:bg-(--vscode-toolbar-hoverBackground) focus-visible:opacity-100"
-						aria-label="การทำงานของ {s.id}"
+						aria-label={t('legacySettings.settingsEditor.actionsAria', { id: s.id })}
 						title="More Actions…"
 						aria-haspopup="menu"
 						onclick={(e) => {

@@ -87,6 +87,13 @@ class Graph {
 		try {
 			const page = await invoke<GraphPage>('scm_graph_log', r.args({ options: this.#options(0) }));
 			if (my !== this.#seq) return;
+			if (!page) {
+				this.commits = [];
+				this.page = null;
+				this.more = false;
+				this.error = '';
+				return;
+			}
 			const { commits, ...rest } = page;
 			this.page = rest;
 			this.commits = commits;

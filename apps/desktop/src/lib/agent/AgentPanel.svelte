@@ -27,7 +27,8 @@
 	import { claudeModel, CODEBASE_HINT, expandPrompt, fromPick, modePick, pickerAgents, promptAgentPick, promptArgs, promptRequest, typedVariables, type Customizations, type ModePick, type PromptFile } from './customizations.ts';
 	import { linesOf } from './chatPrompt.ts';
 	import { CLAUDE_RUNTIME } from './runtimes.ts';
-	import { modelCatalog } from './modelCatalog.svelte.ts';
+	import { FALLBACK_MODELS } from './modelChoices.ts';
+	import { modelCatalog, probeRuntimeModels } from './modelCatalog.svelte.ts';
 	import { effortState } from './effortChoice.svelte.ts';
 	import { effortLabel, effortRows, type Effort } from './effort.ts';
 	import { modelChoices, modelSublabel } from './modelChoices.ts';
@@ -371,9 +372,10 @@
 		}
 	});
 
-	// Settings load after the panel: pick up the default model once it is known.
+	// Settings load after the panel: pick up the default model once it is known (Claude's only:
+	// another runtime starts with its own default, not a Claude model).
 	$effect(() => {
-		if (!newModel) newModel = chats.defaults().model ?? '';
+		if (!newModel && newRuntime === CLAUDE_RUNTIME) newModel = chats.defaults().model ?? '';
 	});
 
 	// A chat opened after a restart: rebuild its list from the saved transcript.
@@ -413,7 +415,8 @@
 		optionNote = '';
 		resetInput();
 		const d = chats.defaults();
-		newModel = d.model ?? '';
+		// The default model is Claude's: another runtime starts with its own default, not a Claude model.
+		newModel = newRuntime === CLAUDE_RUNTIME ? (d.model ?? '') : '';
 		newEffort = null;
 		newMode = modeOf(d.permissionMode);
 		const preset = settings.get<string>('chat.newSession.defaultMode');
@@ -550,7 +553,7 @@
 			if (!chatMeta) {
 				const where: ChatCwd = newWhere ? { kind: 'task', slug: newWhere } : { kind: 'folder' };
 				const message = await outgoing(text, attachments, where.kind === 'folder', extra);
-				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model, permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent, effort: newEffort });
+				const id = await chats.create({ prompt: title, cwd: where, model: newRuntime === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || (newRuntime === CLAUDE_RUNTIME ? chats.defaults().model : ''), permissionMode: permissionFor(newMode, approval), message, runtime: newRuntime, agent: newAgent, effort: newEffort });
 				if (id) {
 					select(id);
 					resetInput();
@@ -881,8 +884,11 @@
 				return g.models.map((m) => ({ id: m.value, label: m.label, description: m.description, section, checked: m.value === currentModel }));
 			});
 		}
-		// The second line only when it says something the label does not (no "claude-opus-5-5" twice).
-		return modelChoices(chatMeta ? chatMeta.model : newModel, chats.defaults().model, modelCatalog.list).map((m) => {
+		// Each runtime keeps its own models (the cached list of its last session); only Claude's
+		// alias fallback and default model, not on other runtimes.
+		const catalog = modelCatalog.for(runtimeId);
+		const listed = catalog.length || runtimeId !== CLAUDE_RUNTIME ? catalog : FALLBACK_MODELS;
+		return modelChoices(chatMeta ? chatMeta.model : newModel, runtimeId === CLAUDE_RUNTIME ? chats.defaults().model : undefined, listed).map((m) => {
 			const description = modelSublabel(m);
 			return { id: m.value, label: m.label, ...(description ? { description } : {}), checked: m.value === currentModel };
 		});
@@ -899,7 +905,7 @@
 	const effort = $derived(
 		effortState(
 			runtimeId,
-			chatMeta ? chatMeta.model : runtimeId === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || chats.defaults().model,
+			chatMeta ? chatMeta.model : runtimeId === ARKAI_RUNTIME ? arkaiDefault(arkaiProviders.list, newModel) : newModel.trim() || (runtimeId === CLAUDE_RUNTIME ? chats.defaults().model : ''),
 			chatMeta ? chatMeta.effort : newEffort
 		)
 	);
@@ -951,6 +957,8 @@
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
 			if (chatMeta) newChat();
 			newRuntime = id;
+			// Models are per runtime: another agent starts with its own default.
+			if (id !== CLAUDE_RUNTIME) newModel = '';
 		}
 	});
 	const steerable = $derived(canSteer(runtimeProtocol));
@@ -1059,6 +1067,7 @@
 			if (id.startsWith('runtime:')) {
 				newChat();
 				newRuntime = id.slice(8);
+				if (newRuntime !== CLAUDE_RUNTIME) newModel = '';
 			}
 			return;
 		}
@@ -1122,6 +1131,8 @@
 	function openModelPicker() {
 		chatTips.record('modelPicker');
 		menuOpen = 'model';
+		// A runtime with no cached list asks its agent once (a throwaway session); the picker refills live.
+		probeRuntimeModels(runtimeId);
 	}
 
 	/** The history list (the header's title, ⋯ and New Chat's ⌄). */

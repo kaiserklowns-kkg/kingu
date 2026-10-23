@@ -650,6 +650,21 @@ impl AgentHost {
     proc.request("mcp_query", params, MCP_QUERY_TIMEOUT)
   }
 
+  /// The model choices of an ACP/Codex agent (`list_models`, spoken only after its session opens):
+  /// a throwaway session in the sidecar, no run; for a new chat's picker before the first message.
+  /// `env`/`unset_env` are the runtime's account like a start's.
+  pub fn list_models(&self, runtime: &Value, cwd: &str, env: Option<&SecretEnv>, unset_env: &[String]) -> Result<Value, String> {
+    let proc = self.ensure()?;
+    let mut params = json!({ "runtime": runtime, "cwd": cwd });
+    if let Some(env) = env {
+      params["env"] = serde_json::to_value(env).map_err(|e| e.to_string())?;
+    }
+    if !unset_env.is_empty() {
+      params["unsetEnv"] = json!(unset_env);
+    }
+    proc.request("list_models", params, MODELS_TIMEOUT)
+  }
+
   /// Stops the current turn; the session stays open for follow-ups.
   pub fn interrupt(&self, run_id: u32) -> Result<(), String> {
     self.run_request(run_id, "interrupt", json!({}))
@@ -686,6 +701,8 @@ pub const MCP_ACTIONS: &[&str] = &["accept", "decline", "cancel"];
 const MCP_REMEMBER: &[&str] = &["session", "always", "never"];
 /// An `mcp_query` may take this long (a stdio server started for it, then its lists).
 const MCP_QUERY_TIMEOUT: Duration = Duration::from_secs(60);
+/// A `list_models` probe may take this long (the agent starts, then opens its session).
+const MODELS_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn mcp_answer_params(request_id: &str, action: &str, content: Option<&Value>, remember: Option<&str>) -> Result<Value, String> {
   if !MCP_ACTIONS.contains(&action) {

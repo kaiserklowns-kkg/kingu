@@ -18,11 +18,12 @@
 //   `session/set_config_option`. Without one the chat shows no effort picker.
 
 import pkg from '../../package.json' with { type: 'json' };
-import { RpcCallError } from './rpc.ts';
-import { ProcessSession, OPEN_TIMEOUT_MS, type TurnEnd } from './session.ts';
+import { RpcCallError, JsonRpcPeer, linesOf } from './rpc.ts';
+import { ProcessSession, OPEN_TIMEOUT_MS, SessionError, UNSUPPORTED, spawnChild, type SpawnFn, type TurnEnd } from './session.ts';
 import { acpMcpServers, acpOptionFor, acpOptions, acpToolOutput, acpToolView, agentModeFor, isObj, num, planTodos, str } from './tools.ts';
 import { acpThoughtLevels, type Effort } from '../effort.ts';
-import type { PermissionMode } from '../protocol.ts';
+import { modelOptions } from '../normalize.ts';
+import type { ModelOption, PermissionMode } from '../protocol.ts';
 
 export const ACP_PROTOCOL_VERSION = 1;
 /** JSON-RPC error the ACP spec uses for "sign in first". */
@@ -30,12 +31,58 @@ const AUTH_REQUIRED = -32000;
 
 type Obj = Record<string, unknown>;
 
+/**
+ * The agent's model setting (ACP session config options, category `model`, v1 names the field
+ * `id` and v2 `configId`): the choices and the one in effect. Null when the agent advertises none.
+ */
+function modelSetting(configOptions: unknown): { configId: string; choices: { value: string; name: string }[]; current: string | null } | null {
+	if (!Array.isArray(configOptions)) return null;
+	for (const o of configOptions) {
+		if (!o || typeof o !== 'object') continue;
+		const opt = o as Record<string, unknown>;
+		const configId = typeof opt.id === 'string' ? opt.id : typeof opt.configId === 'string' ? opt.configId : null;
+		if (opt.category !== 'model' || !configId || !Array.isArray(opt.options)) continue;
+		// Options may come flat or in groups (`{group, options}`).
+		const flat = opt.options.flatMap((x) => (x && typeof x === 'object' && Array.isArray((x as { options?: unknown }).options) ? (x as { options: unknown[] }).options : [x]));
+		const choices = flat.filter((x): x is { value: string; name: string } => !!x && typeof x === 'object' && typeof (x as { value?: unknown }).value === 'string').map((x) => ({ value: (x as { value: string }).value, name: typeof (x as { name?: unknown }).name === 'string' ? (x as { name: string }).name : String((x as { value?: unknown }).value) }));
+		if (!choices.length) continue;
+		const current = typeof opt.currentValue === 'string' ? (choices.find((c) => c.value === opt.currentValue)?.value ?? null) : null;
+		return { configId, choices, current };
+	}
+	return null;
+}
+
+/**
+ * The agent's model choices before its first run (`host`'s `list_models`, a new chat's picker):
+ * a throwaway process, one handshake up to `session/new` — where the config options arrive — and
+ * no turn runs. `session/new` is the earliest point ACP names the models.
+ */
+export async function probeModels(spawn: SpawnFn | undefined, command: string, args: string[], cwd: string, env: Record<string, string | undefined> = {}): Promise<ModelOption[]> {
+	const child = (spawn ?? spawnChild)([command, ...args], { cwd, env });
+	const peer = new JsonRpcPeer({ write: (line) => void child.stdin.write(line), lines: linesOf(child.stdout) }, { header: true });
+	try {
+		const init = await peer.request<Obj>(
+			'initialize',
+			{ protocolVersion: ACP_PROTOCOL_VERSION, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: 'kingu', title: 'Kingu', version: pkg.version } },
+			OPEN_TIMEOUT_MS
+		);
+		if (num(init?.protocolVersion) !== ACP_PROTOCOL_VERSION) throw new Error(`the agent speaks ACP version ${String(init?.protocolVersion)}, Kingu speaks ${ACP_PROTOCOL_VERSION}`);
+		const r = await peer.request<Obj>('session/new', { cwd, mcpServers: [] }, OPEN_TIMEOUT_MS);
+		const models = modelSetting(r?.configOptions);
+		return models ? modelOptions(models.choices.map((c) => ({ value: c.value, displayName: c.name, description: '' }))) : [];
+	} finally {
+		child.kill();
+	}
+}
+
 export class AcpSession extends ProcessSession {
 	private caps: Obj = {};
 	/** Replayed history (`session/load`) is not shown again. */
 	private loading = false;
 	private models: Obj | null = null;
 	private modes: Obj | null = null;
+	/** The session's config options (the agent's own model / thought level knobs). */
+	private configOptions: unknown = null;
 	/** The agent's thought level setting (session config options), when it has one. */
 	private thought: ReturnType<typeof acpThoughtLevels> = null;
 	private planRows = 0;
@@ -77,8 +124,7 @@ export class AcpSession extends ProcessSession {
 				const r = await this.peer.request<Obj>('session/new', base, OPEN_TIMEOUT_MS);
 				this.sessionId = str(r?.sessionId);
 				if (!this.sessionId) throw new Error('the agent opened no session');
-				this.session(r);
-			}
+				this.session(r);			}
 		} catch (e) {
 			if (e instanceof RpcCallError && e.code === AUTH_REQUIRED) {
 				throw new Error(`ต้องลงชื่อเข้าใช้ ${this.program()} ก่อน: เปิดในเทอร์มินัลแล้วลงชื่อเข้าใช้ (Sign in to ${this.program()} in a terminal first.) ${e.message}`);
@@ -87,10 +133,41 @@ export class AcpSession extends ProcessSession {
 		}
 		const modeId = agentModeFor(this.mode, this.modes?.availableModes);
 		if (modeId && modeId !== this.modes?.currentModeId) await this.setAgentMode(modeId);
+		this.reportModels();
 		if (this.thought) {
 			if (this.effort && this.effort !== this.thought.current) await this.effortChanged(this.effort).catch((e) => this.log(`effort not passed on: ${e instanceof Error ? e.message : 'error'}`));
 			this.reportEffort();
 		}
+	}
+
+	/** The agent's model choices (session config options, category `model`), as a `models` event. */
+	private reportModels() {
+		const m = modelSetting(this.configOptions);
+		// shortcut: an agent advertising models only in the legacy `models` field of session/new gets no picker
+		if (!m) return;
+		this.emit({ kind: 'models', models: m.choices.map((c) => ({ value: c.value, display_name: c.name, description: '' })) });
+		this.models = { currentModelId: m.current, availableModels: m.choices };
+	}
+
+	private async modelChanged(value: string) {
+		const m = modelSetting(this.configOptions);
+		if (!m) throw new Error('this agent has no model to switch to');
+		const r = await this.peer.request<Obj>('session/set_config_option', { sessionId: this.sessionId, configId: m.configId, value }, OPEN_TIMEOUT_MS);
+		this.models = { currentModelId: value, availableModels: m.choices };
+		if (Array.isArray(r?.configOptions)) {
+			this.configOptions = r.configOptions;
+			this.thought = acpThoughtLevels(r.configOptions);
+		}
+	}
+
+	/** Another runtime's model (and mode / effort) change, from the chat's pickers. */
+	async setOptions(model: string | undefined, mode: PermissionMode | undefined, _extra?: unknown, effort?: Effort) {
+		if (model !== undefined) {
+			await this.modelChanged(model).catch((e) => {
+				throw new SessionError(UNSUPPORTED, e instanceof Error ? e.message : String(e));
+			});
+		}
+		return super.setOptions(undefined, mode, _extra, effort);
 	}
 
 	/** The levels the agent offers (none: the chat hides its effort picker). */
@@ -115,7 +192,10 @@ export class AcpSession extends ProcessSession {
 		if (!isObj(r)) return;
 		if (isObj(r.modes)) this.modes = r.modes;
 		if (isObj(r.models)) this.models = r.models;
-		if (Array.isArray(r.configOptions)) this.thought = acpThoughtLevels(r.configOptions);
+		if (Array.isArray(r.configOptions)) {
+			this.configOptions = r.configOptions;
+			this.thought = acpThoughtLevels(r.configOptions);
+		}
 	}
 
 	protected model() {

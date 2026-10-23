@@ -24,6 +24,7 @@
 	import { layout } from './layout.svelte';
 	import { editorLabel } from './editorLabel';
 	import { fileOf, isDiffKey } from './scm';
+	import { t } from '#lib/i18n/index.ts';
 
 	type Item = {
 		label: string;
@@ -199,11 +200,15 @@
 				}));
 			}
 			case 'line': {
-				if (!editors.active) return [{ label: 'เปิดไฟล์ก่อนแล้วจึงไปบรรทัดได้ (Open a text editor first to go to a line.)', run: () => {} }];
+				if (!editors.active) return [{ label: t('legacyWorkbench.quickInput.openEditorForLine'), run: () => {} }];
 				const { line, column } = m;
 				return [
 					{
-						label: line ? `ไปบรรทัด ${line}${column ? `, คอลัมน์ ${column}` : ''} (Go to line ${line}${column ? `, character ${column}` : ''})` : `บรรทัดปัจจุบัน ${editors.cursor.line} คอลัมน์ ${editors.cursor.column} พิมพ์เลขบรรทัด เช่น :42 หรือ :42:5`,
+						label: line
+							? column
+								? t('legacyWorkbench.quickInput.gotoLineColumn', { line, column })
+								: t('legacyWorkbench.quickInput.gotoLine', { line })
+							: t('legacyWorkbench.quickInput.currentLine', { line: editors.cursor.line, column: editors.cursor.column }),
 						preview: line
 							? () => {
 									previewFrom ??= { ...editors.cursor };
@@ -215,8 +220,16 @@
 				];
 			}
 			case 'symbol': {
-				if (!editors.active || isDiffKey(editors.active)) return [{ label: 'เปิดไฟล์ก่อนแล้วจึงไปที่สัญลักษณ์ได้ (Open a text editor first to go to a symbol.)', run: () => {} }];
-				if (!docSymbols.list.length) return [{ label: lsp.hasServer(editors.language) ? 'ไม่มีสัญลักษณ์ในไฟล์นี้ หรือ language server ยังไม่พร้อม (No editor symbols)' : 'ไฟล์นี้ไม่มี language server จึงไม่มีสัญลักษณ์ (No editor symbols)', run: () => {} }];
+				if (!editors.active || isDiffKey(editors.active)) return [{ label: t('legacyWorkbench.quickInput.openEditorForSymbol'), run: () => {} }];
+				if (!docSymbols.list.length)
+					return [
+						{
+							label: lsp.hasServer(editors.language)
+								? t('legacyWorkbench.quickInput.noSymbols')
+								: t('legacyWorkbench.quickInput.noSymbolServer'),
+							run: () => {}
+						}
+					];
 				return pickSymbols(docSymbols.list, m.query, m.byKind).map(({ symbol: s, match, separator }) => ({
 					label: s.name,
 					detail: [SYMBOL_KIND_NAMES[s.kind], s.container].filter(Boolean).join(' · '),
@@ -232,7 +245,16 @@
 			}
 			case 'workspaceSymbol': {
 				if (!wsSymbols.list.length)
-					return [{ label: wsSymbols.busy ? 'กำลังค้นหาสัญลักษณ์… (Searching symbols…)' : lsp.hasWorkspaceSymbols() ? 'ไม่พบสัญลักษณ์ที่ตรงกัน (No matching workspace symbols)' : 'ยังไม่มี language server ที่ค้นหาสัญลักษณ์ได้ เปิดไฟล์ของภาษานั้นก่อน (No language server that searches symbols is running)', run: () => {} }];
+					return [
+						{
+							label: wsSymbols.busy
+								? t('legacyWorkbench.quickInput.searchingSymbols')
+								: lsp.hasWorkspaceSymbols()
+									? t('legacyWorkbench.quickInput.noMatchingSymbols')
+									: t('legacyWorkbench.quickInput.noWorkspaceSymbolServer'),
+							run: () => {}
+						}
+					];
 				const ranked = m.query ? rank(m.query, wsSymbols.list, (s) => s.name, 200) : wsSymbols.list.slice(0, 200).map((item) => ({ item, match: undefined }));
 				return ranked.map(({ item: s, match }) => ({
 					label: s.name,
@@ -333,10 +355,10 @@
 	const placeholder = $derived(
 		quick.picker?.placeholder ??
 			(mode?.kind === 'symbol'
-				? 'ไปที่สัญลักษณ์ในไฟล์ พิมพ์ : เพื่อแยกตามชนิด (Go to Symbol in Editor)'
+				? t('legacyWorkbench.quickInput.placeholderSymbol')
 				: mode?.kind === 'workspaceSymbol'
-					? 'ไปที่สัญลักษณ์ใน workspace (Go to Symbol in Workspace)'
-					: 'ค้นหาไฟล์ตามชื่อ (พิมพ์ > คำสั่ง, : บรรทัด, @ สัญลักษณ์, # สัญลักษณ์ทั้ง workspace, ? วิธีใช้)')
+					? t('legacyWorkbench.quickInput.placeholderWorkspaceSymbol')
+					: t('legacyWorkbench.quickInput.placeholderFiles'))
 	);
 </script>
 
@@ -361,11 +383,11 @@
 			type={quick.picker?.password ? 'password' : 'text'}
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
-			aria-label="ค้นหาไฟล์ พิมพ์ > เพื่อดูคำสั่ง : เพื่อไปบรรทัด @ เพื่อไปที่สัญลักษณ์ หรือ ? เพื่อดูวิธีใช้"
+			aria-label={t('legacyWorkbench.quickInput.searchAria')}
 			{placeholder}
 			class="h-8 w-full rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>
-		<ul bind:this={list} role="listbox" aria-label="ผลลัพธ์" class="mt-1.5 max-h-[440px] overflow-y-auto">
+		<ul bind:this={list} role="listbox" aria-label={t('legacyWorkbench.quickInput.results')} class="mt-1.5 max-h-[440px] overflow-y-auto">
 			{#each items as item, i (i)}
 				<li role="option" aria-selected={i === index} class={[item.separator && i > 0 && 'mt-px border-t border-(--vscode-widget-border)']}>
 					<button
@@ -387,7 +409,7 @@
 					</button>
 				</li>
 			{:else}
-				<li class="px-1.5 py-1 text-(--vscode-descriptionForeground)">ไม่พบผลลัพธ์</li>
+				<li class="px-1.5 py-1 text-(--vscode-descriptionForeground)">{t('legacyWorkbench.quickInput.noResults')}</li>
 			{/each}
 		</ul>
 	</div>

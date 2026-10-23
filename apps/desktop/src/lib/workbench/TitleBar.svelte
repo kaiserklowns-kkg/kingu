@@ -259,9 +259,14 @@
 
 	const account = $derived.by(() => {
 		const s = team.status;
-		if (!s) return { label: 'บัญชี: ยังไม่ได้ตั้งค่าเซิร์ฟเวอร์ทีม (kingu.team.serverUrl)', signedIn: false };
-		if (!s.signed_in) return { label: `บัญชี: ยังไม่ได้ลงชื่อเข้าใช้ทีม (${s.server})`, signedIn: false };
-		return { label: `บัญชี: ลงชื่อเข้าใช้ทีมแล้ว (${s.server})${s.online ? '' : ' — ออฟไลน์'}`, signedIn: true };
+		if (!s) return { label: translate('legacyWorkbench.titleBar.accountNoServer'), signedIn: false };
+		if (!s.signed_in) return { label: translate('legacyWorkbench.titleBar.accountSignedOut', { server: s.server }), signedIn: false };
+		return {
+			label: s.online
+				? translate('legacyWorkbench.titleBar.accountSignedIn', { server: s.server })
+				: translate('legacyWorkbench.titleBar.accountSignedInOffline', { server: s.server }),
+			signedIn: true
+		};
 	});
 
 	// --- Menus ---------------------------------------------------------------------------------
@@ -498,7 +503,7 @@
 					</button>
 				{/if}
 				{#if shown('accounts')}
-					<button aria-label={`${account.label} · บัญชี AI`} title={`${account.label}\nคลิก: บัญชี AI (Claude, Codex) และทีม`} class={[ACTION, 'relative']} onclick={() => showAccountsMenu()}>
+					<button aria-label={translate('legacyWorkbench.titleBar.aiAccount', { account: account.label })} title={translate('legacyWorkbench.titleBar.aiAccountTitle', { account: account.label })} class={[ACTION, 'relative']} onclick={() => showAccountsMenu()}>
 						<Codicon id="accounts-view-bar-icon" size={16} />
 						{#if account.signedIn}
 							<span class="absolute right-0.5 bottom-0.5 size-1.5 rounded-full bg-(--vscode-activityBarBadge-background)"></span>

@@ -3,8 +3,15 @@
 	// and a click that shows or hides the notification center (NotificationToasts.svelte).
 	import Icon from './Icon.svelte';
 	import { notifications } from './notifications.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
-	const label = $derived(notifications.doNotDisturb ? 'การแจ้งเตือน: ห้ามรบกวน (Do Not Disturb)' : notifications.unread ? `การแจ้งเตือน: ใหม่ ${notifications.unread} รายการ` : 'การแจ้งเตือน (No Notifications)');
+	const label = $derived(
+		notifications.doNotDisturb
+			? t('legacyWorkbench.notificationsBell.doNotDisturb')
+			: notifications.unread
+				? t('legacyWorkbench.notificationsBell.unread', { count: notifications.unread })
+				: t('legacyWorkbench.notificationsBell.none')
+	);
 </script>
 
 <button

@@ -46,7 +46,13 @@
 		},
 		{ id: 'arkai', label: 'Arkai', icon: 'agent' },
 		{ id: 'terminal', label: 'Terminal', icon: 'terminal' },
-		{ id: 'account', label: 'บัญชีและทีม', icon: 'account' },
+		{
+			id: 'account',
+			get label() {
+				return t('team.accountPage.title');
+			},
+			icon: 'account'
+		},
 		{
 			id: 'accounts',
 			get label() {

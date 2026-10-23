@@ -168,12 +168,12 @@
 	function askDiscard(key: string, resources: Resource[]) {
 		const untracked = resources.some((r) => r.entry.worktree === '?');
 		const paths = resources.map((r) => r.entry.path);
-		const name = resources.length === 1 ? splitPath(paths[0])[0] : `${resources.length} ไฟล์`;
+		const name = resources.length === 1 ? splitPath(paths[0])[0] : t('legacyWorkbench.scmView.nFiles', { count: resources.length });
 		const text = untracked
 			? toTrash
-				? `ย้าย ${name} ไปถังขยะ? ไฟล์ที่ยังไม่ track จะถูกย้ายไปถังขยะ`
-				: `ลบ ${name} ถาวร? ไฟล์ที่ยังไม่ track จะถูกลบและกู้คืนไม่ได้`
-			: `ทิ้งการแก้ไขใน ${name}? กู้คืนไม่ได้`;
+				? t('legacyWorkbench.scmView.discardToTrash', { name })
+				: t('legacyWorkbench.scmView.discardPermanently', { name })
+			: t('legacyWorkbench.scmView.discardChanges', { name });
 		confirming = { key, paths, untracked, text };
 	}
 
@@ -312,7 +312,7 @@
 {/snippet}
 
 {#snippet confirmBox(c: Confirm)}
-	<div role="alertdialog" aria-label="ยืนยันการทิ้งการแก้ไข" class="mx-2 my-1 flex flex-col gap-1.5 rounded border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2">
+	<div role="alertdialog" aria-label={t('legacyWorkbench.scmView.discardConfirm')} class="mx-2 my-1 flex flex-col gap-1.5 rounded border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2">
 		<p>{c.text}</p>
 		<div class="flex justify-end gap-1.5">
 			<button class="rounded-sm px-2 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (confirming = null)}>Cancel</button>
@@ -429,7 +429,7 @@
 <section class="flex min-h-0 flex-1 flex-col">
 	{#if !source && !folderScm.loaded}
 		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
-			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
+			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{t('legacyWorkbench.scmView.readingGitStatus')}
 		</p>
 	{:else if !source && repositories.length && (showList || shown[0] !== folderScm.primary || folderScm.primary === null)}
 		<!-- Several repositories: the Repositories view (its own collapsible, resizable section, as
@@ -457,10 +457,10 @@
 		</div>
 	{:else if !scm.loaded}
 		<p class="flex items-center gap-2 px-5 py-2 text-(--vscode-descriptionForeground)">
-			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>กำลังอ่านสถานะ git…
+			<span class="size-3 animate-spin rounded-full border-2 border-current border-t-transparent"></span>{t('legacyWorkbench.scmView.readingGitStatus')}
 		</p>
 	{:else if !scm.repo && !source && folderScm.disabled}
-		<p class="px-5 py-1 leading-normal text-(--vscode-descriptionForeground)">Git ถูกปิดอยู่ เปิดได้ที่การตั้งค่า git.enabled (Git is disabled.)</p>
+		<p class="px-5 py-1 leading-normal text-(--vscode-descriptionForeground)">{t('legacyWorkbench.scmView.gitDisabled')}</p>
 	{:else if !scm.repo && !source && !workspace.root}
 		<!-- VS Code's welcome view with no folder open. -->
 		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
@@ -472,8 +472,8 @@
 		<!-- VS Code's welcome view for a folder without a repository. -->
 		<div class="flex flex-col items-center gap-2 px-6 py-8 text-center text-(--vscode-descriptionForeground)">
 			<span class="text-(--vscode-foreground) opacity-70"><Icon name="git" size={32} /></span>
-			<p class="text-(--vscode-foreground)">โฟลเดอร์นี้ยังไม่เป็น git repository</p>
-			<p class="text-xs leading-relaxed">สร้าง repository เพื่อใช้ Source Control (git) ได้ หรือ clone repository จาก URL</p>
+			<p class="text-(--vscode-foreground)">{t('legacyWorkbench.scmView.noRepo')}</p>
+			<p class="text-xs leading-relaxed">{t('legacyWorkbench.scmView.noRepoBody')}</p>
 			<button
 				class="mt-1 h-[26px] w-full rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110 disabled:opacity-50"
 				disabled={folderScm.busy || !!source}
@@ -529,7 +529,7 @@
 				</div>
 				{#each warnings.slice(0, 1) as w (w.line)}
 					<p class="rounded-sm border border-(--vscode-inputValidation-warningBorder,var(--vscode-editorWarning-foreground)) px-1.5 py-0.5 text-xs text-(--vscode-editorWarning-foreground)">
-						บรรทัด {w.line}: {w.message}
+						{t('legacyWorkbench.scmView.warningLine', { line: w.line, message: w.message })}
 					</p>
 				{/each}
 			{/if}
@@ -561,7 +561,7 @@
 				])}
 			{/if}
 			{@render group('changes', 'Changes', changeList, [
-				{ icon: 'files', label: 'ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว', run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
+				{ icon: 'files', label: t('legacyWorkbench.scmView.viewAllChanges'), run: () => (appMode.setMode('workbench'), editors.open(changesKey(), { preview: false })), hidden: !scm.groups.changes.length && !scm.groups.staged.length },
 				{ icon: 'discard', label: 'Discard All Changes', run: () => askDiscard('group:changes', changeList), hidden: !changeList.length },
 				{ icon: 'plus', label: 'Stage All Changes', run: () => scm.stage(changeList.map((r) => r.entry.path)), hidden: !changeList.length }
 			])}

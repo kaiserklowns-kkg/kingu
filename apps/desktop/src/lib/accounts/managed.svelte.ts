@@ -27,7 +27,7 @@ class ManagedAccounts {
 	async load() {
 		this.busy = true;
 		try {
-			this.state = await invoke<Partial<Record<DataProvider, DataState>>>('managed_accounts_list');
+			this.state = (await invoke<Partial<Record<DataProvider, DataState>>>('managed_accounts_list')) ?? {};
 			this.error = '';
 		} catch (e) {
 			this.error = message(e);

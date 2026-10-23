@@ -57,7 +57,7 @@ function context(runtime: string, protocol: RuntimeProtocol, model: string | nul
 	return {
 		protocol,
 		model,
-		listed: modelCatalog.list,
+		listed: modelCatalog.for(runtime),
 		arkai: split && provider ? { api: provider.api, baseUrl: provider.base_url, model: split.model } : null,
 		advertised: effortOptions.byRuntime[runtime] ?? null
 	};

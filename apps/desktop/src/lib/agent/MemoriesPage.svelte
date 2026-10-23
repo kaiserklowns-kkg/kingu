@@ -26,7 +26,7 @@
 		loading = true;
 		error = '';
 		try {
-			list = await chatExtras.listMemories();
+			list = (await chatExtras.listMemories()) ?? [];
 		} catch (e) {
 			error = String(e);
 		} finally {

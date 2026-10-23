@@ -153,10 +153,10 @@
 		if (!t || !text) return;
 		if (pasteNeedsWarning(setting<string>('terminal.integrated.enableMultiLinePasteWarning'), text, t.modes.bracketedPasteMode)) {
 			const lines = text.replace(/\r?\n$/, '').split(/\r?\n/).length;
-			const ok = await ask(`วางข้อความ ${lines} บรรทัดลงใน terminal? (Are you sure you want to paste ${lines} lines of text into the terminal?)`, {
+			const ok = await ask(tr('legacySettings.terminal.pasteWarning', { count: lines }), {
 				title: 'Terminal',
 				kind: 'warning',
-				okLabel: 'วาง (Paste)'
+				okLabel: tr('legacySettings.terminal.paste')
 			});
 			if (!ok) return;
 		}
@@ -167,7 +167,7 @@
 		void navigator.clipboard
 			?.readText()
 			.then((text) => pasteText(text))
-			.catch(() => status.flash('อ่าน clipboard ไม่ได้'));
+			.catch(() => status.flash(tr('legacySettings.terminal.clipboardReadFailed')));
 	}
 
 	function openMenu(e: MouseEvent) {
@@ -239,7 +239,7 @@
 	/** Types `text` into the shell and runs it. */
 	function runCommandText(text: string, run = true) {
 		if (!term || !text) return;
-		invoke('pty_write', { key, data: commandInput(text, run, term.modes.bracketedPasteMode) }).catch((e) => status.flash(`รันคำสั่งไม่ได้: ${e}`));
+		invoke('pty_write', { key, data: commandInput(text, run, term.modes.bracketedPasteMode) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 		term.focus();
 	}
 
@@ -249,7 +249,7 @@
 		if (node.id.startsWith('fix:')) {
 			const f = d.fixes[Number(node.id.slice(4))];
 			if (f?.kind === 'run') runCommandText(f.command);
-			else if (f?.kind === 'open' && schemeAllowed(f.url)) void openUrl(f.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+			else if (f?.kind === 'open' && schemeAllowed(f.url)) void openUrl(f.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
 		} else if (node.id === 'rerun') runCommandText(d.command.command);
 		else if (node.id === 'copyCommand') void navigator.clipboard?.writeText(d.command.command).catch(() => {});
 		else if (node.id === 'copyOutput') void navigator.clipboard?.writeText(integration.output(d.command)).catch(() => {});
@@ -267,7 +267,7 @@
 	function runQuick(index: number) {
 		const q = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'))[index];
 		if (!q) return;
-		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(`รันคำสั่งไม่ได้: ${e}`));
+		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 		term?.focus();
 	}
 
@@ -281,7 +281,7 @@
 			// OSC 8 hyperlinks follow the same modifier rule as detected links.
 			linkHandler: {
 				activate: (e, uri) => {
-					if (linkModifierDown(e, isMac, altModifier()) && schemeAllowed(uri)) void openUrl(uri, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+					if (linkModifierDown(e, isMac, altModifier()) && schemeAllowed(uri)) void openUrl(uri, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
 				},
 				hover: (e, uri) => showHint(e, linkHint('url', isMac, altModifier()) + ` ${uri}`),
 				leave: () => (hint = null)
@@ -393,7 +393,7 @@
 			early = [];
 			live = true;
 		}
-		const failed = (e: unknown) => t.write(`\r\nเปิด terminal ไม่ได้: ${e}\r\n`);
+		const failed = (e: unknown) => t.write(`\r\n${tr('legacySettings.terminal.openFailed', { error: String(e) })}\r\n`);
 		const sized = () => host.clientWidth > 0 && host.clientHeight > 0;
 
 		// Re-attach first, even while hidden, so a running agent CLI's output keeps reaching the page.
@@ -499,7 +499,7 @@
 			e.stopImmediatePropagation();
 			void savePastedImage(image)
 				.then((path) => invoke('pty_write', { key, data: pastedImageText(path) }))
-				.catch((err) => status.flash(`วางรูปไม่ได้: ${err}`, 8000));
+				.catch((err) => status.flash(tr('legacySettings.terminal.pasteImageFailed', { error: String(err) }), 8000));
 		};
 		host.addEventListener('paste', onPaste, true);
 		// Voice dictation's text (voice/target.ts) arrives as a paste.
@@ -580,7 +580,7 @@
 				activate(e) {
 					if (!linkModifierDown(e, isMac, altModifier())) return;
 					if (l.kind === 'url') {
-						if (schemeAllowed(l.url)) void openUrl(l.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(`เปิดลิงก์ไม่ได้: ${err}`));
+						if (schemeAllowed(l.url)) void openUrl(l.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
 					}
 					else if (rel) onopenfile?.(rel, l.line, l.column);
 				},
@@ -615,7 +615,7 @@
 				}
 				return out;
 			},
-			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(`พิมพ์ลง terminal ไม่ได้: ${e}`)),
+			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(tr('legacySettings.terminal.writeFailed', { error: String(e) }))),
 			integration: si,
 			shell: shellName,
 			bracketedPaste: () => t.modes.bracketedPasteMode,

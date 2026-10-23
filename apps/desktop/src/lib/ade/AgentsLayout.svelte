@@ -113,12 +113,12 @@
 	});
 
 	// The empty composer's helpers: starters fill the prompt (they never start a task), recent tasks reopen one.
-	const STARTERS: { icon: IconName; label: string; text: string }[] = [
-		{ icon: 'bug', label: 'แก้บั๊ก', text: 'แก้บั๊ก: ' },
-		{ icon: 'check', label: 'เขียน test', text: 'เขียน test ให้ ' },
-		{ icon: 'code', label: 'เพิ่มฟีเจอร์', text: 'เพิ่มฟีเจอร์ ' },
-		{ icon: 'refresh', label: 'Refactor', text: 'Refactor ' }
-	];
+	const STARTERS = $derived.by((): { icon: IconName; label: string; text: string }[] => [
+		{ icon: 'bug', label: t('legacyAde.agentsLayout.starterBug'), text: t('legacyAde.agentsLayout.starterBugText') },
+		{ icon: 'check', label: t('legacyAde.agentsLayout.starterTest'), text: t('legacyAde.agentsLayout.starterTestText') },
+		{ icon: 'code', label: t('legacyAde.agentsLayout.starterFeature'), text: t('legacyAde.agentsLayout.starterFeatureText') },
+		{ icon: 'refresh', label: t('legacyAde.agentsLayout.starterRefactor'), text: t('legacyAde.agentsLayout.starterRefactorText') }
+	]);
 	const recent = $derived([...adeTasks.views].sort((a, b) => b.meta.updated_at - a.meta.updated_at).slice(0, 4));
 	let nudge = $state(0);
 	function starter(text: string) {
@@ -236,12 +236,12 @@
 					<div class="grid h-full place-items-center p-6">
 						<div class="max-w-md space-y-3 text-center">
 							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
-							<p>{cliName(cli)} ของงานนี้ไม่ได้รันอยู่</p>
-							<p class="text-xs text-(--vscode-descriptionForeground)">งานรันใน terminal ของ worktree <span class="font-mono">kingu/{slug}</span></p>
+							<p>{t('legacyAde.agentsLayout.cliNotRunning', { cli: cliName(cli) })}</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">kingu/{slug}</span></p>
 							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
 							<div class="flex justify-center gap-2">
-								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>ทำงานต่อใน session เดิม</button>{/if}
-								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม {cli.join(' ')} ใหม่</button>
+								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>{t('legacyAde.agentsLayout.continueSession')}</button>{/if}
+								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>{t('legacyAde.agentsLayout.restartCli', { cli: cli.join(' ') })}</button>
 							</div>
 						</div>
 					</div>
@@ -251,9 +251,9 @@
 				<div class="grid h-full place-items-center p-6">
 					<div class="max-w-md space-y-3 text-center">
 						<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
-						<p>งานนี้เคยใช้ agent timeline</p>
-						<p class="text-xs text-(--vscode-descriptionForeground)">ADE ใช้ terminal ของ worktree เท่านั้น กดเริ่มเพื่อย้ายงานนี้ไปยัง {cliSetting || 'claude'}.</p>
-						<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่มใน terminal</button>
+						<p>{t('legacyAde.agentsLayout.usedTimeline')}</p>
+						<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.adeTerminalOnly', { cli: cliSetting || 'claude' })}</p>
+						<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>{t('legacyAde.agentsLayout.startInTerminal')}</button>
 					</div>
 				</div>
 			{:else}
@@ -262,18 +262,18 @@
 						<div class="w-full max-w-[640px] space-y-3">
 							<div class="mb-5 flex flex-col items-center gap-2 text-center">
 								<Icon name="agent" size={44} />
-								<h1 class="text-lg font-semibold text-(--vscode-foreground)">อยากให้ Arkai ทำอะไร</h1>
-								<p class="text-[13px] text-(--vscode-descriptionForeground)">แต่ละงานได้ worktree ของตัวเอง ทำหลายงานพร้อมกันได้โดยไม่ชนกัน</p>
+								<h1 class="text-lg font-semibold text-(--vscode-foreground)">{t('legacyAde.agentsLayout.composerTitle')}</h1>
+								<p class="text-[13px] text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.composerText')}</p>
 							</div>
 							{#key `${focusKey}:${nudge}`}
-								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder="อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…" {busy} onsubmit={start}>
+								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder={t('legacyAde.agentsLayout.composerPlaceholder')} {busy} onsubmit={start}>
 									{#snippet left()}
 										<span class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-descriptionForeground)" title="Agent runs in the worktree terminal">
 											<Icon name="terminal" size={12} /> Terminal · {cliSetting || 'claude'}
 										</span>
-										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="แตกจาก branch">
+										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('legacyAde.agentsLayout.forkFromBranch')}>
 											<Icon name="branch" size={12} />
-											<span class="sr-only">แตกจาก branch</span>
+											<span class="sr-only">{t('legacyAde.agentsLayout.forkFromBranch')}</span>
 											<select class="max-w-48 bg-transparent outline-none focus-visible:outline-none" bind:value={base} disabled={busy}>
 												{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
@@ -289,10 +289,10 @@
 									</button>
 								{/each}
 							</div>
-							<p class="text-xs text-(--vscode-descriptionForeground)">สร้าง worktree ใหม่บน branch <span class="font-mono">kingu/…</span> แล้วเริ่ม {cliSetting || 'claude'} ใน terminal ของ worktree · Enter เพื่อเริ่ม · Shift+Enter ขึ้นบรรทัดใหม่</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.newWorktreePrefix')} <span class="font-mono">kingu/…</span> {t('legacyAde.agentsLayout.newWorktreeSuffix', { cli: cliSetting || 'claude' })}</p>
 							{#if recent.length}
-								<section class="pt-5" aria-label="งานล่าสุด">
-									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">งานล่าสุด</h2>
+								<section class="pt-5" aria-label={t('legacyAde.agentsLayout.recentTasks')}>
+									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.recentTasks')}</h2>
 									<div class="grid grid-cols-2 gap-2">
 										{#each recent as v (v.meta.slug)}
 											<button class="min-w-0 rounded-lg border border-(--vscode-widget-border) px-3 py-2.5 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => adeLayout.show(v.meta.slug)}>
@@ -311,7 +311,7 @@
 							{/if}
 						</div>
 					{:else}
-						<p class="text-sm text-(--vscode-descriptionForeground)">เปิดโฟลเดอร์ที่เป็น git repository ก่อน</p>
+						<p class="text-sm text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.openGitRepo')}</p>
 					{/if}
 				</div>
 			{/if}

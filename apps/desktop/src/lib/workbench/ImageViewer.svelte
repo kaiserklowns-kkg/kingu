@@ -61,7 +61,7 @@
 
 <div class="kg-checker relative h-full w-full overflow-auto" onwheel={onWheel}>
 	{#if error}
-		<p class="p-6 text-[13px] text-(--vscode-errorForeground)">เปิดรูปไม่ได้: {error}</p>
+		<p class="p-6 text-[13px] text-(--vscode-errorForeground)">{t('legacyWorkbench.imageViewer.openFailed', { error })}</p>
 	{:else if src}
 		<button
 			class="grid min-h-full min-w-full cursor-zoom-in place-items-center p-6"

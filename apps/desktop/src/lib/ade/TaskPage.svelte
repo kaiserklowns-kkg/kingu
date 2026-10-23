@@ -64,7 +64,15 @@
 	});
 
 	const statusText = (f: FileChange) =>
-		({ M: 'แก้ไข', A: 'เพิ่ม', D: 'ลบ', R: 'เปลี่ยนชื่อ', C: 'คัดลอก', T: 'เปลี่ยนชนิด', '?': 'ไฟล์ใหม่ (untracked)' })[f.status] ?? f.status;
+		({
+			M: tr('legacyAde.taskPage.statusEdited'),
+			A: tr('legacyAde.taskPage.statusAdded'),
+			D: tr('legacyAde.taskPage.statusDeleted'),
+			R: tr('legacyAde.taskPage.statusRenamed'),
+			C: tr('legacyAde.taskPage.statusCopied'),
+			T: tr('legacyAde.taskPage.statusTypeChanged'),
+			'?': tr('legacyAde.taskPage.statusUntracked')
+		})[f.status] ?? f.status;
 	const letter = (f: FileChange) => (f.status === '?' ? 'U' : f.status);
 	/** In the Agents layout the diff opens as a tab of the task's worktree; in the IDE as an editor tab. */
 	function openDiff(rel: string) {
@@ -90,7 +98,7 @@
 
 {#if !meta || !view}
 	<div class="grid h-full place-items-center text-sm text-(--vscode-descriptionForeground)">
-		{adeTasks.loaded ? `ไม่พบงาน ${slug}` : 'กำลังโหลด…'}
+		{adeTasks.loaded ? tr('legacyAde.taskPage.notFound', { slug }) : tr('legacyAde.taskPage.loading')}
 	</div>
 {:else}
 	{@const chip = reviewChip(view)}
@@ -107,39 +115,39 @@
 			<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--vscode-descriptionForeground)">
 				<span class="flex items-center gap-1 font-mono"><Icon name="branch" size={12} />kingu/{meta.slug} ← {meta.base}</span>
 				<span class="flex items-center gap-1"><AgentIcon agent={meta.agent || 'claude'} size={12} />{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
-				<span>สร้าง {timeAgo(meta.created_at, adeTasks.now)}</span>
+				<span>{tr('legacyAde.taskPage.created', { ago: timeAgo(meta.created_at, adeTasks.now) })}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}
 				{#if meta.issue}
 					{@const issue = meta.issue}
-					<button class="text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue บน {sourceName(issue)}: {issue.url}" onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
+					<button class="text-(--vscode-textLink-foreground) hover:underline" title={tr('legacyAde.taskPage.openIssueTitle', { source: sourceName(issue), url: issue.url })} onclick={() => issues.open(issue)}>issue {issueRef(issue)}</button>
 				{/if}
 				<span class="flex-1"></span>
 				{#if running}
-					<button class={BUTTON_SECONDARY} title="หยุดรอบนี้ session ยังเปิดอยู่ (Interrupt)" onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> หยุดรอบนี้</button>
+					<button class={BUTTON_SECONDARY} title={tr('legacyAde.taskPage.interruptTitle')} onclick={() => adeTasks.interrupt(slug)}><Icon name="stop" size={12} /> {tr('legacyAde.taskPage.interrupt')}</button>
 				{/if}
 				{#if rt?.live}
-					<button class={BUTTON_SECONDARY} title="จบ session (ส่งข้อความต่อได้ภายหลัง จะ resume session เดิม)" onclick={() => adeTasks.stop(slug)}>จบ session</button>
+					<button class={BUTTON_SECONDARY} title={tr('legacyAde.taskPage.endSessionTitle')} onclick={() => adeTasks.stop(slug)}>{tr('legacyAde.taskPage.endSession')}</button>
 				{/if}
-				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.quickOpen(slug)} disabled={!!view.statError}><Icon name="goToFile" size={12} /> เปิดไฟล์ใน worktree</button>
+				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.quickOpen(slug)} disabled={!!view.statError}><Icon name="goToFile" size={12} /> {tr('legacyAde.taskPage.openInWorktree')}</button>
 				{#if view.status === 'done'}
-					<button class={BUTTON_SECONDARY} onclick={() => adeTasks.markDone(slug, false)}>เปิดงานอีกครั้ง</button>
+					<button class={BUTTON_SECONDARY} onclick={() => adeTasks.markDone(slug, false)}>{tr('legacyAde.taskPage.reopenTask')}</button>
 				{:else}
-					<button class={BUTTON_SECONDARY} onclick={() => adeTasks.markDone(slug)} disabled={running}><Icon name="check" size={12} /> ปิดงาน</button>
+					<button class={BUTTON_SECONDARY} onclick={() => adeTasks.markDone(slug)} disabled={running}><Icon name="check" size={12} /> {tr('legacyAde.taskPage.closeTask')}</button>
 				{/if}
-				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.remove(slug)} disabled={running}><Icon name="trash" size={12} /> ลบ</button>
+				<button class={BUTTON_SECONDARY} onclick={() => adeTasks.remove(slug)} disabled={running}><Icon name="trash" size={12} /> {tr('legacyAde.taskPage.delete')}</button>
 			</div>
 			{#if rt?.usage || meta.last_run}
 				<div class="mt-1 text-xs text-(--vscode-descriptionForeground)">
 					{#if rt?.usage}
 						session: {rt.usage}
 					{:else if meta.last_run}
-						รอบล่าสุด ({timeAgo(meta.last_run.at, adeTasks.now)}): {meta.last_run.summary ?? meta.last_run.status}{formatSummaryUsage(meta.last_run) ? ` · ${formatSummaryUsage(meta.last_run)}` : ''}
+						{tr('legacyAde.taskPage.lastRun', { ago: timeAgo(meta.last_run.at, adeTasks.now) })}: {meta.last_run.summary ?? meta.last_run.status}{formatSummaryUsage(meta.last_run) ? ` · ${formatSummaryUsage(meta.last_run)}` : ''}
 					{/if}
 				</div>
 			{/if}
 			{#if view.status === 'waiting'}
 				<p class="mt-2 rounded border border-(--vscode-editorWarning-foreground) px-2 py-1 text-xs text-(--vscode-editorWarning-foreground)">
-					agent รออนุญาต {rt?.pendingPermissions} รายการ: ตอบใน terminal ของ worktree
+					{tr('legacyAde.taskPage.waitingPermission', { count: rt?.pendingPermissions ?? 0 })}
 				</p>
 			{/if}
 		</header>
@@ -156,12 +164,12 @@
 				<div class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-xs text-(--vscode-descriptionForeground)">
 					<Icon name="terminal" size={24} />
 					{#if cli}
-						<p>งานนี้รัน <span class="font-mono">{cli.join(' ')}</span> ใน terminal ของ worktree</p>
+						<p>{tr('legacyAde.taskPage.runsCliPrefix')} <span class="font-mono">{cli.join(' ')}</span> {tr('legacyAde.taskPage.runsCliSuffix')}</p>
 					{:else}
-						<p>งานนี้เคยใช้ agent timeline</p>
+						<p>{tr('legacyAde.taskPage.usedTimeline')}</p>
 					{/if}
-					<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>{cli ? 'เปิด terminal ใน Agents (⇧⌘A)' : 'ย้ายไปเริ่มใน terminal'}</button>
-					{#if !cli}<button class={BUTTON_SECONDARY} onclick={() => adeTasks.resumeCli(slug, true)}>เริ่ม terminal agent</button>{/if}
+					<button class={BUTTON_SECONDARY} onclick={() => (appMode.setMode('agents'), adeLayout.show(slug))}>{cli ? tr('legacyAde.taskPage.openTerminalAgents') : tr('legacyAde.taskPage.moveToTerminal')}</button>
+					{#if !cli}<button class={BUTTON_SECONDARY} onclick={() => adeTasks.resumeCli(slug, true)}>{tr('legacyAde.taskPage.startTerminalAgent')}</button>{/if}
 					<CliQuestion {slug} class="w-full max-w-md text-left" />
 				</div>
 			</section>
@@ -171,22 +179,22 @@
 			<!-- Review -->
 			<section aria-label="Review" class="flex min-h-0 flex-col overflow-y-auto text-xs">
 				<div class="flex shrink-0 items-center gap-2 px-3 pt-2">
-					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">{embedded ? 'เทียบกับ base (Committed on Branch)' : 'Review'}</h2>
+					<h2 class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">{embedded ? tr('legacyAde.taskPage.compareBase') : 'Review'}</h2>
 					{#if totals}
 						<span class="font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
-						<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์{totals.binary ? ` (binary ${totals.binary})` : ''}</span>
+						<span class="text-(--vscode-descriptionForeground)">{tr('legacyAde.taskPage.fileCount', { count: totals.files })}{totals.binary ? ` ${tr('legacyAde.taskPage.binaryCount', { count: totals.binary })}` : ''}</span>
 					{/if}
 					<span class="flex-1"></span>
-					<button class={ICON_BUTTON} aria-label="ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว" title="ดูการเปลี่ยนแปลงทั้งหมดในหน้าเดียว" onclick={() => (appMode.setMode('workbench'), editors.open(changesKey(slug), { preview: false }))}><Icon name="files" size={14} /></button>
-					<button class={ICON_BUTTON} aria-label="รีเฟรช" title="รีเฟรช" onclick={() => adeTasks.refreshStat(slug)}><Icon name="refresh" size={14} /></button>
+					<button class={ICON_BUTTON} aria-label={tr('legacyAde.taskPage.viewAllChanges')} title={tr('legacyAde.taskPage.viewAllChanges')} onclick={() => (appMode.setMode('workbench'), editors.open(changesKey(slug), { preview: false }))}><Icon name="files" size={14} /></button>
+					<button class={ICON_BUTTON} aria-label={tr('legacyAde.taskPage.refresh')} title={tr('legacyAde.taskPage.refresh')} onclick={() => adeTasks.refreshStat(slug)}><Icon name="refresh" size={14} /></button>
 				</div>
 				{#if view.statError}
 					<p class="px-3 py-2 text-(--vscode-errorForeground)">{view.statError}</p>
 				{:else if stat}
 					<p class="px-3 pt-0.5 text-(--vscode-descriptionForeground)">
-						เทียบกับ {stat.base} ณ จุดที่แตก ({stat.merge_base.slice(0, 8)}) · {stat.ahead} commit ใหม่{stat.behind ? ` · ${stat.base} ไปข้างหน้า ${stat.behind} commit` : ''}
+						{tr('legacyAde.taskPage.reviewBase', { base: stat.base, sha: stat.merge_base.slice(0, 8) })} · {tr('legacyAde.taskPage.newCommits', { count: stat.ahead })}{stat.behind ? ` · ${tr('legacyAde.taskPage.baseAhead', { base: stat.base, count: stat.behind })}` : ''}
 					</p>
-					<ul class="mt-1 px-1" aria-label="ไฟล์ที่เปลี่ยน">
+					<ul class="mt-1 px-1" aria-label={tr('legacyAde.taskPage.changedFiles')}>
 						{#each stat.files as f (f.path)}
 							{@const [name, dir] = splitPath(f.path)}
 							{@const ok = accepted.has(f.path)}
@@ -195,31 +203,31 @@
 									class={['grid size-4 shrink-0 place-items-center rounded-sm border', ok ? 'border-[#73C991] bg-[#73C991]/20 text-[#73C991]' : 'border-(--vscode-widget-border) text-transparent']}
 									role="checkbox"
 									aria-checked={ok}
-									aria-label="ยอมรับ {f.path}"
-									title={ok ? 'ยอมรับแล้ว (คลิกเพื่อยกเลิก)' : 'ยอมรับไฟล์นี้'}
+									aria-label={tr('legacyAde.taskPage.acceptFile', { path: f.path })}
+									title={ok ? tr('legacyAde.taskPage.accepted') : tr('legacyAde.taskPage.acceptThisFile')}
 									onclick={() => adeTasks.toggleAccept(slug, f.path)}><Icon name="check" size={12} /></button
 								>
-								<button class="flex min-w-0 flex-1 items-baseline gap-1.5 text-left" title="{statusText(f)}: {f.orig_path ? `${f.orig_path} → ` : ''}{f.path} (เปิด diff)" onclick={() => openDiff(f.path)}>
+								<button class="flex min-w-0 flex-1 items-baseline gap-1.5 text-left" title={tr('legacyAde.taskPage.fileDiffTitle', { status: statusText(f), path: f.orig_path ? `${f.orig_path} → ${f.path}` : f.path })} onclick={() => openDiff(f.path)}>
 									<span class={['truncate', f.status === 'D' && 'line-through', ok && 'opacity-60']}>{name}</span>
 									<span class="truncate text-[11px] text-(--vscode-descriptionForeground)">{f.orig_path ? `← ${f.orig_path}` : dir}</span>
 								</button>
 								<span class="shrink-0 font-mono text-[11px]">
 									{#if f.added === null}<span class="text-(--vscode-descriptionForeground)">bin</span>{:else}<span class="text-[#73C991]">+{f.added}</span> <span class="text-[#F48771]">−{f.deleted}</span>{/if}
 								</span>
-								<button class={[ICON_BUTTON, 'invisible group-focus-within:visible group-hover:visible']} aria-label="ปฏิเสธ {f.path}" title="ปฏิเสธ: คืนไฟล์เป็นแบบใน {meta.base}" onclick={() => reject(f)}>
+								<button class={[ICON_BUTTON, 'invisible group-focus-within:visible group-hover:visible']} aria-label={tr('legacyAde.taskPage.rejectFile', { path: f.path })} title={tr('legacyAde.taskPage.rejectTitle', { base: meta.base })} onclick={() => reject(f)}>
 									<Icon name="discard" size={14} />
 								</button>
 								<span class={['w-3 shrink-0 text-center font-mono', LETTER_COLOR[f.status] ?? '']} title={statusText(f)}>{letter(f)}</span>
 							</li>
 						{:else}
-							<li class="px-2 py-1 text-(--vscode-descriptionForeground)">ไม่มีไฟล์ที่เปลี่ยนจาก {meta.base}</li>
+							<li class="px-2 py-1 text-(--vscode-descriptionForeground)">{tr('legacyAde.taskPage.noChangedFiles', { base: meta.base })}</li>
 						{/each}
 					</ul>
 					<DiffNotesList worktree={slug} />
 					{#if stat.files.length}
 						<div class="flex gap-1.5 px-3 pt-1">
 							<button class={BUTTON_SECONDARY} disabled={!!busy || running || accepted.size === stat.files.length} onclick={rejectUnaccepted}>
-								<Icon name="discard" size={12} /> ปฏิเสธไฟล์ที่ไม่ได้ติ๊ก
+								<Icon name="discard" size={12} /> {tr('legacyAde.taskPage.rejectUnchecked')}
 							</button>
 						</div>
 					{/if}
@@ -227,23 +235,23 @@
 					{#if !embedded}
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 pt-3">
 						<label class="block text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase" for="commit-{slug}">Commit</label>
-						<textarea id="commit-{slug}" class={[INPUT, 'h-16 resize-y font-mono']} bind:value={commitMsg} onkeydown={onCommitKey} aria-label="ข้อความ commit"></textarea>
-						<button class={BUTTON} disabled={!!busy || running || !stat.dirty} title="stage ทุกไฟล์ใน worktree แล้ว commit ({mac ? '⌘' : 'Ctrl+'}Enter)" onclick={() => adeTasks.commit(slug, commitMsg)}>
-							<Icon name="check" size={12} /> Commit {stat.dirty ? '' : '(ไม่มีอะไรให้ commit)'}
+						<textarea id="commit-{slug}" class={[INPUT, 'h-16 resize-y font-mono']} bind:value={commitMsg} onkeydown={onCommitKey} aria-label={tr('legacyAde.taskPage.commitMessage')}></textarea>
+						<button class={BUTTON} disabled={!!busy || running || !stat.dirty} title={tr('legacyAde.taskPage.commitTip', { shortcut: `${mac ? '⌘' : 'Ctrl+'}Enter` })} onclick={() => adeTasks.commit(slug, commitMsg)}>
+							<Icon name="check" size={12} /> Commit {stat.dirty ? '' : tr('legacyAde.taskPage.nothingToCommit')}
 						</button>
 					</div>
 					{/if}
 
 					<div class="mt-3 space-y-1.5 border-t border-(--vscode-widget-border) px-3 py-3">
-						<div class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">ส่งงาน</div>
+						<div class="text-[11px] font-bold text-(--vscode-descriptionForeground) uppercase">{tr('legacyAde.taskPage.sendWork')}</div>
 						<div class="flex flex-wrap gap-1.5">
 							<button class={BUTTON} disabled={!!busy || running || stat.ahead === 0 || !!meta.pr_url} onclick={() => adeTasks.createPr(slug)}>
 								<Icon name="pullRequest" size={12} /> {ft('forge.create.button', forgeOf(adeTasks.gh))}
 							</button>
-							<button class={BUTTON_SECONDARY} disabled={!!busy || running || stat.ahead === 0 || stat.dirty} onclick={() => adeTasks.merge(slug, 'ff')} title="fast-forward {meta.base} ไปที่ kingu/{slug}">
-								<Icon name="merge" size={12} /> Merge เข้า {meta.base} (ff)
+							<button class={BUTTON_SECONDARY} disabled={!!busy || running || stat.ahead === 0 || stat.dirty} onclick={() => adeTasks.merge(slug, 'ff')} title={tr('legacyAde.taskPage.ffTitle', { base: meta.base, slug })}>
+								<Icon name="merge" size={12} /> {tr('legacyAde.taskPage.mergeInto', { base: meta.base })}
 							</button>
-							<button class={BUTTON_SECONDARY} disabled={!!busy || running || stat.ahead === 0 || stat.dirty} onclick={() => adeTasks.merge(slug, 'merge')} title="สร้าง merge commit บน {meta.base}">
+							<button class={BUTTON_SECONDARY} disabled={!!busy || running || stat.ahead === 0 || stat.dirty} onclick={() => adeTasks.merge(slug, 'merge')} title={tr('legacyAde.taskPage.mergeCommitTitle', { base: meta.base })}>
 								Merge commit
 							</button>
 						</div>
@@ -263,7 +271,7 @@
 						<div class="border-t border-(--vscode-widget-border) px-3 py-3"><PrChecks {slug} /></div>
 					{/if}
 				{:else}
-					<p class="px-3 py-2 text-(--vscode-descriptionForeground)">กำลังอ่านการเปลี่ยนแปลง…</p>
+					<p class="px-3 py-2 text-(--vscode-descriptionForeground)">{tr('legacyAde.taskPage.readingChanges')}</p>
 				{/if}
 			</section>
 			{/if}

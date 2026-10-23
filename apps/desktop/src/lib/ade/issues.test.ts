@@ -44,9 +44,9 @@ describe('issuePrompt', () => {
 	});
 
 	test('an empty or truncated body says so', () => {
-		expect(issuePrompt(issue({ body: '', labels: [] }))).toContain('(ไม่มีรายละเอียด)');
+		expect(issuePrompt(issue({ body: '', labels: [] }))).toContain('(no details)');
 		expect(issuePrompt(issue({ labels: [] }))).not.toContain('labels:');
-		expect(issuePrompt(issue({ body_truncated: true }))).toContain('ตัดเนื้อหาที่เหลือออก');
+		expect(issuePrompt(issue({ body_truncated: true }))).toContain('Truncated');
 	});
 
 	test('includes the latest comments within the budget', () => {
@@ -63,7 +63,7 @@ describe('issuePrompt', () => {
 		expect(p).toContain('@b (2026-10-02):\nsecond');
 		expect(p).toContain('@c (2026-10-03)');
 		expect(p).not.toContain('@a ');
-		expect(p).toContain('ล่าสุด 2 จาก 4');
+		expect(p).toContain('latest 2 of 4');
 		expect(p.length).toBeLessThan(64 * 1024);
 	});
 });
@@ -71,9 +71,9 @@ describe('issuePrompt', () => {
 describe('PR body and comment', () => {
 	test('Fixes #N first for an issue task, plain otherwise', () => {
 		const meta = { ...newTask({ slug: 'issue-42-fix', title: '#42 Fix', prompt: 'do it', base: 'main', issue: issueLink(issue()) }, 1) };
-		expect(prBody(meta)).toBe('Fixes #42\n\ndo it\n\n---\nสร้างจากงาน Kingu `issue-42-fix`');
-		expect(prBody({ ...meta, issue: null })).toBe('do it\n\n---\nสร้างจากงาน Kingu `issue-42-fix`');
-		expect(prComment('https://github.com/acme/app/pull/9')).toBe('Kingu เริ่มงานนี้ใน PR https://github.com/acme/app/pull/9');
+		expect(prBody(meta)).toBe('Fixes #42\n\ndo it\n\n---\nCreated by the Kingu task `issue-42-fix`');
+		expect(prBody({ ...meta, issue: null })).toBe('do it\n\n---\nCreated by the Kingu task `issue-42-fix`');
+		expect(prComment('https://github.com/acme/app/pull/9')).toBe('Kingu started this work in PR https://github.com/acme/app/pull/9');
 	});
 });
 

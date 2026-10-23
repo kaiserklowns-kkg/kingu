@@ -284,7 +284,7 @@
 		try {
 			await navigator.clipboard.writeText(text);
 		} catch (e) {
-			notifications.error(`คัดลอกไม่ได้ (Copy failed): ${e}`);
+			notifications.error(t('legacyWorkbench.explorerView.copyFailed', { error: String(e) }));
 		}
 	}
 
@@ -407,7 +407,7 @@
 			No Folder Opened
 		</div>
 		<div class="flex flex-col gap-3 px-5 py-2 leading-normal">
-			<p>ยังไม่ได้เปิดโฟลเดอร์</p>
+			<p>{t('legacyWorkbench.explorerView.noFolderOpened')}</p>
 			<button
 				class="flex h-8 w-full items-center justify-center gap-2 rounded-md bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-[var(--vscode-button-hoverBackground,#026EC1)]"
 				onclick={() => workspace.pickFolder()}
@@ -438,7 +438,7 @@
 					</ul>
 				</div>
 			{/if}
-			<p class="text-(--vscode-descriptionForeground)">เปิดโฟลเดอร์ ({keyLabel('cmd+o')}) หรือโฟลเดอร์ล่าสุด ({keyLabel('ctrl+r')})</p>
+			<p class="text-(--vscode-descriptionForeground)">{t('legacyWorkbench.explorerView.openFolderHint', { open: keyLabel('cmd+o'), recent: keyLabel('ctrl+r') })}</p>
 		</div>
 	</section>
 {:else}
@@ -480,7 +480,7 @@
 				bind:this={tree}
 				role="tree"
 				tabindex="-1"
-				aria-label="ไฟล์ใน workspace"
+				aria-label={t('legacyWorkbench.explorerView.workspaceFiles')}
 				aria-multiselectable="true"
 				data-context="explorer"
 				class={['min-h-0 flex-1 outline-none', hscroll ? 'overflow-auto' : 'overflow-y-auto', dragTarget === '' && 'bg-(--vscode-list-dropBackground)']}
@@ -503,7 +503,7 @@
 								<FileIcon icon={item.is_dir ? folderIcon(item.value, false) : fileIcon(item.value)} />
 								<input
 									use:editBox={{ value: item.value, is_dir: item.is_dir }}
-									aria-label={explorer.editing?.kind === 'rename' ? 'ชื่อใหม่' : item.is_dir ? 'ชื่อโฟลเดอร์ใหม่' : 'ชื่อไฟล์ใหม่'}
+									aria-label={explorer.editing?.kind === 'rename' ? t('legacyWorkbench.explorerView.newName') : item.is_dir ? t('legacyWorkbench.explorerView.newFolderName') : t('legacyWorkbench.explorerView.newFileName')}
 									aria-invalid={inputError !== ''}
 									spellcheck="false"
 									class={[
@@ -567,7 +567,7 @@
 							<span class={['min-w-0 flex-1', hscroll ? 'whitespace-nowrap' : 'truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
 							{#if decoBadges && problems?.get(row.rel)?.count}{@const p = problems.get(row.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decoColors ? PROBLEM_COLORS[p.severity] : undefined} title={p.count === 1 ? t('problems.decoration.one') : t('problems.decoration.many', { count: p.count! })}>{problemBadge(p.count!)}</span>{/if}
 							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
-							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title="ถูก .gitignore"><Icon name="ignored" size={12} /></span>
+							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title={t('legacyWorkbench.explorerView.gitignored')}><Icon name="ignored" size={12} /></span>
 							{:else if decoBadges && decorations.has(row.rel)}{@const deco = decorations.get(row.rel)!}<span class="shrink-0 pr-3 pl-2 text-[11px] font-semibold" style:color={decoColors ? deco.color : undefined}>{deco.letter || '•'}</span>{/if}
 						</button>
 					{/if}

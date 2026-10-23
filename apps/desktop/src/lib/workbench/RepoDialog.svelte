@@ -3,6 +3,7 @@
 	// goes in, progress while cloning with Cancel, then the result opens as the folder.
 	import { repoDialog } from './repoDialog.svelte.ts';
 	import { cloneUrlError, progressLabel, repoNameFromUrl } from './repoDialog.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	const clone = $derived(repoDialog.mode === 'clone');
 	const target = $derived(clone ? repoNameFromUrl(repoDialog.url) : repoDialog.name.trim());
@@ -37,31 +38,31 @@
 		aria-label={clone ? 'Clone Repository' : 'New Project'}
 	>
 		<form class="space-y-3" onsubmit={submit}>
-			<h2 class="text-sm font-semibold">{clone ? 'Clone Repository' : 'สร้างโปรเจกต์ใหม่'}</h2>
+			<h2 class="text-sm font-semibold">{clone ? 'Clone Repository' : t('legacyWorkbench.repoDialog.newProject')}</h2>
 			{#if clone}
 				<label class="block space-y-1">
-					<span class="text-(--vscode-descriptionForeground)">URL ของ repository</span>
+					<span class="text-(--vscode-descriptionForeground)">{t('legacyWorkbench.repoDialog.repoUrl')}</span>
 					<!-- svelte-ignore a11y_autofocus -->
-					<input class={INPUT} bind:value={repoDialog.url} placeholder="https://github.com/owner/repo.git หรือ git@github.com:owner/repo.git" spellcheck="false" autocomplete="off" disabled={repoDialog.busy} autofocus />
+					<input class={INPUT} bind:value={repoDialog.url} placeholder={t('legacyWorkbench.repoDialog.urlPlaceholder')} spellcheck="false" autocomplete="off" disabled={repoDialog.busy} autofocus />
 				</label>
 				{#if urlHint}<p class="text-(--vscode-editorWarning-foreground)">{urlHint}</p>{/if}
 			{:else}
 				<label class="block space-y-1">
-					<span class="text-(--vscode-descriptionForeground)">ชื่อโปรเจกต์</span>
+					<span class="text-(--vscode-descriptionForeground)">{t('legacyWorkbench.repoDialog.projectName')}</span>
 					<!-- svelte-ignore a11y_autofocus -->
 					<input class={INPUT} bind:value={repoDialog.name} placeholder="my-project" spellcheck="false" autocomplete="off" disabled={repoDialog.busy} autofocus />
 				</label>
 			{/if}
 			<div class="space-y-1">
-				<span class="text-(--vscode-descriptionForeground)">{clone ? 'Clone ไปไว้ใน' : 'สร้างไว้ใน'}</span>
+				<span class="text-(--vscode-descriptionForeground)">{clone ? t('legacyWorkbench.repoDialog.cloneInto') : t('legacyWorkbench.repoDialog.createInto')}</span>
 				<div class="flex gap-1.5">
-					<input class={INPUT} bind:value={repoDialog.parent} aria-label="โฟลเดอร์ปลายทาง" spellcheck="false" disabled={repoDialog.busy} />
-					<button type="button" class={[BUTTON, 'shrink-0 border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} disabled={repoDialog.busy} onclick={() => repoDialog.pickParent()}>เลือก…</button>
+					<input class={INPUT} bind:value={repoDialog.parent} aria-label={t('legacyWorkbench.repoDialog.destinationFolder')} spellcheck="false" disabled={repoDialog.busy} />
+					<button type="button" class={[BUTTON, 'shrink-0 border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} disabled={repoDialog.busy} onclick={() => repoDialog.pickParent()}>{t('legacyWorkbench.repoDialog.choose')}</button>
 				</div>
 				{#if target && repoDialog.parent.trim()}
 					<p class="truncate text-xs text-(--vscode-descriptionForeground)" title="{repoDialog.parent.replace(/\/+$/, '')}/{target}">→ {repoDialog.parent.replace(/\/+$/, '')}/{target}</p>
 				{/if}
-				{#if !clone}<p class="text-xs text-(--vscode-descriptionForeground)">สร้างโฟลเดอร์ แล้ว git init พร้อม commit แรก (ว่าง) เพื่อให้แตก worktree ได้</p>{/if}
+				{#if !clone}<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.repoDialog.createHint')}</p>{/if}
 			</div>
 			{#if repoDialog.busy && clone}
 				<div class="space-y-1" role="status">
@@ -74,12 +75,12 @@
 			{#if repoDialog.error}<p class="break-words whitespace-pre-wrap text-(--vscode-errorForeground)">{repoDialog.error}</p>{/if}
 			<div class="flex justify-end gap-1.5">
 				{#if repoDialog.busy && clone}
-					<button type="button" class={[BUTTON, 'border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} onclick={() => repoDialog.cancelClone()}>ยกเลิก clone</button>
+					<button type="button" class={[BUTTON, 'border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} onclick={() => repoDialog.cancelClone()}>{t('legacyWorkbench.repoDialog.cancelClone')}</button>
 				{:else}
-					<button type="button" class={[BUTTON, 'border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} disabled={repoDialog.busy} onclick={() => repoDialog.close()}>ยกเลิก</button>
+					<button type="button" class={[BUTTON, 'border border-(--vscode-widget-border) hover:bg-(--vscode-toolbar-hoverBackground)']} disabled={repoDialog.busy} onclick={() => repoDialog.close()}>{t('legacyWorkbench.repoDialog.cancel')}</button>
 				{/if}
 				<button type="submit" class={[BUTTON, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:brightness-110']} disabled={repoDialog.busy || (clone ? !!cloneUrlError(repoDialog.url) : !repoDialog.name.trim())}>
-					{clone ? (repoDialog.busy ? 'กำลัง clone…' : 'Clone') : repoDialog.busy ? 'กำลังสร้าง…' : 'สร้าง'}
+					{clone ? (repoDialog.busy ? t('legacyWorkbench.repoDialog.cloning') : 'Clone') : repoDialog.busy ? t('legacyWorkbench.repoDialog.creating') : t('legacyWorkbench.repoDialog.create')}
 				</button>
 			</div>
 		</form>

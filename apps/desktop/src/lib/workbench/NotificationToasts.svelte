@@ -7,6 +7,7 @@
 	import { notificationsCorner } from './workbenchOptions';
 	import { notifications, type NotificationItem } from './notifications.svelte';
 	import { progressPercent } from './notificationsModel';
+	import { t } from '#lib/i18n/index.ts';
 
 	const ICON: Record<NotificationItem['severity'], { name: IconName; color: string }> = {
 		info: { name: 'info', color: 'var(--vscode-notificationsInfoIcon-foreground, #3794ff)' },
@@ -36,16 +37,16 @@
 			<p class={['kg-selectable min-w-0 flex-1 leading-snug break-words whitespace-pre-wrap', !n.expanded && 'line-clamp-3']}>{n.message}</p>
 			<div class="flex shrink-0 items-center opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
 				{#if n.message.length > 120 || n.message.includes('\n')}
-					<button class={TOOL} aria-label={n.expanded ? 'ย่อ (Collapse)' : 'ขยาย (Expand)'} title={n.expanded ? 'Collapse' : 'Expand'} onclick={() => notifications.toggleExpanded(n.id)}>
+					<button class={TOOL} aria-label={n.expanded ? t('legacyWorkbench.notificationToasts.collapse') : t('legacyWorkbench.notificationToasts.expand')} title={n.expanded ? t('legacyWorkbench.notificationToasts.collapse') : t('legacyWorkbench.notificationToasts.expand')} onclick={() => notifications.toggleExpanded(n.id)}>
 						<Icon name={n.expanded ? 'chevronDown' : 'chevronUp'} size={14} />
 					</button>
 				{/if}
-				<button class={TOOL} aria-label="ปิดการแจ้งเตือน (Clear Notification)" title="Clear Notification" onclick={() => notifications.close(n.id)}><Icon name="close" size={14} /></button>
+				<button class={TOOL} aria-label={t('legacyWorkbench.notificationToasts.clearNotification')} title={t('legacyWorkbench.notificationToasts.clearNotification')} onclick={() => notifications.close(n.id)}><Icon name="close" size={14} /></button>
 			</div>
 		</div>
 		{#if n.source || n.actions.length}
 			<div class="flex items-center gap-2 pl-[26px]">
-				{#if n.source}<span class="min-w-0 flex-1 truncate text-xs text-(--vscode-descriptionForeground)">ที่มา (Source): {n.source}</span>{:else}<span class="flex-1"></span>{/if}
+				{#if n.source}<span class="min-w-0 flex-1 truncate text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.notificationToasts.source', { source: n.source })}</span>{:else}<span class="flex-1"></span>{/if}
 				{#each n.actions as action, i (i)}
 					<button
 						class={[
@@ -77,26 +78,26 @@
 >
 	{#if notifications.centerVisible}
 		<section
-			aria-label="Notifications"
+			aria-label={t('legacyWorkbench.notificationToasts.notifications')}
 			class={[FRAME, 'flex max-h-[min(500px,60vh)] flex-col']}
 		>
 			<header class="flex h-9 shrink-0 items-center gap-1 border-b border-(--vscode-widget-border) pr-1.5 pl-3">
-				<span class="flex-1 font-medium">การแจ้งเตือน</span>
-				<button class={TOOL} aria-label="ล้างทั้งหมด (Clear All Notifications)" title="Clear All Notifications" onclick={() => notifications.clearAll()}><Icon name="clearAll" size={14} /></button>
+				<span class="flex-1 font-medium">{t('legacyWorkbench.notificationToasts.notifications')}</span>
+				<button class={TOOL} aria-label={t('legacyWorkbench.notificationToasts.clearAll')} title={t('legacyWorkbench.notificationToasts.clearAll')} onclick={() => notifications.clearAll()}><Icon name="clearAll" size={14} /></button>
 				<button
 					class={TOOL}
 					aria-pressed={notifications.doNotDisturb}
-					aria-label="ห้ามรบกวน (Toggle Do Not Disturb Mode)"
-					title="Toggle Do Not Disturb Mode"
+					aria-label={t('legacyWorkbench.notificationToasts.toggleDnd')}
+					title={t('legacyWorkbench.notificationToasts.toggleDnd')}
 					onclick={() => notifications.setDoNotDisturb(!notifications.doNotDisturb)}><Icon name={notifications.doNotDisturb ? 'bellSlash' : 'bell'} size={14} /></button
 				>
-				<button class={TOOL} aria-label="ซ่อน (Hide Notifications)" title="Hide Notifications" onclick={() => notifications.toggleCenter(false)}><Icon name="chevronDown" size={14} /></button>
+				<button class={TOOL} aria-label={t('legacyWorkbench.notificationToasts.hide')} title={t('legacyWorkbench.notificationToasts.hide')} onclick={() => notifications.toggleCenter(false)}><Icon name="chevronDown" size={14} /></button>
 			</header>
 			<div class="min-h-0 flex-1 overflow-y-auto py-1">
 				{#each notifications.items as n (n.id)}
 					<div class="hover:bg-(--vscode-list-hoverBackground)">{@render row(n, false)}</div>
 				{:else}
-					<p class="px-3 py-6 text-center text-xs text-(--vscode-descriptionForeground)">ไม่มีการแจ้งเตือนใหม่</p>
+					<p class="px-3 py-6 text-center text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.notificationToasts.noNewNotifications')}</p>
 				{/each}
 			</div>
 		</section>

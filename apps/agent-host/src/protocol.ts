@@ -103,6 +103,14 @@ export type RunParams = { runId: number };
  * with that provider (arkai/spec.ts).
  */
 export type SetOptionsParams = { runId: number; model?: string | null; permissionMode?: PermissionMode | null; provider?: unknown; effort?: Effort | null };
+
+/**
+ * The model choices of an ACP agent or Codex, before its first run (a new chat's picker): the
+ * throwaway session's handshake (`runtimes/acp.ts`, `runtimes/codex.ts`); Claude's and Arkai's
+ * do not reach the agent host. `env`/`unsetEnv` come from the runtime's account like a start's
+ * do; the answer is `{ models: ModelOption[] }`.
+ */
+export type ListModelsParams = { runtime: unknown; cwd: string; env?: unknown; unsetEnv?: string[] };
 /**
  * `allow` once; `allow_always` for the rest of this session; `allow_workspace` from now on in this
  * folder (the SDK writes the rule to `.claude/settings.local.json`, which is not committed);

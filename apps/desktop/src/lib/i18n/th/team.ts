@@ -75,5 +75,24 @@ export const team = {
 	'team.agent.status.idle': 'พร้อมรับคำสั่ง',
 	'team.agent.status.stopped': 'หยุดแล้ว',
 	'team.agent.status.failed': 'ล้มเหลว',
-	'team.agent.status.done': 'จบแล้ว'
+	'team.agent.status.done': 'จบแล้ว',
+
+	// Settings › Account & Team
+	'team.accountPage.title': 'บัญชีและทีม',
+	'team.accountPage.intro': 'ซิงก์เฉพาะ metadata ของงานไปที่เซิร์ฟเวอร์ทีม ไม่ส่งโค้ดหรือความลับ token เก็บใน Keychain เท่านั้น',
+	'team.accountPage.status': 'สถานะ',
+	'team.accountPage.notConfigured': 'ยังไม่ได้ตั้งค่าเซิร์ฟเวอร์ทีม',
+	'team.accountPage.checking': 'กำลังตรวจสอบ…',
+	'team.accountPage.signedOut': 'ยังไม่ได้ลงชื่อเข้าใช้',
+	'team.accountPage.offline': 'ลงชื่อเข้าใช้แล้ว · ออฟไลน์',
+	'team.accountPage.signedIn': 'ลงชื่อเข้าใช้แล้ว',
+	'team.accountPage.pending': 'รอส่ง {count} รายการ',
+	'team.accountPage.refresh': 'ตรวจใหม่',
+	'team.accountPage.signOut': 'ออกจากระบบ',
+	'team.accountPage.signIn': 'ลงชื่อเข้าใช้',
+	'team.accountPage.server': 'เซิร์ฟเวอร์',
+	'team.accountPage.serverUrl': 'URL ของเซิร์ฟเวอร์ทีม',
+	'team.accountPage.serverUrlHint': 'ต้องเป็น HTTPS ยกเว้น http://localhost · kingu.team.serverUrl',
+	'team.accountPage.project': 'โปรเจกต์',
+	'team.accountPage.projectHint': 'งานของโฟลเดอร์นี้ซิงก์เข้าโปรเจกต์นี้ · kingu.team.project'
 } satisfies Record<keyof typeof en, string>;

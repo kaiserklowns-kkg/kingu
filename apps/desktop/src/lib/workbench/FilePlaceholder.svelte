@@ -3,6 +3,7 @@
 	// editors): a file that cannot show as text keeps its tab and says why, with "Open Anyway".
 	import Icon from './Icon.svelte';
 	import { textFiles, type Placeholder } from './textFileService.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { path, placeholder }: { path: string; placeholder: Placeholder } = $props();
 
@@ -17,7 +18,7 @@
 		{#if canOpen}
 			<button
 				class="rounded-sm bg-(--vscode-button-background) px-3 py-1 text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)"
-				onclick={() => textFiles.openAnyway(path)}>{placeholder.kind === 'error' ? 'ลองอีกครั้ง (Try Again)' : 'เปิดอยู่ดี (Open Anyway)'}</button
+				onclick={() => textFiles.openAnyway(path)}>{placeholder.kind === 'error' ? t('legacyWorkbench.filePlaceholder.tryAgain') : t('legacyWorkbench.filePlaceholder.openAnyway')}</button
 			>
 		{/if}
 	</div>

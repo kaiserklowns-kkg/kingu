@@ -13,7 +13,7 @@ export { resolveUiLanguage };
 
 const CATALOGS: Record<Locale, Record<MessageKey, string>> = { en, th };
 
-let fixed: Locale = resolveUiLanguage('auto', typeof navigator !== 'undefined' ? navigator.language : null);
+let fixed: Locale = resolveUiLanguage('en', typeof navigator !== 'undefined' ? navigator.language : null);
 let read: () => Locale = () => fixed;
 
 /** The current UI language (reactive once ./locale.svelte.ts is installed). */

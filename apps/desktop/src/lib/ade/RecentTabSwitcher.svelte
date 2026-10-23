@@ -7,6 +7,7 @@
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { adeLayout } from './adeLayout.svelte';
+	import { t as tr } from '#lib/i18n/index.ts';
 
 	const s = $derived(adeLayout.switcher);
 	const rows = $derived.by(() => {
@@ -59,7 +60,7 @@
 						<Icon name={t.kind === 'terminal' ? 'terminal' : 'agent'} size={14} />
 					{/if}
 					<span class="min-w-0 flex-1 truncate">{t.label}</span>
-					{#if t.kind === 'file' && editors.isDirty(t.key)}<span class="size-2 shrink-0 rounded-full bg-current" aria-label="ยังไม่บันทึก"></span>{/if}
+					{#if t.kind === 'file' && editors.isDirty(t.key)}<span class="size-2 shrink-0 rounded-full bg-current" aria-label={tr('legacyAde.recentTabSwitcher.unsaved')}></span>{/if}
 				</div>
 			{/each}
 		</div>

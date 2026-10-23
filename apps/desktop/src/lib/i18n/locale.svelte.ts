@@ -8,7 +8,7 @@ import { resolveUiLanguage, useLocaleSource, type Locale } from './index';
 const osLanguage = () => (typeof navigator !== 'undefined' ? navigator.language : null);
 
 class UiLocale {
-	current = $state<Locale>(resolveUiLanguage('auto', osLanguage()));
+	current = $state<Locale>(resolveUiLanguage('en', osLanguage()));
 }
 
 export const uiLocale = new UiLocale();

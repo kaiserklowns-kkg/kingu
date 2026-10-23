@@ -7,8 +7,8 @@ describe('modelChoices', () => {
 		{ value: 'sonnet', display_name: 'Sonnet', description: 'Fast' }
 	];
 
-	test('falls back to the aliases until a session lists its models', () => {
-		expect(modelChoices(null, null, []).map((c) => c.value)).toEqual(FALLBACK_MODELS.map((m) => m.value));
+	test("the list as given: the caller decides Claude's alias fallback", () => {
+		expect(modelChoices(null, null, FALLBACK_MODELS).map((c) => c.value)).toEqual(FALLBACK_MODELS.map((m) => m.value));
 	});
 
 	test("the listed models, with the chat's own and the default first when not listed", () => {

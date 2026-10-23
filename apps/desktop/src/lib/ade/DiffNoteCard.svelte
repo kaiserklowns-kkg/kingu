@@ -3,6 +3,7 @@
 	// DiffCommentDraftCard: a draft is a box to write the note; a saved note shows its text with
 	// send / edit / delete. Enter saves, Shift+Enter is a new line, Escape cancels.
 	import Icon from '#lib/workbench/Icon.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { locationLabel, type DiffNote, type NoteTarget } from './diffNotes.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT } from './ui.ts';
 
@@ -17,7 +18,7 @@
 		onDelete?: () => void;
 		onSend?: () => void;
 	};
-	let { target, note, sendLabel = 'ส่งโน้ตนี้ถึง agent', sending = false, onSave, onCancel, onDelete, onSend }: Props = $props();
+	let { target, note, sendLabel = t('legacyAde.diffNoteCard.sendNote'), sending = false, onSave, onCancel, onDelete, onSend }: Props = $props();
 
 	// svelte-ignore state_referenced_locally
 	let editing = $state(!note);
@@ -70,23 +71,23 @@
 		<span class="flex-1"></span>
 		{#if note && !editing}
 			{#if onSend}<button class={ICON_BUTTON} aria-label={sendLabel} title={sendLabel} disabled={sending} onclick={onSend}><Icon name="send" size={13} /></button>{/if}
-			<button class={ICON_BUTTON} aria-label="แก้ไขโน้ต" title="แก้ไขโน้ต" onclick={() => (editing = true)}><Icon name="edit" size={13} /></button>
-			<button class={ICON_BUTTON} aria-label="ลบโน้ต" title="ลบโน้ต" onclick={onDelete}><Icon name="trash" size={13} /></button>
+			<button class={ICON_BUTTON} aria-label={t('legacyAde.diffNoteCard.editNote')} title={t('legacyAde.diffNoteCard.editNote')} onclick={() => (editing = true)}><Icon name="edit" size={13} /></button>
+			<button class={ICON_BUTTON} aria-label={t('legacyAde.diffNoteCard.deleteNote')} title={t('legacyAde.diffNoteCard.deleteNote')} onclick={onDelete}><Icon name="trash" size={13} /></button>
 		{/if}
 	</div>
 	{#if editing}
 		<textarea
 			class={[INPUT, 'mt-1 min-h-14 resize-y font-sans text-xs']}
-			placeholder="เพิ่มโน้ตถึง AI (Enter บันทึก · Shift+Enter ขึ้นบรรทัดใหม่)"
-			aria-label="โน้ตรีวิว"
+			placeholder={t('legacyAde.diffNoteCard.placeholder')}
+			aria-label={t('legacyAde.diffNoteCard.reviewNote')}
 			bind:value={body}
 			use:focus
 			{onkeydown}
 			disabled={saving}
 		></textarea>
 		<div class="mt-1 flex justify-end gap-1.5">
-			<button class={BUTTON_SECONDARY} onclick={cancel} disabled={saving}>ยกเลิก</button>
-			<button class={BUTTON} onclick={save} disabled={saving || !body.trim()}>{saving ? 'กำลังบันทึก…' : note ? 'บันทึก' : 'เพิ่มโน้ต ⏎'}</button>
+			<button class={BUTTON_SECONDARY} onclick={cancel} disabled={saving}>{t('legacyAde.diffNoteCard.cancel')}</button>
+			<button class={BUTTON} onclick={save} disabled={saving || !body.trim()}>{saving ? t('legacyAde.diffNoteCard.saving') : note ? t('legacyAde.diffNoteCard.save') : t('legacyAde.diffNoteCard.addNote')}</button>
 		</div>
 	{:else if note}
 		<p class="mt-0.5 whitespace-pre-wrap">{note.body}</p>

@@ -7,6 +7,7 @@
 	import { isMac } from '#lib/workbench/keys.ts';
 	import { findKey, findStatus, runFind, type FindOptions } from './find.ts';
 	import type { TerminalFlavor } from './terminalMenu.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { term, search, flavor, seed = '', request, onclose }: { term: Terminal; search: SearchAddon; flavor: TerminalFlavor; seed?: string; request: number; onclose: () => void } = $props();
 
@@ -85,7 +86,7 @@
 <div
 	class="absolute top-0 right-4 z-20 flex w-[340px] max-w-[calc(100%-2rem)] items-center gap-1 rounded-b-[4px] border border-t-0 border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-1 text-[13px] text-(--vscode-editorWidget-foreground) shadow-[0_2px_8px_var(--vscode-widget-shadow)]"
 	role="search"
-	aria-label="ค้นหาใน terminal"
+	aria-label={t('legacySettings.terminalFind.findInTerminal')}
 	onmousedown={(e) => e.stopPropagation()}
 >
 	<div class="flex h-[26px] min-w-0 flex-1 items-center rounded-[2px] border border-(--vscode-input-border) bg-(--vscode-input-background) text-(--vscode-input-foreground) focus-within:border-(--vscode-focusBorder)">
@@ -97,8 +98,8 @@
 				typed();
 			}}
 			{onkeydown}
-			aria-label="ค้นหา"
-			placeholder="ค้นหา"
+			aria-label={t('legacySettings.terminalFind.search')}
+			placeholder={t('legacySettings.terminalFind.search')}
 			spellcheck="false"
 			class="h-full min-w-0 flex-1 bg-transparent px-1.5 outline-none placeholder:text-(--vscode-input-placeholderForeground)"
 		/>

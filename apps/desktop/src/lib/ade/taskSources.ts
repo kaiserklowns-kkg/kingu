@@ -4,6 +4,7 @@
 // `jira.rs` and `agent/gh_projects.rs`; GitHub and Linear keep their own modules.
 
 import { slugify } from '#lib/agent/events.ts';
+import { t } from '#lib/i18n/index.ts';
 import { issueLink, type Issue, type IssueComment, type IssueDetail, type IssueLabel } from './issues.ts';
 import { linearLink, type LinearIssue } from './linear.ts';
 import type { IssueLink, TaskMeta } from './model.ts';
@@ -236,11 +237,11 @@ type PromptParts = {
 
 /** The agent's instructions: the issue, its latest comments that fit, and how to reference it. */
 export function trackerPrompt(p: PromptParts): string {
-	const parts = [`แก้ ${p.what}: ${p.title.trim()}`, `ลิงก์: ${p.url}`];
+	const parts = [t('legacyAde.taskSources.title', { what: p.what, title: p.title.trim() }), t('legacyAde.issues.prompt.link', { url: p.url })];
 	const facts = p.facts.filter(Boolean).join(' · ');
 	if (facts) parts.push(facts);
 	const body = p.body.trim();
-	parts.push(`## รายละเอียดของ issue\n\n${body || '(ไม่มีรายละเอียด)'}${p.truncated ? '\n\n(ตัดเนื้อหาที่เหลือออก ดูฉบับเต็มที่ลิงก์)' : ''}`);
+	parts.push(t('legacyAde.issues.prompt.details', { body: `${body || t('legacyAde.issues.prompt.emptyBody')}${p.truncated ? t('legacyAde.issues.prompt.truncated') : ''}` }));
 	if (p.comments?.length) {
 		let size = 0;
 		const kept: string[] = [];
@@ -251,9 +252,10 @@ export function trackerPrompt(p: PromptParts): string {
 			kept.unshift(text);
 		}
 		const omitted = (p.omitted ?? 0) + p.comments.length - kept.length;
-		if (kept.length) parts.push(`## ความคิดเห็น${omitted ? ` (ล่าสุด ${kept.length} จาก ${kept.length + omitted})` : ''}\n\n${kept.join('\n\n')}`);
+		const latest = omitted ? t('legacyAde.issues.prompt.commentsLatest', { kept: kept.length, total: kept.length + omitted }) : '';
+		if (kept.length) parts.push(t('legacyAde.issues.prompt.commentsSection', { latest, comments: kept.join('\n\n') }));
 	}
-	parts.push(`## สิ่งที่ต้องทำ\n\nแก้ปัญหาตาม issue นี้ใน repository นี้ เพิ่มหรือแก้ test ตามสมควร แล้ว commit ${p.closing}`);
+	parts.push(t('legacyAde.taskSources.todo', { closing: p.closing }));
 	return parts.join('\n\n');
 }
 
@@ -271,7 +273,7 @@ export function gitlabPrompt(issue: Issue | IssueDetail, project: string): strin
 		comments: 'comments' in issue ? issue.comments : undefined,
 		omitted: 'comments' in issue ? issue.comments_omitted : 0,
 		logins: true,
-		closing: `โดยใส่ "Closes ${key}" ในข้อความ commit (และใน merge request ถ้าสร้าง) เพื่อให้ GitLab ปิด issue เมื่อ merge`
+		closing: t('legacyAde.taskSources.gitlab.closing', { key })
 	});
 }
 
@@ -280,12 +282,12 @@ export function jiraPrompt(issue: JiraIssue | JiraIssueDetail): string {
 		what: `Jira issue ${issue.key}`,
 		title: issue.title,
 		url: issue.url,
-		facts: [issue.state && `สถานะ: ${issue.state}`, issue.issue_type && `ประเภท: ${issue.issue_type}`, issue.priority && `priority: ${issue.priority}`, labelsFact(issue.labels)],
+		facts: [issue.state && t('legacyAde.taskSources.jira.state', { state: issue.state }), issue.issue_type && t('legacyAde.taskSources.jira.type', { type: issue.issue_type }), issue.priority && `priority: ${issue.priority}`, labelsFact(issue.labels)],
 		body: issue.body,
 		truncated: issue.body_truncated,
 		comments: 'comments' in issue ? issue.comments : undefined,
 		omitted: 'comments' in issue ? issue.comments_omitted : 0,
-		closing: `โดยขึ้นต้นข้อความ commit ด้วย ${issue.key} (และใส่ ${issue.key} ในชื่อ PR ถ้าสร้าง) เพื่อให้ Jira เชื่อมงานนี้กับ issue`
+		closing: t('legacyAde.taskSources.jira.closing', { key: issue.key })
 	});
 }
 
@@ -296,13 +298,13 @@ export function projectPrompt(item: ProjectItem, detail?: IssueDetail): string {
 		what: `GitHub issue ${key}`,
 		title: item.title,
 		url: item.url,
-		facts: [item.status && `สถานะใน project: ${item.status}`, labelsFact(item.labels)],
+		facts: [item.status && t('legacyAde.taskSources.sources.github.status', { status: item.status }), labelsFact(item.labels)],
 		body: detail?.body ?? item.body,
 		truncated: detail?.body_truncated ?? item.body_truncated,
 		comments: detail?.comments,
 		omitted: detail?.comments_omitted,
 		logins: true,
-		closing: `โดยใส่ "Fixes ${key}" ในข้อความ commit (และใน PR ถ้าสร้าง) เพื่อให้ GitHub ปิด issue เมื่อ merge`
+		closing: t('legacyAde.taskSources.sources.github.closing', { key })
 	});
 }
 

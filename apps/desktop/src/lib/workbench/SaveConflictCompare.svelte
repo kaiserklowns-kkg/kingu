@@ -8,6 +8,7 @@
 	import { editorLabel } from './editorLabel';
 	import { getEntry } from './editorModels';
 	import { textFiles } from './textFileService.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { path, disk }: { path: string; disk: string } = $props();
 
@@ -38,14 +39,14 @@
 
 <div class="flex h-full flex-col bg-(--vscode-editor-background)">
 	<div class="flex h-(--kg-breadcrumbs-height) shrink-0 items-center gap-2 border-b border-(--vscode-editorGroup-border) px-3 text-(--vscode-descriptionForeground)">
-		<span class="min-w-0 flex-1 truncate">{name} (บนดิสก์ · on disk) ↔ {name} (ของคุณ · yours)</span>
-		<button class="flex items-center gap-1 rounded px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="บันทึกเวอร์ชันของคุณทับไฟล์บนดิสก์" onclick={() => textFiles.overwrite(path)}>
-			<Icon name="check" size={14} />ใช้ของคุณ (Accept Your Changes)
+		<span class="min-w-0 flex-1 truncate">{t('legacyWorkbench.saveConflictCompare.header', { name })}</span>
+		<button class="flex items-center gap-1 rounded px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('legacyWorkbench.saveConflictCompare.overwriteTitle')} onclick={() => textFiles.overwrite(path)}>
+			<Icon name="check" size={14} />{t('legacyWorkbench.saveConflictCompare.accept')}
 		</button>
-		<button class="flex items-center gap-1 rounded px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" title="ทิ้งการแก้ไขของคุณและใช้ไฟล์บนดิสก์" onclick={() => textFiles.revert(path)}>
-			<Icon name="discard" size={14} />ใช้บนดิสก์ (Revert Your Changes)
+		<button class="flex items-center gap-1 rounded px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('legacyWorkbench.saveConflictCompare.revertTitle')} onclick={() => textFiles.revert(path)}>
+			<Icon name="discard" size={14} />{t('legacyWorkbench.saveConflictCompare.revert')}
 		</button>
-		<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิดการเปรียบเทียบ" onclick={() => textFiles.closeCompare()}>
+		<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('legacyWorkbench.saveConflictCompare.closeCompare')} onclick={() => textFiles.closeCompare()}>
 			<Icon name="close" size={14} />
 		</button>
 	</div>

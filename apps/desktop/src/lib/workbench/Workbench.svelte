@@ -157,7 +157,12 @@
 					const order: (Platform | null)[] = ['windows', 'oceans', null];
 					const next = order[(order.indexOf(platform.preview) + 1) % order.length];
 					platform.setPreview(next);
-					status.flash(next ? `Preview UI: ${PROFILES[next].label}` : `Preview UI: ปิด (ใช้ ${PROFILES[platform.current].label})`, 4000);
+					status.flash(
+						next
+							? t('legacyWorkbench.workbench.previewUiOn', { profile: PROFILES[next].label })
+							: t('legacyWorkbench.workbench.previewUiOff', { profile: PROFILES[platform.current].label }),
+						4000
+					);
 				}
 			}),
 			commands.register({ id: 'kingu.agents.cleanup', title: 'Clean Up Tasks…', category: 'Agents', when: () => adeTasks.views.length > 0, run: () => (cleanup.open = true) }),
@@ -238,7 +243,7 @@
 				id: 'workbench.action.openLogsFolder',
 				title: 'Open Logs Folder',
 				category: 'Developer',
-				run: () => invoke<string>('open_logs_folder').catch((e) => status.flash(`เปิดโฟลเดอร์ log ไม่ได้: ${e}`, 5000))
+				run: () => invoke<string>('open_logs_folder').catch((e) => status.flash(t('legacyWorkbench.workbench.openLogsFailed', { error: String(e) }), 5000))
 			}),
 			commands.register({ id: 'workbench.action.showCommands', title: 'Show All Commands', key: 'cmd+shift+p', palette: false, run: () => quick.show('>') }),
 			// In Agents mode ⌘B / ⌘J toggle the sessions side bar and the changes panel instead.
@@ -512,7 +517,7 @@
 			['terminal', 'Terminal', () => layout.showPanel('terminal')]
 		];
 		quick.pick({
-			placeholder: 'เลือกมุมมองที่จะเปิด (Open View)',
+			placeholder: t('legacyWorkbench.workbench.openViewPlaceholder'),
 			items: views.map(([id, label], i) => ({ id, label, separator: i === 0 ? 'Side Bar' : i === 5 ? 'Panel' : undefined })),
 			onAccept: (item) => {
 				const view = views.find(([id]) => id === item.id);

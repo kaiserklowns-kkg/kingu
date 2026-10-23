@@ -17,6 +17,8 @@ import { Guards, type AskUser } from './guards/index.ts';
 import { MAX_PATTERNS } from './guards/asks.ts';
 import { checkAnswers, isAskUserQuestion, QUESTIONS_DISMISSED } from './questions.ts';
 import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/index.ts';
+import { probeModels as acpProbeModels } from './runtimes/acp.ts';
+import { probeModels as codexProbeModels } from './runtimes/codex.ts';
 import { ARTIFACT_SERVER, ARTIFACT_TOOL, artifactServer, socketCaller, type CallApp } from './artifacts.ts';
 import { readSkills, skillIndex } from './skills.ts';
 import { elicitAsk, McpAsks } from './mcpAsks.ts';
@@ -30,6 +32,7 @@ import {
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
+	type ListModelsParams,
 	type McpAnswerParams,
 	type McpQueryParams,
 	type McpServerParams,
@@ -336,6 +339,8 @@ export class AgentHost {
 				return this.answerMcp(p as McpAnswerParams);
 			case 'set_options':
 				return this.setOptions(p as SetOptionsParams);
+			case 'list_models':
+				return this.listModels(p as unknown as ListModelsParams);
 			case 'shutdown':
 				await Promise.all([...this.runs.values()].map((r) => this.stop(r)));
 				await this.others.shutdown();
@@ -692,6 +697,22 @@ export class AgentHost {
 		if (effort !== undefined) await applyClaudeEffort(q, effort);
 		this.log(`run ${run.id}: options changed${model !== undefined ? ' (model)' : ''}${mode !== undefined ? ` (mode ${mode})` : ''}${effort !== undefined ? ` (effort ${effort})` : ''}`);
 		return { model: model ?? null, permissionMode: mode ?? null, ...(effort !== undefined ? { effort } : {}) };
+	}
+
+	/**
+	 * The model choices of an ACP agent or Codex before its first run (`list_models`, a new
+	 * chat's picker): a throwaway session in its own child process, closed right after. Returns
+	 * `{ models }`; both runtimes answer `[]` when they name no models.
+	 */
+	private async listModels(p: ListModelsParams) {
+		const spec = runtimeSpec(p.runtime);
+		need(!!spec && (spec.kind === 'acp' || spec.kind === 'codex'), 'list_models asks an ACP agent or Codex');
+		need(typeof p.cwd === 'string' && p.cwd.startsWith('/') && !p.cwd.includes('\0'), 'cwd must be an absolute path');
+		const extraEnv = p.env ?? {};
+		const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+		need(typeof extraEnv === 'object' && !Array.isArray(extraEnv) && Object.entries(extraEnv).every(([k, v]) => ENV_NAME.test(k) && typeof v === 'string'), 'env must map variable names to strings');
+		const probe = spec.kind === 'acp' ? acpProbeModels : codexProbeModels;
+		return { models: await probe(this.deps.spawn, spec.command, spec.args, p.cwd, runEnv(this.deps.options?.env ?? process.env, extraEnv as Record<string, string>, p.unsetEnv ?? [])) };
 	}
 
 	async interrupt(run: Run) {

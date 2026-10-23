@@ -1544,6 +1544,7 @@ pub fn run() {
       agent::worktree_from::gh_pr_lookup,
       agent::worktree_from::gh_pr_list,
       agent::agent_start,
+      agent::agent_list_models,
       notify::agent_notify,
       notify::app_badge,
       dialog::message_box,

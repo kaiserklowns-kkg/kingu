@@ -10,7 +10,7 @@ export const APPEARANCE_SETTINGS: SettingSchema[] = [
 		id: 'kingu.uiLanguage',
 		group: G,
 		type: 'string',
-		default: 'auto',
+		default: 'en',
 		enum: ['auto', 'th', 'en'],
 		enumDescriptions: ['ตามภาษาของระบบ: ไทยถ้าระบบเป็นภาษาไทย นอกนั้นอังกฤษ (The OS language: Thai if the OS is Thai, else English.)', 'ภาษาไทย (Thai.)', 'ภาษาอังกฤษ (English.)'],
 		description: 'ภาษาของหน้าจอ Kingu (ข้อความ การแจ้งเตือน กล่องถาม) เปลี่ยนแล้วมีผลทันที ชื่อคำสั่งใน Command Palette เป็นอังกฤษเสมอ (Orca: uiLanguage) (Language of the Kingu interface; applies right away.)',

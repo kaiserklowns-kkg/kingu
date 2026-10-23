@@ -2,6 +2,7 @@
 // and `adeTasks.createFromIssue`. Shapes mirror Rust `agent/issues.rs`.
 
 import { slugify } from '#lib/agent/events.ts';
+import { t } from '#lib/i18n/index.ts';
 import type { IssueLink, TaskMeta } from './model.ts';
 
 export type IssueLabel = { name: string; color: string };
@@ -47,10 +48,11 @@ export function issueTaskTitle(issue: Pick<Issue, 'number' | 'title'>): string {
 
 /** The agent's instructions: the issue (title, link, body, latest comments) and how to reference it. */
 export function issuePrompt(issue: Issue | IssueDetail): string {
-	const parts = [`แก้ GitHub issue #${issue.number}: ${issue.title.trim()}`, `ลิงก์: ${issue.url}`];
+	const parts = [t('legacyAde.issues.prompt.title', { number: issue.number, title: issue.title.trim() }), t('legacyAde.issues.prompt.link', { url: issue.url })];
 	if (issue.labels.length) parts.push(`labels: ${issue.labels.map((l) => l.name).join(', ')}`);
 	const body = issue.body.trim();
-	parts.push(`## รายละเอียดของ issue\n\n${body || '(ไม่มีรายละเอียด)'}${issue.body_truncated ? '\n\n(ตัดเนื้อหาที่เหลือออก ดูฉบับเต็มที่ลิงก์)' : ''}`);
+	const detail = `${body || t('legacyAde.issues.prompt.emptyBody')}${issue.body_truncated ? t('legacyAde.issues.prompt.truncated') : ''}`;
+	parts.push(t('legacyAde.issues.prompt.details', { body: detail }));
 	if ('comments' in issue && issue.comments.length) {
 		let size = 0;
 		const kept: string[] = [];
@@ -61,11 +63,10 @@ export function issuePrompt(issue: Issue | IssueDetail): string {
 			kept.unshift(text);
 		}
 		const omitted = issue.comments_omitted + issue.comments.length - kept.length;
-		if (kept.length) parts.push(`## ความคิดเห็น${omitted ? ` (ล่าสุด ${kept.length} จาก ${kept.length + omitted})` : ''}\n\n${kept.join('\n\n')}`);
+		const latest = omitted ? t('legacyAde.issues.prompt.commentsLatest', { kept: kept.length, total: kept.length + omitted }) : '';
+		if (kept.length) parts.push(t('legacyAde.issues.prompt.commentsSection', { latest, comments: kept.join('\n\n') }));
 	}
-	parts.push(
-		`## สิ่งที่ต้องทำ\n\nแก้ปัญหาตาม issue นี้ใน repository นี้ เพิ่มหรือแก้ test ตามสมควร แล้ว commit โดยใส่ "Fixes #${issue.number}" ในข้อความ commit (และใน PR ถ้าสร้าง) เพื่อให้ GitHub ปิด issue เมื่อ merge`
-	);
+	parts.push(t('legacyAde.issues.prompt.todo', { number: issue.number }));
 	return parts.join('\n\n');
 }
 
@@ -83,12 +84,12 @@ export function issueRef(link: IssueLink): string {
 /** PR body of a task: its prompt, plus `Fixes #N` (or `Fixes ENG-123`) when it came from an issue; GitHub and Linear close it on merge. */
 export function prBody(meta: Pick<TaskMeta, 'slug' | 'prompt' | 'issue'>): string {
 	const fixes = meta.issue ? `Fixes ${issueRef(meta.issue)}\n\n` : '';
-	return `${fixes}${meta.prompt}\n\n---\nสร้างจากงาน Kingu \`${meta.slug}\``;
+	return `${fixes}${meta.prompt}${t('legacyAde.issues.prBody', { slug: meta.slug })}`;
 }
 
 /** The issue comment posted when the task's PR opens (`kingu.issues.commentOnPr`). */
 export function prComment(url: string): string {
-	return `Kingu เริ่มงานนี้ใน PR ${url}`;
+	return t('legacyAde.issues.prComment', { url });
 }
 
 /** The task already started from GitHub issue `number`, if any (the newest when there are several). */

@@ -1,6 +1,7 @@
 <script lang="ts">
 	// "Linear: Connect…" dialog: the personal API key is typed into a password field and handed to
 	// Rust, which checks it with Linear and keeps it in the Keychain; it is never kept here.
+	import { t } from '#lib/i18n/index.ts';
 	import { linear } from './linear.svelte.ts';
 
 	let dialog: HTMLDialogElement | undefined = $state();
@@ -40,9 +41,9 @@
 	class="m-auto w-[min(480px,90vw)] rounded-md border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-4 text-(--vscode-quickInput-foreground) shadow-[0_0_8px_2px_rgba(0,0,0,0.36)] backdrop:bg-black/40"
 >
 	<form onsubmit={submit} class="flex flex-col gap-3 text-[13px]">
-		<h2 id="kg-linear-connect-title" class="text-sm font-semibold">เชื่อมต่อ Linear</h2>
+		<h2 id="kg-linear-connect-title" class="text-sm font-semibold">{t('legacyAde.linearConnect.title')}</h2>
 		<p class="text-(--vscode-descriptionForeground)">
-			วาง personal API key (ขึ้นต้นด้วย <code>lin_api_</code>) จาก Linear &gt; Settings &gt; Security &amp; access. Key จะถูกเก็บใน macOS Keychain เท่านั้น
+			{t('legacyAde.linearConnect.introBefore')} <code>lin_api_</code>{t('legacyAde.linearConnect.introAfter')}
 		</p>
 		<label class="flex flex-col gap-1">
 			<span>API key</span>
@@ -60,9 +61,9 @@
 		</label>
 		{#if error}<p id="kg-linear-connect-error" role="alert" class="text-(--vscode-errorForeground)">{error}</p>{/if}
 		<div class="flex justify-end gap-2">
-			<button type="button" class="rounded-sm px-3 py-1 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (linear.connecting = false)}>ยกเลิก</button>
+			<button type="button" class="rounded-sm px-3 py-1 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (linear.connecting = false)}>{t('legacyAde.linearConnect.cancel')}</button>
 			<button type="submit" disabled={busy || !key.trim()} class="rounded-sm bg-(--vscode-button-background) px-3 py-1 text-(--vscode-button-foreground) disabled:opacity-50"
-				>{busy ? 'กำลังตรวจสอบ…' : 'เชื่อมต่อ'}</button
+				>{busy ? t('legacyAde.linearConnect.checking') : t('legacyAde.linearConnect.connect')}</button
 			>
 		</div>
 	</form>

@@ -12,10 +12,10 @@ const VIEWS: { button: RegExp; label: string; marker: (page: Page) => ReturnType
 	{ button: /^Run and Debug/, label: 'Run and Debug', marker: (page) => page.getByRole('button', { name: 'Open launch.json' }) },
 	{ button: /^Testing/, label: 'Testing', marker: (page) => page.getByRole('textbox', { name: 'Filter tests' }) },
 	{ button: /^Snaps/, label: 'Snaps', marker: (page) => page.getByRole('searchbox', { name: 'Search Snaps' }) },
-	{ button: /^Agents/, label: 'Agents', marker: (page) => page.getByRole('button', { name: 'เปิดบอร์ด' }) },
+	{ button: /^Agents/, label: 'Agents', marker: (page) => page.getByRole('button', { name: 'Open board' }) },
 	{ button: /^AI Vault/, label: 'AI Vault', marker: (page) => page.getByRole('searchbox', { name: 'Search sessions' }) },
 	{ button: /^Artifacts/, label: 'Artifacts', marker: (page) => page.getByRole('searchbox', { name: 'Filter artifacts' }) },
-	{ button: /^Explorer/, label: 'Explorer', marker: (page) => page.getByRole('tree', { name: /ไฟล์ใน workspace/ }) }
+	{ button: /^Explorer/, label: 'Explorer', marker: (page) => page.getByRole('tree', { name: /Files in the workspace/ }) }
 ];
 
 test('every Activity Bar view opens', async ({ page }) => {

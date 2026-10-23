@@ -378,6 +378,41 @@ pub async fn agent_start(
   Ok(id)
 }
 
+/// The model choices of an ACP/Codex agent before its first run (a new chat's picker): a
+/// throwaway session in the agent host (`list_models`), closed right away. Claude's choices
+/// come from the SDK, Arkai's from the provider catalogs, so neither reaches the agent host.
+#[tauri::command]
+pub async fn agent_list_models(
+  app: tauri::AppHandle,
+  ws: Workspace,
+  agents: State<'_, Arc<AgentHost>>,
+  runtime: String,
+) -> Result<Vec<events::ModelOption>, String> {
+  if runtime == runtimes::CLAUDE || runtime == arkai::RUNTIME {
+    return Ok(Vec::new());
+  }
+  if !runtimes::valid_id(&runtime) {
+    return Err(crate::tr!(crate::i18n::msg::RuntimeMsg::Unknown, id = runtime));
+  }
+  let (config, agents, root) = (crate::snap::config_dir(&app)?, agents.inner().clone(), ws.root()?);
+  blocking(move || {
+    use tauri::Manager;
+    let spec = runtimes::resolve(&runtime, crate::shell_env::path().as_deref(), &runtimes::configured(&config))?
+      .ok_or_else(|| crate::tr!(crate::i18n::msg::RuntimeMsg::Unknown, id = runtime.clone()))?;
+    let cwd = root.to_str().ok_or("workspace path is not valid UTF-8")?.to_owned();
+    // A Codex gets its account's env vars (an auth port and such); an ACP agent signs in on its own.
+    let provider = if spec.kind == "codex" { Some(crate::accounts::store::Provider::Codex) } else { None };
+    let env = match provider {
+      Some(p) => app.state::<crate::accounts::Accounts>().agent_env(p)?,
+      None => crate::accounts::store::AgentEnv::default(),
+    };
+    let secret = (!env.set.is_empty()).then(|| host::SecretEnv(env.set.clone()));
+    let out = agents.list_models(&serde_json::to_value(&spec).map_err(|e| e.to_string())?, &cwd, secret.as_ref(), &env.unset)?;
+    serde_json::from_value::<Vec<events::ModelOption>>(out.get("models").cloned().unwrap_or(serde_json::Value::Null)).map_err(|e| e.to_string())
+  })
+  .await
+}
+
 /// Answers `allow` to a prompt `tool_rules` approved, off the sidecar's reader thread (the answer
 /// waits for the sidecar's reply, which that thread reads). The run id is known once `start`
 /// returned; a prompt can only come after that in practice, but it is waited for.

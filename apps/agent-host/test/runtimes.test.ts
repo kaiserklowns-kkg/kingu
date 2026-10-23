@@ -232,6 +232,22 @@ describe('Codex runtime (app-server)', () => {
 		expect(await nth('result', 3)).toMatchObject({ is_error: true, result: null });
 	});
 
+	test('Codex: the proven models are offered and a switch reaches the next turn', async () => {
+		const { cwd, out, event, stderr, call } = setup();
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: CODEX });
+		const mark = out.length;
+		expect(await event('models')).toEqual({
+			kind: 'models',
+			models: [
+				{ value: 'gpt-other', display_name: 'gpt-other', description: '', efforts: ['low'] },
+				{ value: 'gpt-fake', display_name: 'gpt-fake', description: '', efforts: ['minimal', 'low', 'medium', 'high', 'xhigh'] }
+			]
+		});
+		expect((await call(2, 'set_options', { runId: 1, model: 'gpt-other' })).result).toMatchObject({ model: null });
+		await call(3, 'send', { runId: 1, text: 'y' });
+		await stderr('got turn/start untrusted model=gpt-other', mark);
+	});
+
 	test('resuming a thread, and a mode change reaching the next turn', async () => {
 		const { cwd, event, stderr, call } = setup();
 		await call(1, 'start', { runId: 1, cwd, prompt: 'ต่อ', runtime: CODEX, resume: 'thr-fake-1', permissionMode: 'acceptEdits' });
@@ -240,6 +256,27 @@ describe('Codex runtime (app-server)', () => {
 		await call(2, 'set_options', { runId: 1, permissionMode: 'bypassPermissions' });
 		await call(3, 'send', { runId: 1, text: 'อีก' });
 		await stderr('got turn/start never');
+	});
+});
+
+describe('list_models (before a run, a new chat picker)', () => {
+	test('an ACP agent: the handshake opens a session, its config options answer', async () => {
+		const { cwd, call } = setup();
+		const r = await call(1, 'list_models', { runtime: ACP, cwd, env: { FAKE_ACP_MODEL: '1' } });
+		expect(r.error).toBeUndefined();
+		expect(r.result).toEqual({ models: [{ value: 'fake-model', display_name: 'Fake', description: '' }, { value: 'alt-model', display_name: 'Alt', description: '' }] });
+	});
+
+	test('Codex: model/list answers with no thread', async () => {
+		const { cwd, call } = setup();
+		const r = await call(1, 'list_models', { runtime: CODEX, cwd });
+		expect(r.result).toEqual({ models: [{ value: 'gpt-other', display_name: 'gpt-other', description: '', efforts: ['low'] }, { value: 'gpt-fake', display_name: 'gpt-fake', description: '', efforts: ['minimal', 'low', 'medium', 'high', 'xhigh'] }] });
+	});
+
+	test('nothing to ask for the Claude SDK, and a bad cwd or runtime fails', async () => {
+		const { cwd, call } = setup();
+		expect((await call(1, 'list_models', { runtime: { kind: 'claude' }, cwd })).error?.message).toContain('list_models asks');
+		expect((await call(2, 'list_models', { runtime: ACP, cwd: 'relative' })).error?.message).toContain('cwd must be an absolute path');
 	});
 });
 
@@ -264,7 +301,21 @@ describe('reasoning effort (fake agents)', () => {
 		await stderr('got turn/start untrusted');
 	});
 
-	test('ACP: an advertised thought level is offered and set; an agent without one gets nothing', async () => {
+	test('ACP: the agent’s model choices are offered and a switch reaches the agent; none without one', async () => {
+		const { cwd, events, event, stderr, call } = setup();
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: ACP, env: { FAKE_ACP_MODEL: '1' } });
+		expect(await event('models')).toEqual({ kind: 'models', models: [{ value: 'fake-model', display_name: 'Fake', description: '' }, { value: 'alt-model', display_name: 'Alt', description: '' }] });
+		await event('result');
+		expect((await call(2, 'set_options', { runId: 1, model: 'alt-model' })).result).toMatchObject({ model: null });
+		await stderr('got session/set_config_option model=alt-model');
+
+		const none = setup();
+		await none.call(1, 'start', { runId: 1, cwd: none.cwd, prompt: 'x', runtime: ACP });
+		await none.event('result');
+		expect(none.events().some((e) => e.kind === 'models')).toBe(false);
+	});
+
+	test('ACP thinking: effort set on start reaches the agent as config option, listed, and switchable mid-session', async () => {
 		const { cwd, events, event, stderr, call } = setup();
 		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: ACP, env: { FAKE_ACP_THOUGHT: '1' }, effort: 'xhigh' });
 		await stderr('got session/set_config_option reasoning=extra_high');

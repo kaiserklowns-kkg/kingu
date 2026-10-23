@@ -331,15 +331,15 @@
 			<span class="text-(--vscode-errorForeground) whitespace-pre-wrap">{search.error}</span>
 		{:else if search.done}
 			<span class="truncate">
-				{search.done.matches === 0 ? 'ไม่พบผลลัพธ์ ลองปรับตัวเลือกหรือไฟล์ที่ exclude' : summarize(search.done.matches, search.done.files)}
-				{#if search.done.limitHit}· ผลลัพธ์ถูกตัดที่ {search.done.matches.toLocaleString()} รายการ{/if}
+				{search.done.matches === 0 ? t('legacyWorkbench.searchView.noResults') : summarize(search.done.matches, search.done.files)}
+				{#if search.done.limitHit}{t('legacyWorkbench.searchView.limitHit', { count: search.done.matches.toLocaleString() })}{/if}
 			</span>
 			<!-- VS Code's "Open in editor" link under the results (Search: Open Results in Editor). -->
 			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" onclick={openSearchViewInEditor}>{t('searchEditor.openInEditor')}</button>
 		{:else if search.running}
-			<span>กำลังค้นหา… {shownMatches ? summarize(shownMatches, search.files.length) : ''}</span>
+			<span>{t('legacyWorkbench.searchView.searching', { summary: shownMatches ? summarize(shownMatches, search.files.length) : '' })}</span>
 		{:else if !search.query}
-			<span class="text-xs">พิมพ์เพื่อค้นหาในทุกไฟล์ · ใช้ปุ่ม Aa / ab / .* ในช่องค้นหาเพื่อเลือกตัวพิมพ์ คำเต็ม หรือ regex</span>
+			<span class="text-xs">{t('legacyWorkbench.searchView.typeToSearch')}</span>
 		{/if}
 		{#if search.query}
 			<div class="ml-auto flex shrink-0 items-center">

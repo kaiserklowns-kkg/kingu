@@ -18,15 +18,19 @@
 		onClose: () => void;
 		/** ← / → past the edge of this level (top-level dropdowns switch menus). */
 		onSide?: (dir: -1 | 1) => void;
+		/** Open this menu to the left of its anchor (parent decided, near the window's right edge). */
+		flip?: boolean;
 		/** Focus the first item when shown (opened from the keyboard). */
 		focusFirst?: boolean;
 		submenu?: boolean;
 	};
-	let { items, label, onRun, onClose, onSide, focusFirst = false, submenu = false }: Props = $props();
+	let { items, label, onRun, onClose, onSide, flip = false, focusFirst = false, submenu = false }: Props = $props();
 
 	let list: HTMLDivElement | undefined = $state();
 	let openSub = $state<number | null>(null);
 	let subFocusFirst = $state(false);
+	/** Submenus open to the right, except near the window's right edge where they would clip. */
+	let subFlip = $state(false);
 
 	const enabled = (n: MenuNode) => n.type === 'role' || n.type === 'submenu' || (n.type === 'item' && n.enabled);
 
@@ -55,6 +59,8 @@
 
 	function openSubmenu(index: number, fromKeyboard: boolean) {
 		subFocusFirst = fromKeyboard;
+		const r = list?.getBoundingClientRect();
+		subFlip = !!r && r.right + 260 > (typeof window === 'undefined' ? 1200 : window.innerWidth);
 		openSub = index;
 	}
 
@@ -116,7 +122,7 @@
 	tabindex="-1"
 	class={[
 		'absolute z-50 min-w-[240px] rounded-lg border border-[color:var(--vscode-menu-border,#454545)] bg-[var(--vscode-menu-background,#1F1F1F)] py-1 text-[13px] text-[color:var(--vscode-menu-foreground,#CCCCCC)] shadow-xl shadow-black/40 outline-none',
-		submenu ? 'top-[-5px] left-full' : 'top-full left-0'
+		submenu ? (flip ? 'top-[-5px] right-full' : 'top-[-5px] left-full') : 'top-full left-0'
 	]}
 	onkeydown={onKey}
 >
@@ -156,6 +162,7 @@
 						items={node.items}
 						label={node.text}
 						submenu
+						flip={subFlip}
 						focusFirst={subFocusFirst}
 						{onRun}
 						onClose={() => {

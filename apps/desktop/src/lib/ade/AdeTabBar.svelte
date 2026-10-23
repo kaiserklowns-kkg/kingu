@@ -56,7 +56,7 @@
 			case 'copyPath': {
 				const text = workspace.root ? `${workspace.root}/${rel}` : rel;
 				await navigator.clipboard.writeText(text);
-				return status.flash(`คัดลอก ${text} แล้ว`, 3000);
+				return status.flash(tr('legacyAde.adeTabBar.copied', { text }), 3000);
 			}
 			case 'reveal':
 				return invoke('fs_reveal', { rel }).catch((e) => status.error(String(e)));
@@ -83,10 +83,10 @@
 		<div class={[TAB, ACTIVE]}>
 			<span class={ACCENT}></span>
 			{#if adeLayout.page === 'now'}<Icon name="agent" size={14} /> Now{:else if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else if adeLayout.page === 'issues'}<Icon name="bug" size={14} /> Issues{:else}<Icon name="tasks" size={14} /> Tasks{/if}
-			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ปิด {adeLayout.page === 'now' ? 'Now' : adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks'}" onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={tr('legacyAde.adeTabBar.closePage', { page: adeLayout.page === 'now' ? 'Now' : adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks' })} onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
-		<div class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="แท็บของ worktree">
+		<div class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label={tr('legacyAde.adeTabBar.worktreeTabs')}>
 			{#each tabs as t (t.id)}
 				{@const active = t.id === activeTab}
 				<div
@@ -107,7 +107,7 @@
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
 					{:else if t.kind === 'file' || t.kind === 'diff'}
 						<FileIcon icon={fileIcon(t.label)} />
-						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? `${fileOf(t.key)} (diff ของงาน)` : t.key}>{t.label}</span>
+						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? tr('legacyAde.adeTabBar.diffOfTask', { file: fileOf(t.key) }) : t.key}>{t.label}</span>
 						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
 						{#if t.kind === 'terminal' && t.color}<span class="size-2 shrink-0 rounded-full" style:background={t.color} aria-hidden="true"></span>{/if}
@@ -121,8 +121,8 @@
 						{@const dirty = t.kind === 'file' && editors.isDirty(t.key)}
 						<button
 							class={['grid size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !dirty && 'invisible group-hover:visible']}
-							aria-label={dirty ? `${t.label} ยังไม่บันทึก: ปิด` : `ปิด ${t.label}`}
-							title="ปิด"
+							aria-label={dirty ? tr('legacyAde.adeTabBar.unsavedClose', { label: t.label }) : tr('legacyAde.adeTabBar.closeTab', { label: t.label })}
+							title={tr('legacyAde.adeTabBar.close')}
 							onclick={(e) => (e.stopPropagation(), adeLayout.close(key, t.id))}
 						>
 							{#if dirty}
@@ -141,8 +141,8 @@
 		<div class="flex items-center self-center px-1">
 			<button
 				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
-				aria-label="Terminal ใหม่ใน worktree นี้"
-				title="Terminal ใหม่ใน worktree นี้ ({keyLabel('cmd+t')})"
+				aria-label={tr('legacyAde.adeTabBar.newTerminal')}
+				title={tr('legacyAde.adeTabBar.newTerminalTip', { shortcut: keyLabel('cmd+t') })}
 				disabled={!workspace.root}
 				onclick={() => adeLayout.newTerminal(key)}
 			>
@@ -154,7 +154,7 @@
 	{#if attention}
 		<button
 			class="needs-input my-auto mr-2 flex h-[22px] items-center gap-1.5 rounded-md px-2 text-xs text-(--vscode-editorWarning-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
-			title="{attention} — เลือก session"
+			title={tr('legacyAde.adeTabBar.chooseSession', { attention })}
 			onclick={pickSession}
 		>
 			<span class="size-2 rounded-full bg-(--vscode-editorWarning-foreground)"></span>{attention}

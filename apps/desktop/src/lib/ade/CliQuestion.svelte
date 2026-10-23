@@ -5,6 +5,7 @@
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { cliSessions } from './cliSessions.svelte';
 	import { cliName } from './agentCli';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { slug, class: klass = '' }: { slug: string; class?: string } = $props();
 
@@ -21,11 +22,11 @@
 		<div class={klass}>
 			<QuestionCard
 				prompt={ask}
-				submitLabel="พิมพ์คำตอบลง terminal"
-				dismissLabel="ซ่อน"
-				note="ตอบใน terminal ของ {run ? cliName(run) : 'agent'} ให้ (หรือตอบเองใน terminal ก็ได้)"
+				submitLabel={t('legacyAde.cliQuestion.submit')}
+				dismissLabel={t('legacyAde.cliQuestion.dismiss')}
+				note={t('legacyAde.cliQuestion.note', { agent: run ? cliName(run) : 'agent' })}
 				onsubmit={async (sels) => {
-					if (!(await cliSessions.answer(slug, sels))) status.flash('ส่งคำตอบไม่ได้: คำถามนี้ปิดไปแล้ว หรือ terminal ของ agent เปลี่ยนไป', 6000);
+					if (!(await cliSessions.answer(slug, sels))) status.flash(t('legacyAde.cliQuestion.sendFailed'), 6000);
 				}}
 				ondismiss={() => (hidden = id)}
 			/>

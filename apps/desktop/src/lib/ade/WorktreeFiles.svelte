@@ -28,6 +28,7 @@
 	import { splitPreview, type FileMatches, type SearchEvent } from '#lib/workbench/searchResults.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { t } from '#lib/i18n/index.ts';
 	import { worktreeDir } from './keys.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 	import { adeTasks } from './tasks.svelte.ts';
@@ -237,12 +238,12 @@
 
 	// --- File operations (the IDE explorer's commands, on this worktree) --------------------------
 
-	async function copy(text: string, what = 'path') {
+	async function copy(text: string, what = t('legacyAde.worktreeFiles.path')) {
 		try {
 			await navigator.clipboard.writeText(text);
-			status.flash(`คัดลอก ${what} แล้ว`);
+			status.flash(t('legacyAde.worktreeFiles.copied', { what }));
 		} catch (e) {
-			notifications.error(`คัดลอกไม่ได้: ${e}`);
+			notifications.error(t('legacyAde.worktreeFiles.copyFailed', { error: String(e) }));
 		}
 	}
 
@@ -307,7 +308,7 @@
 	/** Rename or drag-move: open tabs (here and in the IDE) follow; unsaved edits block it.
 	 * `record` adds it to the undo history (undo and redo themselves move without recording). */
 	async function move(from: string, to: string, record = true) {
-		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error('มีไฟล์ที่ยังไม่บันทึกอยู่ข้างใน: บันทึกก่อนย้ายหรือเปลี่ยนชื่อ');
+		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('legacyAde.worktreeFiles.moveUnsaved'));
 		await invoke('fs_rename', { from, to });
 		editing = null;
 		const wasOpen = Object.keys(open).filter((k) => open[k] && isUnder(k, from));
@@ -365,17 +366,23 @@
 		const list = targets(rel).filter((r) => r !== base);
 		if (!list.length) return;
 		const what =
-			list.length > 1 ? `${list.length} รายการที่เลือก` : isDir(list[0]) ? `โฟลเดอร์ '${baseName(list[0])}' และทุกอย่างข้างใน` : `'${baseName(list[0])}'`;
+			list.length > 1
+				? t('legacyAde.worktreeFiles.selectedItems', { count: list.length })
+				: isDir(list[0])
+					? t('legacyAde.worktreeFiles.folderWithContents', { name: baseName(list[0]) })
+					: t('legacyAde.worktreeFiles.itemName', { name: baseName(list[0]) });
 		const tabs = list.flatMap((r) => affectedBy([...editors.openPaths(), ...adeLayout.openFiles()], r));
-		const dirty = new Set(editors.allTabs().filter((t) => t.dirty && tabs.includes(t.path)).map((t) => t.path)).size;
+		const dirty = new Set(editors.allTabs().filter((tab) => tab.dirty && tabs.includes(tab.path)).map((tab) => tab.path)).size;
 		const trash = useTrash();
-		const unsaved = dirty ? `\n\nมี ${dirty} ไฟล์ที่ยังไม่บันทึก การแก้ไขจะหายไป` : '';
-		const question = trash ? `ย้าย ${what} ไปที่ถังขยะ?${unsaved}\n\nกู้คืนได้จากถังขยะ หรือกด ${isMac ? '⌘Z' : 'Ctrl+Z'}` : `ลบ ${what} ถาวร?${unsaved}\n\nกู้คืนไม่ได้ (files.enableTrash ปิดอยู่)`;
+		const unsaved = dirty ? t('legacyAde.worktreeFiles.unsavedNotice', { count: dirty }) : '';
+		const question = trash
+			? t('legacyAde.worktreeFiles.trashQuestion', { what, unsaved, shortcut: isMac ? '⌘Z' : 'Ctrl+Z' })
+			: t('legacyAde.worktreeFiles.deleteForeverQuestion', { what, unsaved });
 		const ok = await ask(question, {
 			title: 'Delete',
 			kind: 'warning',
-			okLabel: trash ? 'ย้ายไปถังขยะ' : 'ลบถาวร',
-			cancelLabel: 'ยกเลิก'
+			okLabel: trash ? t('legacyAde.worktreeFiles.moveToTrash') : t('legacyAde.worktreeFiles.deleteForever'),
+			cancelLabel: t('legacyAde.worktreeFiles.cancel')
 		});
 		if (!ok) return;
 		picked.clear();
@@ -393,7 +400,7 @@
 		history.push({
 			label: kept.length > 1 ? `Delete ${kept.length} items` : 'Delete',
 			undo: async () => {
-				if (!kept.length) throw new Error('ไม่มีสำเนาให้กู้คืน: กู้จากถังขยะแทน');
+				if (!kept.length) throw new Error(t('legacyAde.worktreeFiles.noRestore'));
 				for (const k of [...kept].reverse()) await restoreEntry(k.rel, k.token);
 				kept = kept.map((k) => ({ ...k, token: '' }));
 			},
@@ -431,7 +438,7 @@
 			},
 			redo: async () => {
 				for (const k of kept) {
-					if (!k.token) throw new Error(`'${baseName(k.rel)}' ไม่มีสำเนาให้กู้คืน`);
+					if (!k.token) throw new Error(t('legacyAde.worktreeFiles.noCopyToRestore', { name: baseName(k.rel) }));
 					await restoreEntry(k.rel, k.token);
 				}
 			}
@@ -475,7 +482,7 @@
 			if (id === 'newFile') void startCreate('file', target);
 			else if (id === 'newFolder') void startCreate('folder', target);
 			else if (id === 'copyPath') void copy(many.length > 1 ? many.map(abs).join('\n') : abs(rel));
-			else if (id === 'copyRel') void copy(many.length > 1 ? many.map(local).join('\n') : local(rel) || '.', 'relative path');
+			else if (id === 'copyRel') void copy(many.length > 1 ? many.map(local).join('\n') : local(rel) || '.', t('legacyAde.worktreeFiles.relativePath'));
 			else if (id === 'terminal') openTerminalAt(rel);
 			else if (id === 'findIn') findInFolder(rel);
 			else if (id === 'collapse') open[rel] = false;
@@ -594,7 +601,7 @@
 		else if ((isMac && mod && e.key === 'Backspace') || (!isMac && e.key === 'Delete')) void remove();
 		else if (mod && !e.altKey && e.code === 'KeyZ') void undoRedo(e.shiftKey ? 'redo' : 'undo');
 		else if (!isMac && mod && !e.altKey && e.code === 'KeyY') void undoRedo('redo');
-		else if (mod && e.altKey && e.code === 'KeyC') void (e.shiftKey ? copy(local(selected ?? base) || '.', 'relative path') : copy(abs(selected ?? base)));
+		else if (mod && e.altKey && e.code === 'KeyC') void (e.shiftKey ? copy(local(selected ?? base) || '.', t('legacyAde.worktreeFiles.relativePath')) : copy(abs(selected ?? base)));
 		else if (mod && e.altKey && e.code === 'KeyR') void reveal(selected ?? base);
 		else return;
 		e.preventDefault();
@@ -861,9 +868,9 @@
 	</div>
 
 	{#if find.view === 'contents' && find.query.trim()}
-		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label="ผลการค้นหา">
+		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label={t('legacyAde.worktreeFiles.searchResultsAria')}>
 			<p class="px-3 pb-1 text-[11px] text-(--vscode-descriptionForeground)">
-				{#if searchError}<span class="text-(--vscode-errorForeground)">{searchError}</span>{:else if searching && !results.length}กำลังค้นหา…{:else}{contentSummary(results, limitHit)}{/if}
+				{#if searchError}<span class="text-(--vscode-errorForeground)">{searchError}</span>{:else if searching && !results.length}{t('legacyAde.worktreeFiles.searching')}{:else}{contentSummary(results, limitHit)}{/if}
 			</p>
 			{#each contents as r (r.key)}
 				{#if r.kind === 'file'}
@@ -890,15 +897,15 @@
 			{/each}
 		</div>
 	{:else if find.view === 'names' && find.query.trim()}
-		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label="ไฟล์ที่ตรงกับชื่อ">
+		<div class="min-h-0 flex-1 overflow-y-auto py-2 text-xs" aria-label={t('legacyAde.worktreeFiles.nameMatchesAria')}>
 			{#if !names}
-				<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">กำลังอ่านรายชื่อไฟล์…</p>
+				<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">{t('legacyAde.worktreeFiles.readingNames')}</p>
 			{:else if !names.rows.length}
 				<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">No files match this filter</p>
 			{:else}
 				{#each names.rows as r, i (r.rel)}{@render nameRow(r, i === 0)}{/each}
 				{#if names.total > names.rows.filter((r) => !r.is_dir).length}
-					<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">แสดง {names.rows.filter((r) => !r.is_dir).length} จาก {names.total} ไฟล์ พิมพ์ให้เจาะจงขึ้น</p>
+					<p class="px-3 py-1 text-[11px] text-(--vscode-descriptionForeground)">{t('legacyAde.worktreeFiles.showingNames', { shown: names.rows.filter((r) => !r.is_dir).length, total: names.total })}</p>
 				{/if}
 			{/if}
 		</div>
@@ -926,7 +933,7 @@
 							<FileIcon icon={item.is_dir ? folderIcon(item.value, false) : fileIcon(item.value)} />
 							<input
 								use:editBox={{ value: item.value, is_dir: item.is_dir }}
-								aria-label={editing?.kind === 'rename' ? 'ชื่อใหม่' : item.is_dir ? 'ชื่อโฟลเดอร์ใหม่' : 'ชื่อไฟล์ใหม่'}
+								aria-label={editing?.kind === 'rename' ? t('legacyAde.worktreeFiles.renameAria') : item.is_dir ? t('legacyAde.worktreeFiles.newFolderNameAria') : t('legacyAde.worktreeFiles.newFileNameAria')}
 								aria-invalid={inputError !== ''}
 								spellcheck="false"
 								class={['min-w-0 flex-1 rounded-sm border bg-transparent px-1 text-xs text-(--vscode-input-foreground) outline-none', inputError ? 'border-[color:var(--vscode-inputValidation-errorBorder,#BE1100)]' : 'border-(--vscode-focusBorder)']}

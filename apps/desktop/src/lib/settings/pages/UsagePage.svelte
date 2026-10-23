@@ -7,7 +7,7 @@
 	import { providerIconKey } from '#lib/agent/agentIcons.ts';
 	import { usage } from '#lib/workbench/usage.svelte.ts';
 	import { barTone, clampPct, errorMessage, listed, percentLabel, poolsOf, PROVIDER_NAME, resetsIn, rowState, shownPct, updatedLabel, windowsOf, type UsageDisplay } from '#lib/workbench/usage.ts';
-	import { t } from '#lib/i18n/index.ts';
+	import { locale, t } from '#lib/i18n/index.ts';
 	import UsageCredentials from './UsageCredentials.svelte';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { runWorktreeAction } from '#lib/ade/worktreeMenu.svelte.ts';
@@ -23,7 +23,7 @@
 	const notSetUp = $derived(usage.active.filter((id) => !listed(id, usage.providers[id])));
 	const peak = $derived(Math.max(...spend.days.map((d) => d.cost), 0.01));
 	const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n));
-	const day = (ms: number) => new Date(ms).toLocaleDateString('th-TH', { weekday: 'short' });
+	const day = (ms: number) => new Date(ms).toLocaleDateString(locale() === 'th' ? 'th-TH' : 'en-US', { weekday: 'short' });
 	const BAR: Record<string, string> = { neutral: 'bg-(--vscode-descriptionForeground)/40', warning: 'bg-yellow-500', critical: 'bg-red-500' };
 	function openTask(slug: string) {
 		systemSettings.close();
@@ -43,7 +43,7 @@
 				<span class={['grid place-items-center', usage.refreshing && 'animate-spin']}><Icon name="refresh" size={14} /></span>Refresh
 			</button>
 		</div>
-		<p class="mt-1 text-[13px] {MUTED}">โควตาของ agent แต่ละเจ้า (ดึงด้วยบัญชีที่ CLI ของเจ้านั้นลงชื่อเข้าใช้ไว้) และค่าใช้จ่ายของ agent ในโฟลเดอร์นี้</p>
+		<p class="mt-1 text-[13px] {MUTED}">{t('legacySettings.usagePage.intro')}</p>
 
 		<h2 class={SECTION}>Usage limits</h2>
 		<div class="space-y-2">
@@ -64,7 +64,7 @@
 										<div class={['h-full rounded-full', BAR[barTone(clampPct(w.window.usedPercent))]]} style:width="{shownPct(w.window.usedPercent, display)}%"></div>
 									</div>
 									{#if w.window.resetsAt !== null}
-										<div class="mt-1 text-xs {MUTED}">{resetsIn(w.window.resetsAt - usage.now)} · {new Date(w.window.resetsAt).toLocaleString('th-TH', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+										<div class="mt-1 text-xs {MUTED}">{resetsIn(w.window.resetsAt - usage.now)} · {new Date(w.window.resetsAt).toLocaleString(locale() === 'th' ? 'th-TH' : 'en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}</div>
 									{/if}
 								</div>
 							{/each}
@@ -87,7 +87,7 @@
 					{/if}
 				</div>
 			{:else}
-				<p class="text-[13px] {MUTED}">ไม่พบ Claude Code หรือ Codex CLI ในเครื่องนี้</p>
+				<p class="text-[13px] {MUTED}">{t('legacySettings.usagePage.noClis')}</p>
 			{/each}
 		</div>
 
@@ -108,9 +108,9 @@
 		<h2 class={SECTION}>Usage footer detail</h2>
 		<SettingChoice id="kingu.usage.mode" labels={{ detailed: 'Detailed', compact: 'Compact' }} />
 
-		<h2 class={SECTION}>ค่าใช้จ่ายของ agent ในโฟลเดอร์นี้</h2>
+		<h2 class={SECTION}>{t('legacySettings.usagePage.spendSection')}</h2>
 		<div class="grid grid-cols-3 gap-2">
-			{#each [{ label: 'วันนี้', value: `$${spend.today.toFixed(2)}` }, { label: '7 วันล่าสุด', value: `$${spend.week.toFixed(2)}` }, { label: 'tokens (ทุกงาน)', value: compact(spend.tokens) }] as stat (stat.label)}
+			{#each [{ label: t('legacySettings.usagePage.today'), value: `$${spend.today.toFixed(2)}` }, { label: t('legacySettings.usagePage.last7Days'), value: `$${spend.week.toFixed(2)}` }, { label: t('legacySettings.usagePage.tokensAllTasks'), value: compact(spend.tokens) }] as stat (stat.label)}
 				<div class="{CARD} px-4 py-3">
 					<div class="text-xs {MUTED}">{stat.label}</div>
 					<div class="mt-0.5 text-lg font-semibold tabular-nums">{stat.value}</div>
@@ -118,19 +118,19 @@
 			{/each}
 		</div>
 		<div class="{CARD} mt-2 px-4 pt-4 pb-2">
-			<div class="flex h-24 items-end gap-2" role="img" aria-label="ค่าใช้จ่าย 7 วันล่าสุด">
+			<div class="flex h-24 items-end gap-2" role="img" aria-label={t('legacySettings.usagePage.spendChartAria')}>
 				{#each spend.days as d (d.start)}
-					<div class="flex h-full flex-1 flex-col items-center justify-end gap-1" title="{day(d.start)} · ${d.cost.toFixed(2)} · {d.runs} งาน">
+					<div class="flex h-full flex-1 flex-col items-center justify-end gap-1" title={t('legacySettings.usagePage.dayTooltip', { day: day(d.start), cost: d.cost.toFixed(2), count: d.runs })}>
 						<div class="w-full max-w-10 rounded-t-md bg-(--vscode-textLink-foreground) opacity-80" style:height="{d.cost ? Math.max(4, (d.cost / peak) * 100) : 2}%"></div>
 					</div>
 				{/each}
 			</div>
 			<div class="mt-1 flex gap-2 text-center text-[11px] {MUTED}">
-				{#each spend.days as d, i (d.start)}<span class="flex-1">{i === 6 ? 'วันนี้' : day(d.start)}</span>{/each}
+				{#each spend.days as d, i (d.start)}<span class="flex-1">{i === 6 ? t('legacySettings.usagePage.today') : day(d.start)}</span>{/each}
 			</div>
 		</div>
 
-		<h2 class={SECTION}>ประวัติตามงาน</h2>
+		<h2 class={SECTION}>{t('legacySettings.usagePage.historySection')}</h2>
 		<div class="{CARD} overflow-hidden">
 			{#each spend.rows as r (r.slug)}
 				<button class="flex w-full items-center gap-3 border-b border-(--vscode-widget-border) px-4 py-2.5 text-left last:border-b-0 hover:bg-(--vscode-list-hoverBackground)" onclick={() => openTask(r.slug)}>
@@ -142,10 +142,10 @@
 					<span class="w-16 shrink-0 text-right text-[13px] tabular-nums">{r.run.cost_usd === null ? '—' : `$${r.run.cost_usd.toFixed(2)}`}</span>
 				</button>
 			{:else}
-				<p class="px-4 py-3 text-[13px] {MUTED}">ยังไม่มีงานที่ agent ทำเสร็จในโฟลเดอร์นี้</p>
+				<p class="px-4 py-3 text-[13px] {MUTED}">{t('legacySettings.usagePage.noTasks')}</p>
 			{/each}
 		</div>
-		<p class="mt-2 text-xs {MUTED}">นับจากรอบล่าสุดของแต่ละงาน (ค่าใช้จ่ายสะสมของ session นั้น) รอบที่เก่ากว่าไม่ได้เก็บไว้ ตัวเลขจริงจึงอาจสูงกว่านี้</p>
+		<p class="mt-2 text-xs {MUTED}">{t('legacySettings.usagePage.note')}</p>
 
 		<VaultStats />
 	</div>

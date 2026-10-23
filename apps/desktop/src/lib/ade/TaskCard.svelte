@@ -12,6 +12,7 @@
 	import { sourceName } from './taskSources.ts';
 	import CacheTimer from './CacheTimer.svelte';
 	import TaskBadges from './TaskBadges.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	let { view }: { view: TaskView } = $props();
 	/** The session shown in the Agents layout. */
@@ -63,7 +64,7 @@
 		<span class="min-w-0 flex-1 truncate">{meta.agent}{model ? ` · ${model}` : ''}</span>
 		{#if meta.issue}
 			{@const issue = meta.issue}
-			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title="เปิด issue {issueRef(issue)} บน {sourceName(issue)}: {issue.title}" onclick={(e) => (e.stopPropagation(), issues.open(issue))}>{issueRef(issue)}</button>
+			<button class="shrink-0 text-(--vscode-textLink-foreground) hover:underline" title={t('legacyAde.taskCard.openIssueTitle', { ref: issueRef(issue), source: sourceName(issue), title: issue.title })} onclick={(e) => (e.stopPropagation(), issues.open(issue))}>{issueRef(issue)}</button>
 		{/if}
 	</div>
 	{#if busy}
@@ -71,27 +72,27 @@
 	{:else if isQuestion(view)}
 		<div class="mt-1 flex items-center gap-1 truncate {QUESTION_TEXT}" title={summary}><Icon name="question" size={12} filled /><span class="truncate">{summary}</span></div>
 	{:else if view.status === 'waiting'}
-		<div class="mt-1 truncate text-(--vscode-editorWarning-foreground)">รออนุญาต {view.runtime?.pendingPermissions || ''} รายการ · {summary}</div>
+		<div class="mt-1 truncate text-(--vscode-editorWarning-foreground)">{t('legacyAde.taskCard.waitingPermission', { count: view.runtime?.pendingPermissions ?? 0, summary })}</div>
 	{:else if summary}
 		<div class="mt-1 truncate text-(--vscode-foreground)/80" title={summary}>{summary}</div>
 	{/if}
 	<div class="mt-1.5 flex items-center gap-2">
-		{#if usage}<span class="truncate text-[10px] text-(--vscode-descriptionForeground)" title="usage ของ session">{usage}</span>{/if}
+		{#if usage}<span class="truncate text-[10px] text-(--vscode-descriptionForeground)" title={t('legacyAde.taskCard.usageTitle')}>{usage}</span>{/if}
 		{#if totals}
 			<span class="font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>
-			<span class="text-(--vscode-descriptionForeground)">{totals.files} ไฟล์</span>
+			<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.taskCard.fileCount', { count: totals.files })}</span>
 		{/if}
 		<span class="flex-1"></span>
 		<span class={['rounded-full border px-1.5 text-[10px] leading-4 whitespace-nowrap', TONE[chip.tone]]} title={view.statError ?? meta.pr_url ?? ''}>{chip.label}</span>
 	</div>
 	<div class="absolute top-1 right-1 hidden gap-0.5 rounded bg-(--vscode-editor-background) group-focus-within:flex group-hover:flex">
 		{#if running}
-			<button class={ICON_BUTTON} aria-label="หยุดรอบนี้" title="หยุดรอบนี้ (Interrupt)" onclick={(e) => (e.stopPropagation(), adeTasks.interrupt(meta.slug))}><Icon name="stop" size={14} /></button>
+			<button class={ICON_BUTTON} aria-label={t('legacyAde.taskCard.interrupt')} title={t('legacyAde.taskCard.interruptTip')} onclick={(e) => (e.stopPropagation(), adeTasks.interrupt(meta.slug))}><Icon name="stop" size={14} /></button>
 		{/if}
-		<button class={ICON_BUTTON} aria-label="เปิดไฟล์ใน worktree" title="เปิดไฟล์ใน worktree" disabled={!!view.statError} onclick={(e) => (e.stopPropagation(), adeTasks.quickOpen(meta.slug))}>
+		<button class={ICON_BUTTON} aria-label={t('legacyAde.taskCard.openFileWorktree')} title={t('legacyAde.taskCard.openFileWorktree')} disabled={!!view.statError} onclick={(e) => (e.stopPropagation(), adeTasks.quickOpen(meta.slug))}>
 			<Icon name="goToFile" size={14} />
 		</button>
-		<button class={ICON_BUTTON} aria-label="ลบงานและ worktree" title="ลบงานและ worktree (Delete)" disabled={running} onclick={(e) => (e.stopPropagation(), adeTasks.remove(meta.slug))}>
+		<button class={ICON_BUTTON} aria-label={t('legacyAde.taskCard.deleteTask')} title={t('legacyAde.taskCard.deleteTaskTip')} disabled={running} onclick={(e) => (e.stopPropagation(), adeTasks.remove(meta.slug))}>
 			<Icon name="trash" size={14} />
 		</button>
 	</div>

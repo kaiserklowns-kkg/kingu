@@ -209,9 +209,9 @@
 	const ADD_ITEMS: MenuNode[] = $derived([
 		menuItem('add', t('adeProjects.add')),
 		menuSeparator,
-		menuItem('open', 'เปิดโฟลเดอร์… (Open Folder)'),
+		menuItem('open', t('legacyAde.adeSidebar.openFolder')),
 		menuItem('clone', 'Clone repository…'),
-		menuItem('create', 'สร้างโปรเจกต์ใหม่… (New Project)')
+		menuItem('create', t('legacyAde.adeSidebar.newProject'))
 	]);
 	function runAdd(id: string) {
 		if (id === 'add') void projects.pickAndAdd();
@@ -260,7 +260,7 @@
 		if (prefs.sortBy !== 'manual') {
 			const previous = prefs.sortBy;
 			prefs.sortBy = 'manual';
-			status.flash(`Sort changed to Manual · Manual keeps workspaces where you drop them. (เดิม: ${SORT_LABEL[previous]})`, 8000);
+			status.flash(t('legacyAde.adeSidebar.sortManualFlash', { previous: SORT_LABEL[previous] }), 8000);
 		}
 	}
 
@@ -537,7 +537,7 @@
 						{#if props.has('branch') || pr || issue || auto || (totals && (totals.added || totals.deleted))}
 							<div class="flex min-w-0 items-center gap-1.5 text-[11px] leading-none {MUTED}">
 								{#if props.has('branch')}<span class="min-w-0 flex-1 truncate" title={r.branch}>{r.branch}</span>{:else}<span class="flex-1"></span>{/if}
-								{#if auto}<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-[14px]" title="งานที่ automation สร้าง">auto</span>{/if}
+								{#if auto}<span class="shrink-0 rounded border border-(--vscode-widget-border) px-1 text-[10px] leading-[14px]" title={t('legacyAde.adeSidebar.automationTask')}>auto</span>{/if}
 								{#if issue}<span class="shrink-0 font-mono" title="{sourceName(issue)}: {issue.title}">{issueRef(issue)}</span>{/if}
 								{#if pr}<span class="shrink-0 font-mono" title="PR #{pr.number}: {pr.title} ({pr.draft ? 'DRAFT' : pr.state})">PR #{pr.number}</span>{/if}
 								{#if totals && (totals.added || totals.deleted)}<span class="shrink-0 font-mono"><span class="text-[#73C991]">+{totals.added}</span> <span class="text-[#F48771]">−{totals.deleted}</span></span>{/if}
@@ -673,9 +673,9 @@
 				<span class={on ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name={n.icon} size={16} /></span>
 				<span class="flex-1">{n.label}</span>
 				{#if n.page === 'now' && adeTasks.counts.needsInput}
-					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title="รอคุณ">{adeTasks.counts.needsInput}</span>
+					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title={t('legacyAde.adeSidebar.waitingForYou')}>{adeTasks.counts.needsInput}</span>
 				{:else if n.page === 'automations' && automations.activeCount}
-					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? 'automation ที่เปิดอยู่' : 'หยุดทั้งหมดอยู่'}>{automations.globalEnabled ? automations.activeCount : 'หยุด'}</span>
+					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? t('legacyAde.adeSidebar.automationEnabled') : t('legacyAde.adeSidebar.automationsStopped')}>{automations.globalEnabled ? automations.activeCount : t('legacyAde.adeSidebar.stopped')}</span>
 				{/if}
 			</button>
 		{/each}
@@ -731,7 +731,7 @@
 				<p>No workspaces found</p>
 				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => commands.run('workbench.action.files.openFolder')}>Add project</button>
 				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('clone')}>Clone repository…</button>
-				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>สร้างโปรเจกต์ใหม่…</button>
+				<button class="block w-full text-(--vscode-textLink-foreground) hover:underline" onclick={() => repoDialog.show('create')}>{t('legacyAde.adeSidebar.newProject')}</button>
 			</div>
 		{:else if prefs.activity}
 			<!-- Activity view: every agent session of every project, the ones that need you first. -->
@@ -753,8 +753,8 @@
 		{:else}
 			{#if notGit}
 				<div class="mx-2 mb-2 space-y-1.5 rounded-lg border border-(--vscode-widget-border) px-2.5 py-2 text-xs">
-					<p class={MUTED}>โฟลเดอร์นี้ยังไม่เป็น git repository งานของ agent ต้องแตก git worktree จึงยังสร้างงานไม่ได้</p>
-					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>เริ่มใช้ git (git init + commit แรก)</button>
+					<p class={MUTED}>{t('legacyAde.adeSidebar.notGitText')}</p>
+					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>{t('legacyAde.adeSidebar.initGit')}</button>
 				</div>
 			{/if}
 			{#each groups as g, gi (g.id)}
@@ -807,7 +807,7 @@
 				<div class="relative px-1 pb-1">
 					<button
 						class="ml-1 flex w-[calc(100%-4px)] flex-col rounded-lg border border-transparent py-1.5 pr-1.5 pl-1.5 text-left hover:bg-(--vscode-list-hoverBackground)/60"
-						title="{w.path} — worktree ที่ Kingu ไม่ได้สร้าง ({w.kind === 'agent' ? 'ของ agent' : 'ภายนอก'})"
+						title={t('legacyAde.adeSidebar.externalWorktreeTitle', { path: w.path, kind: w.kind === 'agent' ? t('legacyAde.adeSidebar.externalKindAgent') : t('legacyAde.adeSidebar.externalKindExternal') })}
 						onclick={(e) => {
 							const rr = e.currentTarget.getBoundingClientRect();
 							externalMenu = { path: w.path, x: rr.left + 16, y: rr.bottom + 2 };
@@ -847,14 +847,14 @@
 	{@const path = externalMenu.path}
 	{@const openIn = actionsFor('').flatMap((r) => (r !== 'separator' && r.id.startsWith('openIn:') ? [r] : []))}
 	<PopupMenu
-		items={[...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', 'คัดลอก path')]}
+		items={[...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath'))]}
 		label="Worktree"
 		x={externalMenu.x}
 		y={externalMenu.y}
 		onRun={(node) => {
 			if (node.type !== 'item') return;
 			if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
-			else void navigator.clipboard.writeText(path).then(() => status.flash('คัดลอก path แล้ว'));
+			else void navigator.clipboard.writeText(path).then(() => status.flash(t('legacyAde.adeSidebar.copiedPath')));
 		}}
 		onClose={() => (externalMenu = null)}
 	/>

@@ -3,6 +3,7 @@
 	// array settings (`editor.rulers`) and map settings (`files.exclude`, `terminal.integrated.env.osx`).
 	import Icon from '#lib/workbench/Icon.svelte';
 	import type { SettingSchema } from './registry';
+	import { t } from '#lib/i18n/index.ts';
 
 	type ListSchema = Extract<SettingSchema, { type: 'array' } | { type: 'object' }>;
 	/** `quiet`: an outlined add button, for Orca-style panes (VS Code's editor keeps its primary button). */
@@ -57,7 +58,7 @@
 		{#each items as item, i (i)}
 			<div class={ROW}>
 				<span class="flex-1 truncate font-mono">{item}</span>
-				<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ลบ {item}" {disabled} onclick={() => onchange(items.filter((_, j) => j !== i))}>
+				<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('legacySettings.listSetting.removeItem', { item })} {disabled} onclick={() => onchange(items.filter((_, j) => j !== i))}>
 					<Icon name="close" size={14} />
 				</button>
 			</div>
@@ -65,14 +66,14 @@
 		<div class="mt-1 flex gap-2">
 			{#if schema.itemEnum}
 				<!-- VS Code's list widget offers the allowed values (`items.enum`, e.g. git.checkoutType). -->
-				<select class={[INPUT, 'flex-1']} bind:value={draftKey} {disabled} aria-label="เพิ่มรายการ (Add Item)">
-					<option value="">เลือกค่า (Select a value)</option>
+				<select class={[INPUT, 'flex-1']} bind:value={draftKey} {disabled} aria-label={t('legacySettings.listSetting.addItemAria')}>
+					<option value="">{t('legacySettings.listSetting.selectValue')}</option>
 					{#each schema.itemEnum.filter((v) => !items.includes(v)) as option (option)}
 						<option value={option}>{option}</option>
 					{/each}
 				</select>
 			{:else}
-				<input class={[INPUT, 'flex-1']} placeholder={schema.items === 'number' ? 'เพิ่มตัวเลข (Add Item)' : 'เพิ่มรายการ (Add Item)'} bind:value={draftKey} {disabled} onkeydown={(e) => e.key === 'Enter' && addItem()} />
+				<input class={[INPUT, 'flex-1']} placeholder={schema.items === 'number' ? t('legacySettings.listSetting.addNumberPlaceholder') : t('legacySettings.listSetting.addItemPlaceholder')} bind:value={draftKey} {disabled} onkeydown={(e) => e.key === 'Enter' && addItem()} />
 			{/if}
 			<button class={ADD} {disabled} onclick={addItem}>Add Item</button>
 		</div>
@@ -85,17 +86,17 @@
 				<span class="flex-1 truncate font-mono">{key}</span>
 				{#if typeof v === 'object' && v}<span class="truncate text-xs text-(--vscode-descriptionForeground)">when: {v.when}</span>{/if}
 				{#if !patterns}
-					<input class={[INPUT, 'w-40']} value={String(v)} {disabled} aria-label="ค่าของ {key}" onchange={(e) => onchange({ ...Object.fromEntries(entries), [key]: parseValue(e.currentTarget.value) })} />
+					<input class={[INPUT, 'w-40']} value={String(v)} {disabled} aria-label={t('legacySettings.listSetting.valueOf', { key })} onchange={(e) => onchange({ ...Object.fromEntries(entries), [key]: parseValue(e.currentTarget.value) })} />
 				{/if}
-				<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label="ลบ {key}" {disabled} onclick={() => onchange(without(key))}>
+				<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('legacySettings.listSetting.removeItem', { item: key })} {disabled} onclick={() => onchange(without(key))}>
 					<Icon name="close" size={14} />
 				</button>
 			</div>
 		{/each}
 		<div class="mt-1 flex gap-2">
-			<input class={[INPUT, 'flex-1']} placeholder={patterns ? 'เพิ่ม pattern (Add Pattern)' : 'คีย์ (Key)'} bind:value={draftKey} {disabled} onkeydown={(e) => e.key === 'Enter' && addEntry()} />
+			<input class={[INPUT, 'flex-1']} placeholder={patterns ? t('legacySettings.listSetting.addPatternPlaceholder') : t('legacySettings.listSetting.keyPlaceholder')} bind:value={draftKey} {disabled} onkeydown={(e) => e.key === 'Enter' && addEntry()} />
 			{#if !patterns}
-				<input class={[INPUT, 'w-40']} placeholder="ค่า (Value)" bind:value={draftValue} {disabled} onkeydown={(e) => e.key === 'Enter' && addEntry()} />
+				<input class={[INPUT, 'w-40']} placeholder={t('legacySettings.listSetting.valuePlaceholder')} bind:value={draftValue} {disabled} onkeydown={(e) => e.key === 'Enter' && addEntry()} />
 			{/if}
 			<button class={ADD} {disabled} onclick={addEntry}>
 				{patterns ? 'Add Pattern' : 'Add Item'}

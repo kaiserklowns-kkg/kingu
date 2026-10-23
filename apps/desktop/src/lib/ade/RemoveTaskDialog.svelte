@@ -8,6 +8,7 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import type { GitStatus } from '#lib/workbench/scm.ts';
 	import AdeDialog from './AdeDialog.svelte';
+	import { t } from '#lib/i18n/index.ts';
 	import { worktreeDir } from './keys.ts';
 	import { adeTasks } from './tasks.svelte.ts';
 	import { BUTTON, BUTTON_SECONDARY, LETTER_COLOR } from './ui.ts';
@@ -48,20 +49,20 @@
 		if (remember) {
 			try {
 				await settings.set('kingu.worktree.confirmRemove', false, 'user');
-				status.flash('ครั้งหน้าจะลบโดยไม่ถาม เปลี่ยนได้ใน Settings: kingu.worktree.confirmRemove', 8000);
+				status.flash(t('legacyAde.removeTaskDialog.rememberNotice', { setting: 'kingu.worktree.confirmRemove' }), 8000);
 			} catch (e) {
-				status.flash(`บันทึกการตั้งค่าไม่ได้: ${e}`, 8000);
+				status.flash(t('legacyAde.removeTaskDialog.saveSettingFailed', { error: String(e) }), 8000);
 			}
 		}
 	}
 </script>
 
-<AdeDialog title="ลบงาน" {busy} {onClose}>
+<AdeDialog title={t('legacyAde.removeTaskDialog.title')} {busy} {onClose}>
 	{#if meta}
 		<div class="space-y-3">
 			<p>
-				ลบ <span class="font-semibold">{meta.title}</span>
-				{hasWorktree ? ' ออกจาก git และลบโฟลเดอร์ worktree ของมัน' : ' ออกจากรายการงาน (ไม่มีโฟลเดอร์ worktree แล้ว)'}
+				{t('legacyAde.removeTaskDialog.remove')} <span class="font-semibold">{meta.title}</span>
+				{hasWorktree ? t('legacyAde.removeTaskDialog.withWorktree') : t('legacyAde.removeTaskDialog.withoutWorktree')}
 			</p>
 			<div class="space-y-0.5 rounded border border-(--vscode-widget-border) px-2.5 py-1.5 text-xs">
 				<div class="truncate">{meta.title}</div>
@@ -72,27 +73,27 @@
 			{#if hasWorktree}
 				<div class="text-xs">
 					{#if checkError}
-						<span class="text-(--vscode-descriptionForeground)">ตรวจการเปลี่ยนแปลงไม่ได้: {checkError}</span>
+						<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.removeTaskDialog.checkFailed', { error: checkError })}</span>
 					{:else if !changes}
-						<span class="text-(--vscode-descriptionForeground)">กำลังตรวจการเปลี่ยนแปลง…</span>
+						<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.removeTaskDialog.checkingChanges')}</span>
 					{:else if !changes.count}
 						<span class="text-(--vscode-descriptionForeground)">{dirtyLabel(0)}</span>
 					{:else}
 						<button class="text-(--vscode-editorWarning-foreground) hover:underline" aria-expanded={showFiles} onclick={() => (showFiles = !showFiles)}>{dirtyLabel(changes.count)} {showFiles ? '▾' : '▸'}</button>
 						{#if showFiles}
-							<ul class="mt-1 space-y-0.5 rounded border border-(--vscode-widget-border) px-2 py-1 font-mono" aria-label="ไฟล์ที่เปลี่ยน">
+							<ul class="mt-1 space-y-0.5 rounded border border-(--vscode-widget-border) px-2 py-1 font-mono" aria-label={t('legacyAde.removeTaskDialog.changedFiles')}>
 								{#each changes.files as f (f.path)}
 									<li class="flex gap-2"><span class={['w-3 shrink-0 text-center', LETTER_COLOR[f.letter === 'U' ? '?' : f.letter] ?? '']}>{f.letter}</span><span class="truncate" title={f.path}>{f.path}</span>{#if f.conflict}<span class="text-(--vscode-errorForeground)">conflict</span>{/if}</li>
 								{/each}
-								{#if changes.more}<li class="text-(--vscode-descriptionForeground)">และอีก {changes.more} ไฟล์</li>{/if}
+								{#if changes.more}<li class="text-(--vscode-descriptionForeground)">{t('legacyAde.removeTaskDialog.moreFiles', { count: changes.more })}</li>{/if}
 							</ul>
 						{/if}
-						<p class="mt-1 text-(--vscode-editorWarning-foreground)">การแก้ไขที่ยังไม่ commit และไฟล์ untracked จะถูกลบถาวร</p>
+						<p class="mt-1 text-(--vscode-editorWarning-foreground)">{t('legacyAde.removeTaskDialog.warning')}</p>
 					{/if}
 				</div>
 
 				<fieldset class="space-y-1 text-xs">
-					<legend class="mb-1 text-(--vscode-descriptionForeground)">branch <span class="font-mono">{branch}</span></legend>
+					<legend class="mb-1 text-(--vscode-descriptionForeground)">{t('legacyAde.removeTaskDialog.branchLabel')} <span class="font-mono">{branch}</span></legend>
 					{#each BRANCH_CHOICES as c (c.id)}
 						<label class="flex items-center gap-1.5"><input type="radio" name="branch-{slug}" value={c.id} bind:group={deleteBranch} disabled={busy} /> {c.label}</label>
 					{/each}
@@ -101,14 +102,14 @@
 
 			<label class="flex items-center gap-1.5 text-xs">
 				<input type="checkbox" bind:checked={dontAsk} disabled={busy} />
-				ไม่ต้องถามอีก (ลบทันทีครั้งหน้า)
+				{t('legacyAde.removeTaskDialog.dontAsk')}
 			</label>
 		</div>
 	{/if}
 	{#snippet footer()}
-		<button class={BUTTON_SECONDARY} disabled={busy} onclick={onClose}>ยกเลิก</button>
+		<button class={BUTTON_SECONDARY} disabled={busy} onclick={onClose}>{t('legacyAde.removeTaskDialog.cancel')}</button>
 		<button class={BUTTON} data-autofocus disabled={busy || (hasWorktree && !changes && !checkError)} onclick={confirm}>
-			{busy ? 'กำลังลบ…' : changes?.count ? 'ลบทิ้งพร้อมการแก้ไข' : 'ลบงาน'}
+			{busy ? t('legacyAde.removeTaskDialog.removing') : changes?.count ? t('legacyAde.removeTaskDialog.removeWithChanges') : t('legacyAde.removeTaskDialog.title')}
 		</button>
 	{/snippet}
 </AdeDialog>

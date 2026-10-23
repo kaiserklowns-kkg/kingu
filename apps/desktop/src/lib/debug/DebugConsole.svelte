@@ -11,6 +11,7 @@
 	import { collapseLines, consoleFont, historyMatches } from './debugSettings.ts';
 	import type { CompletionItem } from './protocol.ts';
 	import { applyCompletion, rankCompletions, wordBefore } from './replCompletion.ts';
+	import { t } from '#lib/i18n/index.ts';
 
 	let input = $state('');
 	let history = $state<string[]>([]);
@@ -135,11 +136,11 @@
 			</button>
 			{#each output as line, i (i)}<span class={color[line.category]}>{#if line.count > 1}<span
 							class="mr-1 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)"
-							title="{line.count} ครั้ง">{line.count}</span
+							title={t('legacySettings.debugConsole.repeated', { count: line.count })}>{line.count}</span
 						>{/if}{line.text}</span
 				>{/each}
 		{:else}
-			<span class="text-(--vscode-descriptionForeground)">{debug.active ? '' : 'เริ่ม debug (F5) แล้ว output ของโปรแกรมจะแสดงที่นี่'}</span>
+			<span class="text-(--vscode-descriptionForeground)">{debug.active ? '' : t('legacySettings.debugConsole.empty')}</span>
 		{/if}
 	</div>
 	<div class="relative flex shrink-0 items-center gap-1 border-t border-(--vscode-panel-border) px-2">
@@ -159,7 +160,7 @@
 		<Icon name="chevronRight" size={14} />
 		<input
 			aria-label="Debug Console input"
-			placeholder={debug.stopped ? 'ประเมินนิพจน์ใน frame ที่เลือก' : 'Debug Console'}
+			placeholder={debug.stopped ? t('legacySettings.debugConsole.evaluatePlaceholder') : 'Debug Console'}
 			bind:value={input}
 			bind:this={inputEl}
 			oninput={() => ((browsing = false), (suggestionAt = 0), requestCompletions())}

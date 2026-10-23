@@ -10,6 +10,7 @@
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import { workspace } from './workspace.svelte';
 	import { status } from './status.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	type Open = 'awake' | 'resources' | 'ports' | null;
 	let open = $state<Open>(null);
@@ -69,7 +70,7 @@
 
 	async function copy(text: string) {
 		await navigator.clipboard.writeText(text);
-		status.flash(`คัดลอก ${text} แล้ว`, 2500);
+		status.flash(t('legacyWorkbench.statusResources.copied', { text }), 2500);
 	}
 
 	const ITEM = 'flex h-full items-center gap-1 px-2 tabular-nums hover:bg-(--vscode-toolbar-hoverBackground) aria-expanded:bg-(--vscode-toolbar-hoverBackground)';
@@ -84,8 +85,8 @@
 			class={ITEM}
 			aria-haspopup="dialog"
 			aria-expanded={open === 'awake'}
-			aria-label="กันเครื่องหลับ: {mode}, {s.keep_awake ? 'Active' : 'Inactive'}"
-			title="กันเครื่องหลับ: {KEEP_AWAKE_MODES.find((m) => m.id === mode)?.description}"
+			aria-label={t('legacyWorkbench.statusResources.keepAwakeAria', { mode, state: s.keep_awake ? t('legacyWorkbench.statusResources.active') : t('legacyWorkbench.statusResources.inactive') })}
+			title={t('legacyWorkbench.statusResources.keepAwakeTitle', { description: KEEP_AWAKE_MODES.find((m) => m.id === mode)?.description ?? '' })}
 			onclick={(e) => toggle('awake', e)}
 		>
 			<Icon name="coffee" size={14} />
@@ -107,7 +108,7 @@
 		</button>
 	{/if}
 	{#if showPorts && system.ports}
-		<button class={ITEM} aria-haspopup="dialog" aria-expanded={open === 'ports'} title="พอร์ตที่เปิดอยู่ ({ours.length} จาก Kingu)" onclick={(e) => toggle('ports', e)}>
+		<button class={ITEM} aria-haspopup="dialog" aria-expanded={open === 'ports'} title={t('legacyWorkbench.statusResources.openPortsTitle', { ours: ours.length })} onclick={(e) => toggle('ports', e)}>
 			<Icon name="ports" size={14} />{ours.length}
 		</button>
 	{/if}
@@ -115,12 +116,12 @@
 
 {#if open && anchor && s}
 	{#if open === 'awake'}
-		<StatusPopover {anchor} label="กันเครื่องหลับ" width={256} onClose={close}>
+		<StatusPopover {anchor} label={t('legacyWorkbench.statusResources.keepAwake')} width={256} onClose={close}>
 			<div class="{HEAD} justify-between">
-				<span class="font-medium">Keep Awake</span>
-				<span class="text-xs text-(--vscode-descriptionForeground)">{s.keep_awake ? 'Active' : 'Inactive'}</span>
+				<span class="font-medium">{t('legacyWorkbench.statusResources.keepAwake')}</span>
+				<span class="text-xs text-(--vscode-descriptionForeground)">{s.keep_awake ? t('legacyWorkbench.statusResources.active') : t('legacyWorkbench.statusResources.inactive')}</span>
 			</div>
-			<div class="p-1" role="radiogroup" aria-label="โหมด">
+			<div class="p-1" role="radiogroup" aria-label={t('legacyWorkbench.statusResources.mode')}>
 				{#each KEEP_AWAKE_MODES as m (m.id)}
 					<button
 						role="radio"
@@ -141,11 +142,11 @@
 		<StatusPopover {anchor} label="Resource Manager" width={340} onClose={close}>
 			<div class="{HEAD} justify-between">
 				<span class="font-medium">Resource Manager</span>
-				<button class={ROW_BTN} aria-label="รีเฟรช" title="รีเฟรช" onclick={() => system.refresh()}><Icon name="refresh" size={14} /></button>
+				<button class={ROW_BTN} aria-label={t('legacyWorkbench.statusResources.refresh')} title={t('legacyWorkbench.statusResources.refresh')} onclick={() => system.refresh()}><Icon name="refresh" size={14} /></button>
 			</div>
 			<div class="grid grid-cols-2 gap-2 border-b border-(--vscode-widget-border) px-3 py-2.5">
-				<div title="ผลรวม RSS ของ Kingu และโปรเซสลูก หน้าหน่วยความจำที่ใช้ร่วมกันอาจถูกนับซ้ำ (ไม่รวม WebView)">
-					<div class="text-[11px] text-(--vscode-descriptionForeground)">หน่วยความจำ</div>
+				<div title={t('legacyWorkbench.statusResources.memoryTooltip')}>
+					<div class="text-[11px] text-(--vscode-descriptionForeground)">{t('legacyWorkbench.statusResources.memory')}</div>
 					<div class="flex items-center gap-2">
 						<span class="font-medium tabular-nums">{s.memory_bytes === null ? '—' : formatBytes(s.memory_bytes)}</span>
 						<svg width="56" height="16" class="text-(--vscode-textLink-foreground)" aria-hidden="true">
@@ -153,7 +154,7 @@
 						</svg>
 					</div>
 				</div>
-				<div title="CPU รวม เกิน 100% หมายถึงใช้มากกว่าหนึ่งคอร์">
+				<div title={t('legacyWorkbench.statusResources.cpuTooltip')}>
 					<div class="text-[11px] text-(--vscode-descriptionForeground)">CPU</div>
 					<div class="font-medium tabular-nums">{s.cpu_percent === null ? '—' : `${s.cpu_percent.toFixed(0)}%`}</div>
 				</div>
@@ -162,24 +163,24 @@
 				<div class={SECTION}>Terminal ({s.terminals.length})</div>
 				{#each terminals as [group, list] (group)}
 					<div class="flex items-center gap-1.5 px-3 pt-1 text-xs text-(--vscode-descriptionForeground)"><Icon name="folder" size={12} />{group}</div>
-					{#each list as t (t.id)}
+					{#each list as term (term.id)}
 						<div class="group flex h-7 items-center gap-2 pr-1.5 pl-6 hover:bg-(--vscode-list-hoverBackground)">
 							<Icon name="terminal" size={13} />
-							<span class="min-w-0 flex-1 truncate">{t.command}</span>
-							<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{formatBytes(t.rss)}</span>
-							{#if t.pid !== null}
-								{#if confirming === t.id}
-									<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" title="บังคับปิด terminal นี้ งานที่ยังไม่บันทึกในนั้นจะหายและย้อนกลับไม่ได้" onclick={() => (system.kill(t.pid!, t.command), (confirming = null))}>ยืนยัน</button>
+							<span class="min-w-0 flex-1 truncate">{term.command}</span>
+							<span class="text-xs text-(--vscode-descriptionForeground) tabular-nums">{formatBytes(term.rss)}</span>
+							{#if term.pid !== null}
+								{#if confirming === term.id}
+									<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" title={t('legacyWorkbench.statusResources.forceCloseTerminalTip')} onclick={() => (system.kill(term.pid!, term.command), (confirming = null))}>{t('legacyWorkbench.statusResources.confirm')}</button>
 								{:else}
-									<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label="ปิด {t.command}" title="ปิด terminal นี้" onclick={() => (confirming = t.id)}><Icon name="stopProcess" size={14} /></button>
+									<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={t('legacyWorkbench.statusResources.closeTerminalAria', { command: term.command })} title={t('legacyWorkbench.statusResources.closeTerminalTip')} onclick={() => (confirming = term.id)}><Icon name="stopProcess" size={14} /></button>
 								{/if}
 							{/if}
 						</div>
 					{/each}
 				{:else}
-					<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">ยังไม่มี terminal</p>
+					<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.statusResources.noTerminals')}</p>
 				{/each}
-				<div class={SECTION}>โปรเซสอื่น</div>
+				<div class={SECTION}>{t('legacyWorkbench.statusResources.otherProcesses')}</div>
 				{#each others as p (p.pid)}
 					<div class="group flex h-7 items-center gap-2 px-3 pr-1.5 hover:bg-(--vscode-list-hoverBackground)">
 						<Icon name="cpu" size={13} />
@@ -189,13 +190,13 @@
 							<!-- The terminal daemon holds every terminal (stop them one by one); WebKit's processes are the window. -->
 							<span class="w-6"></span>
 						{:else if confirming === `pid:${p.pid}`}
-							<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, p.name), (confirming = null))}>ยืนยัน</button>
+							<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, p.name), (confirming = null))}>{t('legacyWorkbench.statusResources.confirm')}</button>
 						{:else}
-							<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label="หยุด {p.name}" title="หยุดโปรเซสนี้" onclick={() => (confirming = `pid:${p.pid}`)}><Icon name="stopProcess" size={14} /></button>
+							<button class="{ROW_BTN} opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={t('legacyWorkbench.statusResources.stopProcessAria', { name: p.name })} title={t('legacyWorkbench.statusResources.stopProcessTip')} onclick={() => (confirming = `pid:${p.pid}`)}><Icon name="stopProcess" size={14} /></button>
 						{/if}
 					</div>
 				{:else}
-					<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">ไม่มีอะไรรันอยู่ตอนนี้</p>
+					<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">{t('legacyWorkbench.statusResources.nothingRunning')}</p>
 				{/each}
 			</div>
 		</StatusPopover>
@@ -203,32 +204,32 @@
 		<StatusPopover {anchor} label="Ports" width={320} onClose={close}>
 			<div class="{HEAD} justify-between">
 				<span class="font-medium">Ports</span>
-				<button class={ROW_BTN} aria-label="สแกนใหม่" title="สแกนใหม่" disabled={system.scanning} onclick={() => system.refreshPorts()}>
+				<button class={ROW_BTN} aria-label={t('legacyWorkbench.statusResources.rescan')} title={t('legacyWorkbench.statusResources.rescan')} disabled={system.scanning} onclick={() => system.refreshPorts()}>
 					<span class={system.scanning ? 'animate-spin' : ''}><Icon name="refresh" size={14} /></span>
 				</button>
 			</div>
 			<div class="min-h-0 flex-1 overflow-y-auto pb-1.5">
 				{#if system.portsError}
-					<p class="px-3 py-2 text-xs text-(--vscode-errorForeground)">สแกนพอร์ตไม่ได้: {system.portsError}</p>
+					<p class="px-3 py-2 text-xs text-(--vscode-errorForeground)">{t('legacyWorkbench.statusResources.portsScanFailed', { error: system.portsError })}</p>
 				{/if}
-				{#each [['พอร์ตจาก Kingu', ours, 'ยังไม่พบพอร์ตจาก terminal หรือ agent'], ['พอร์ตภายนอก', external, 'ไม่พบพอร์ตภายนอก']] as const as [title, list, empty] (title)}
+				{#each [[t('legacyWorkbench.statusResources.portsFromKingu'), ours, t('legacyWorkbench.statusResources.noKinguPorts')], [t('legacyWorkbench.statusResources.externalPorts'), external, t('legacyWorkbench.statusResources.noExternalPorts')]] as const as [title, list, empty] (title)}
 					<div class={SECTION}>{title}</div>
 					{#each list as p (`${p.pid}:${p.port}`)}
 						<div class="group flex h-7 items-center gap-2 px-3 pr-1.5 hover:bg-(--vscode-list-hoverBackground)">
 							<span class="w-16 shrink-0 font-mono tabular-nums">:{p.port}</span>
 							<span class="min-w-0 flex-1 truncate text-(--vscode-descriptionForeground)" title="{p.name} · pid {p.pid} · {p.address}">{p.name}</span>
-							<button class={ROW_BTN} aria-label="เปิด localhost:{p.port} ในเบราว์เซอร์" title="เปิดในเบราว์เซอร์" onclick={() => system.openPort(p.port)}><Icon name="openExternal" size={14} /></button>
-							<button class={ROW_BTN} aria-label="คัดลอก URL" title="คัดลอก http://localhost:{p.port}" onclick={() => copy(`http://localhost:${p.port}`)}><Icon name="copy" size={14} /></button>
+							<button class={ROW_BTN} aria-label={t('legacyWorkbench.statusResources.openInBrowserAria', { port: p.port })} title={t('legacyWorkbench.statusResources.openInBrowserTip')} onclick={() => system.openPort(p.port)}><Icon name="openExternal" size={14} /></button>
+							<button class={ROW_BTN} aria-label={t('legacyWorkbench.statusResources.copyUrlAria')} title={t('legacyWorkbench.statusResources.copyUrlTip', { port: p.port })} onclick={() => copy(`http://localhost:${p.port}`)}><Icon name="copy" size={14} /></button>
 							{#if p.ours}
 								{#if confirming === `port:${p.pid}:${p.port}`}
-									<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, `${p.name} :${p.port}`), (confirming = null))}>ยืนยัน</button>
+									<button class="rounded-md bg-(--vscode-errorForeground) px-2 text-xs leading-5 text-white" onclick={() => (system.kill(p.pid, `${p.name} :${p.port}`), (confirming = null))}>{t('legacyWorkbench.statusResources.confirm')}</button>
 								{:else}
-									<button class={ROW_BTN} aria-label="หยุด {p.name}" title="หยุดโปรเซส" onclick={() => (confirming = `port:${p.pid}:${p.port}`)}><Icon name="stopProcess" size={14} /></button>
+									<button class={ROW_BTN} aria-label={t('legacyWorkbench.statusResources.stopProcessAria', { name: p.name })} title={t('legacyWorkbench.statusResources.stopProcessPortTip')} onclick={() => (confirming = `port:${p.pid}:${p.port}`)}><Icon name="stopProcess" size={14} /></button>
 								{/if}
 							{/if}
 						</div>
 					{:else}
-						<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">{system.scanning && !system.ports ? 'กำลังสแกนพอร์ต…' : empty}</p>
+						<p class="px-3 py-1 text-xs text-(--vscode-descriptionForeground)">{system.scanning && !system.ports ? t('legacyWorkbench.statusResources.scanningPorts') : empty}</p>
 					{/each}
 				{/each}
 			</div>

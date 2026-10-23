@@ -4,6 +4,7 @@
 	// off and enabling it is a separate, confirmed step.
 	import { onMount, untrack } from 'svelte';
 	import { keyLabel } from '#lib/workbench/keys.ts';
+	import { t } from '#lib/i18n/index.ts';
 	import { automations } from './automations.svelte.ts';
 	import { formatWhen } from './automations.ts';
 	import { nextRuns, parseSchedule } from './schedule.ts';
@@ -52,35 +53,35 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape / ⌘Enter from any field) -->
-<form class="space-y-2 rounded border border-(--vscode-widget-border) p-3 text-xs" onsubmit={submit} onkeydown={onKey} aria-label={id ? 'แก้ไข automation' : 'automation ใหม่'}>
-	<input bind:this={input} class={INPUT} placeholder="ชื่อ เช่น ตรวจ dependency ทุกเช้า" aria-label="ชื่อ automation" bind:value={name} disabled={busy} />
-	<textarea class={[INPUT, 'h-24 resize-y']} placeholder="สั่ง agent ว่าให้ทำอะไรทุกรอบ" aria-label="คำสั่งให้ agent" bind:value={prompt} disabled={busy}></textarea>
+<form class="space-y-2 rounded border border-(--vscode-widget-border) p-3 text-xs" onsubmit={submit} onkeydown={onKey} aria-label={id ? t('legacyAde.automationForm.editTitle') : t('legacyAde.automationForm.newTitle')}>
+	<input bind:this={input} class={INPUT} placeholder={t('legacyAde.automationForm.namePlaceholder')} aria-label={t('legacyAde.automationForm.nameLabel')} bind:value={name} disabled={busy} />
+	<textarea class={[INPUT, 'h-24 resize-y']} placeholder={t('legacyAde.automationForm.promptPlaceholder')} aria-label={t('legacyAde.automationForm.promptLabel')} bind:value={prompt} disabled={busy}></textarea>
 	<label class="block space-y-1">
-		<span class="text-(--vscode-descriptionForeground)">ตารางเวลา (เวลาท้องถิ่น)</span>
-		<input class={[INPUT, 'font-mono']} placeholder="weekdays 09:00" aria-label="ตารางเวลา" aria-invalid={!parsed.ok} bind:value={schedule} disabled={busy} />
+		<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.automationForm.scheduleLabel')}</span>
+		<input class={[INPUT, 'font-mono']} placeholder="weekdays 09:00" aria-label={t('legacyAde.automationForm.scheduleAria')} aria-invalid={!parsed.ok} bind:value={schedule} disabled={busy} />
 	</label>
 	{#if parsed.ok}
-		<p class="text-(--vscode-descriptionForeground)" aria-live="polite">รอบถัดไป: {preview.map((d) => formatWhen(d.getTime(), automations.now)).join(' · ') || '—'}</p>
+		<p class="text-(--vscode-descriptionForeground)" aria-live="polite">{t('legacyAde.automationForm.nextRuns')} {preview.map((d) => formatWhen(d.getTime(), automations.now)).join(' · ') || '—'}</p>
 	{:else}
 		<p class="text-(--vscode-errorForeground)" aria-live="polite">{parsed.error}</p>
 	{/if}
 	<div class="flex flex-wrap items-center gap-3">
 		<label class="flex items-center gap-1.5">
-			<span class="shrink-0 text-(--vscode-descriptionForeground)">แตกจาก</span>
+			<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('legacyAde.automationForm.branchFrom')}</span>
 			<select class={[INPUT, 'w-auto py-0.5']} bind:value={base} aria-label="base branch" disabled={busy}>
-				<option value="">branch ปัจจุบัน</option>
+				<option value="">{t('legacyAde.automationForm.currentBranch')}</option>
 				{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
 			</select>
 		</label>
-		<span class="text-(--vscode-descriptionForeground)">รันผ่าน terminal ของ worktree</span>
-		<label class="flex items-center gap-1.5" title="ถ้าถึงเวลาตอนที่ Kingu ปิดอยู่ ให้รันหนึ่งรอบเมื่อเปิดขึ้นมา">
+		<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.automationForm.runsViaTerminal')}</span>
+		<label class="flex items-center gap-1.5" title={t('legacyAde.automationForm.catchUpTitle')}>
 			<input type="checkbox" bind:checked={catchUp} disabled={busy} />
-			<span>รันรอบที่พลาดเมื่อเปิด Kingu</span>
+			<span>{t('legacyAde.automationForm.catchUpLabel')}</span>
 		</label>
 	</div>
 	<div class="flex items-center gap-1.5">
-		<button type="submit" class={BUTTON} disabled={!!error || busy} title={error ?? `บันทึก (${mac ? '⌘' : 'Ctrl+'}Enter)`}>{busy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
-		<button type="button" class={BUTTON_SECONDARY} onclick={() => (automations.editing = null)}>ยกเลิก</button>
-		{#if !id}<span class="text-(--vscode-descriptionForeground)">สร้างแล้วยังปิดอยู่ เปิดเองเมื่อพร้อม</span>{/if}
+		<button type="submit" class={BUTTON} disabled={!!error || busy} title={error ?? t('legacyAde.automationForm.saveWithShortcut', { shortcut: `${mac ? '⌘' : 'Ctrl+'}Enter` })}>{busy ? t('legacyAde.automationForm.saving') : t('legacyAde.automationForm.save')}</button>
+		<button type="button" class={BUTTON_SECONDARY} onclick={() => (automations.editing = null)}>{t('legacyAde.automationForm.cancel')}</button>
+		{#if !id}<span class="text-(--vscode-descriptionForeground)">{t('legacyAde.automationForm.createdDisabled')}</span>{/if}
 	</div>
 </form>

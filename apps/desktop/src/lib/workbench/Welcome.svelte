@@ -6,53 +6,54 @@
 	import KinguMark from './KinguMark.svelte';
 	import { commands } from './commands.svelte';
 	import { welcome } from './welcomeTour.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	type Action = { label: string; command: string; primary?: boolean };
 	type Step = { icon: IconName | 'kingu'; title: string; body: string; keys: [string, string][]; actions?: Action[] };
-	const STEPS: Step[] = [
+	const STEPS = $derived.by((): Step[] => [
 		{
 			icon: 'kingu',
-			title: 'เริ่มงานแบบที่ถนัด',
-			body: 'Kingu มีสองพื้นที่ที่ใช้โปรเจกต์เดียวกัน: Editor สำหรับเขียนและตรวจโค้ด และ Agents สำหรับมอบงานใน worktree แยก เลือกจุดเริ่มต้นได้เลย',
+			title: t('legacyWorkbench.welcome.startTitle'),
+			body: t('legacyWorkbench.welcome.startBody'),
 			keys: [
 				['Editor', '⌘O'],
 				['Agents', '⇧⌘A']
 			],
 			actions: [
-				{ label: 'เปิดโฟลเดอร์', command: 'workbench.action.files.openFolder', primary: true },
-				{ label: 'สร้างโปรเจกต์ใหม่', command: 'kingu.newProject' }
+				{ label: t('legacyWorkbench.welcome.openFolder'), command: 'workbench.action.files.openFolder', primary: true },
+				{ label: t('legacyWorkbench.welcome.newProject'), command: 'kingu.newProject' }
 			]
 		},
 		{
 			icon: 'agent',
-			title: 'Arkai และโหมด Agents (ADE)',
-			body: 'สั่งงานได้หลายงานพร้อมกัน แต่ละงานได้ branch และ worktree แยก เริ่มด้วย New Session แล้วอธิบายผลลัพธ์ที่ต้องการ จากนั้นรีวิว diff ก่อน commit หรือ merge',
+			title: t('legacyWorkbench.welcome.agentsTitle'),
+			body: t('legacyWorkbench.welcome.agentsBody'),
 			keys: [
-				['สลับ IDE / Agents', '⇧⌘A'],
-				['แผง Arkai', '⌥⌘B']
+				[t('legacyWorkbench.welcome.switchIdeAgents'), '⇧⌘A'],
+				[t('legacyWorkbench.welcome.arkaiPanel'), '⌥⌘B']
 			]
 		},
 		{
 			icon: 'search',
-			title: 'ทำทุกอย่างได้จากคีย์บอร์ด',
-			body: 'ค้นหาไฟล์และคำสั่งได้ทันที เปิด preview ของ Markdown/CSV และเข้า Zen Mode เพื่อโฟกัสกับโค้ด',
+			title: t('legacyWorkbench.welcome.keyboardTitle'),
+			body: t('legacyWorkbench.welcome.keyboardBody'),
 			keys: [
-				['คำสั่งทั้งหมด', '⇧⌘P'],
-				['ไปที่ไฟล์', '⌘P'],
+				[t('legacyWorkbench.welcome.allCommands'), '⇧⌘P'],
+				[t('legacyWorkbench.welcome.goToFile'), '⌘P'],
 				['Zen Mode', '⌘K Z']
 			]
 		},
 		{
 			icon: 'settings',
-			title: 'ปรับให้เข้ากับคุณ',
-			body: 'เลือกธีม ปรับคีย์ลัด และตั้งสิทธิ์ของ agent ได้ใน Settings โดยค่าเริ่มต้นจะถามก่อนทำสิ่งที่มีผลกระทบ เพื่อให้เริ่มใช้งานได้อย่างมั่นใจ',
+			title: t('legacyWorkbench.welcome.customizeTitle'),
+			body: t('legacyWorkbench.welcome.customizeBody'),
 			keys: [
 				['Settings', '⌘,'],
 				['Floating terminal', '⌥⌘A']
 			],
-			actions: [{ label: 'ตรวจสอบความพร้อมของเครื่อง', command: 'kingu.setup.open' }]
+			actions: [{ label: t('legacyWorkbench.welcome.checkMachine'), command: 'kingu.setup.open' }]
 		}
-	];
+	]);
 
 	let step = $state(0);
 	const s = $derived(STEPS[step]);
@@ -104,20 +105,20 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-2 border-t border-(--vscode-widget-border) px-5 py-3">
-			<div class="flex flex-1 gap-1.5" aria-label="ขั้นที่ {step + 1} จาก {STEPS.length}">
+			<div class="flex flex-1 gap-1.5" aria-label={t('legacyWorkbench.welcome.stepOf', { step: step + 1, count: STEPS.length })}>
 				{#each STEPS as _, i (i)}
-					<button class={['h-1.5 rounded-full transition-all', i === step ? 'w-5 bg-(--vscode-button-background)' : 'w-1.5 bg-(--vscode-widget-border)']} aria-label="ขั้นที่ {i + 1}" onclick={() => (step = i)}></button>
+					<button class={['h-1.5 rounded-full transition-all', i === step ? 'w-5 bg-(--vscode-button-background)' : 'w-1.5 bg-(--vscode-widget-border)']} aria-label={t('legacyWorkbench.welcome.step', { step: i + 1 })} onclick={() => (step = i)}></button>
 				{/each}
 			</div>
-			<button class="rounded-md px-3 py-1.5 text-[13px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => welcome.close()}>ข้าม</button>
+			<button class="rounded-md px-3 py-1.5 text-[13px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => welcome.close()}>{t('legacyWorkbench.welcome.skip')}</button>
 			{#if step > 0}
-				<button class="rounded-md px-3 py-1.5 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => step--}>ย้อนกลับ</button>
+				<button class="rounded-md px-3 py-1.5 text-[13px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => step--}>{t('legacyWorkbench.welcome.back')}</button>
 			{/if}
 			{#if last}
-				<button class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => welcome.close()}>เริ่มใช้งาน</button>
+				<button class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => welcome.close()}>{t('legacyWorkbench.welcome.getStarted')}</button>
 			{:else}
 				<!-- svelte-ignore a11y_autofocus -->
-				<button autofocus class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => step++}>ถัดไป</button>
+				<button autofocus class="rounded-md bg-(--vscode-button-background) px-3 py-1.5 text-[13px] text-(--vscode-button-foreground) hover:opacity-90" onclick={() => step++}>{t('legacyWorkbench.welcome.next')}</button>
 			{/if}
 		</div>
 	</div>

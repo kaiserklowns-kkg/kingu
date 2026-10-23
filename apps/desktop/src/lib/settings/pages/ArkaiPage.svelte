@@ -6,6 +6,7 @@
 	import { SETTINGS } from '../registry';
 	import SettingChoice from './SettingChoice.svelte';
 	import ArkaiProviders from './ArkaiProviders.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	const get = (id: string) => settings.get<string>(id) ?? '';
 	const set = (id: string, v: string) => void settings.set(id, v.trim() === SETTINGS.find((s) => s.id === id)?.default ? undefined : v.trim(), 'user');
@@ -20,29 +21,29 @@
 			<span class="text-(--vscode-foreground)"><ArkaiMark size={40} /></span>
 			<div>
 				<h1 class="text-2xl leading-tight font-semibold">Arkai</h1>
-				<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">ผู้ช่วย AI ของ Kingu: แต่ละงานได้ git worktree ของตัวเอง</p>
+				<p class="mt-2 max-w-3xl text-sm leading-6 text-(--vscode-descriptionForeground)">{t('legacySettings.arkaiPage.intro')}</p>
 			</div>
 		</div>
 
-		<h2 class={SECTION}>วิธีรันงานใหม่</h2>
+		<h2 class={SECTION}>{t('legacySettings.arkaiPage.runSection')}</h2>
 		<label class="mt-3 block">
-			<span class="text-[13px]">คำสั่ง agent CLI</span>
-			<span class="block text-xs text-(--vscode-descriptionForeground)">ทุกงาน ADE รันใน terminal ของ worktree เช่น claude, codex หรือ opencode — prompt จะต่อท้ายเป็นอาร์กิวเมนต์สุดท้าย</span>
+			<span class="text-[13px]">{t('legacySettings.arkaiPage.cliLabel')}</span>
+			<span class="block text-xs text-(--vscode-descriptionForeground)">{t('legacySettings.arkaiPage.cliHint')}</span>
 			<input class="{INPUT} mt-1.5" value={get('kingu.agent.cli')} onchange={(e) => set('kingu.agent.cli', e.currentTarget.value)} spellcheck="false" />
 		</label>
 
 		<ArkaiProviders />
 
-		<h2 class={SECTION}>การขออนุญาต</h2>
-		<SettingChoice id="kingu.agent.permissionMode" labels={{ default: 'ถามก่อน', acceptEdits: 'แก้ไฟล์ได้เลย', plan: 'วางแผนอย่างเดียว' }} />
+		<h2 class={SECTION}>{t('legacySettings.arkaiPage.permissionSection')}</h2>
+		<SettingChoice id="kingu.agent.permissionMode" labels={{ default: t('legacySettings.arkaiPage.permissionDefault'), acceptEdits: t('legacySettings.arkaiPage.permissionAcceptEdits'), plan: t('legacySettings.arkaiPage.permissionPlan') }} />
 
-		<h2 class={SECTION}>สถานะใน title bar</h2>
-		<SettingChoice id="kingu.agentsControl.enabled" labels={{ hidden: 'ไม่แสดง', badge: 'ป้ายแยก', compact: 'รวมกับช่องค้นหา' }} />
+		<h2 class={SECTION}>{t('legacySettings.arkaiPage.statusSection')}</h2>
+		<SettingChoice id="kingu.agentsControl.enabled" labels={{ hidden: t('legacySettings.arkaiPage.statusHidden'), badge: t('legacySettings.arkaiPage.statusBadge'), compact: t('legacySettings.arkaiPage.statusCompact') }} />
 
-		<h2 class={SECTION}>เสียงแจ้งเหตุการณ์</h2>
-		<SettingChoice id="kingu.accessibility.signals" labels={{ off: 'ปิด', agents: 'เฉพาะ Arkai', all: 'Arkai และข้อผิดพลาด' }} />
+		<h2 class={SECTION}>{t('legacySettings.arkaiPage.soundSection')}</h2>
+		<SettingChoice id="kingu.accessibility.signals" labels={{ off: t('legacySettings.arkaiPage.soundOff'), agents: t('legacySettings.arkaiPage.soundAgents'), all: t('legacySettings.arkaiPage.soundAll') }} />
 
-		<h2 class={SECTION}>กันเครื่องหลับ</h2>
+		<h2 class={SECTION}>{t('legacySettings.arkaiPage.keepAwakeSection')}</h2>
 		<SettingChoice id="kingu.keepAwake" labels={{ off: 'Off', auto: 'Auto', on: 'On' }} />
 	</div>
 </div>

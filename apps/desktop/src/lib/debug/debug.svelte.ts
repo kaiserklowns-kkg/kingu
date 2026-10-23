@@ -1499,7 +1499,7 @@ class Debug {
 		if (!exists) {
 			const cargoToml = editors.language === 'rust' ? await invoke<string>('read_workspace_file', { rel: at('Cargo.toml') }).catch(() => null) : null;
 			const configs = generatedConfigs(editors.language, { cargoToml }).map((g) => g.config);
-			const text = `{\n\t// ดู https://code.visualstudio.com/docs/editor/debugging#_launch-configurations\n\t"version": "0.2.0",\n\t"configurations": ${JSON.stringify(configs, null, '\t').replaceAll('\n', '\n\t')}\n}\n`;
+			const text = `{\n\t// ${t('legacySettings.debug.seeLaunchConfigDocs')}\n\t"version": "0.2.0",\n\t"configurations": ${JSON.stringify(configs, null, '\t').replaceAll('\n', '\n\t')}\n}\n`;
 			try {
 				await invoke('fs_create_file', { rel });
 				await invoke('fs_write_file', { rel, content: text });

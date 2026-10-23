@@ -5,6 +5,7 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import type { TaskView } from './model';
 	import { formatCacheLeft, promptCacheLeft, promptCacheTtl } from './promptCache';
+	import { t as tr } from '#lib/i18n/index.ts';
 
 	let { view }: { view: TaskView } = $props();
 	const enabled = $derived(settings.get<boolean>('kingu.agent.promptCacheTimer') === true);
@@ -22,7 +23,7 @@
 {#if left !== null}
 	<span
 		class={['inline-flex shrink-0 items-center gap-0.5 font-mono text-[11px] tabular-nums', left === 0 ? 'text-(--vscode-descriptionForeground) line-through' : left < 60_000 ? 'text-(--vscode-editorWarning-foreground)' : 'text-(--vscode-descriptionForeground)']}
-		title={left === 0 ? 'prompt cache หมดอายุแล้ว ข้อความถัดไปจะส่งบทสนทนาทั้งหมดใหม่ (Prompt cache expired.)' : 'เวลาที่เหลือก่อน prompt cache หมดอายุ (Time left before the prompt cache expires.)'}
+		title={left === 0 ? tr('legacyAde.cacheTimer.expired') : tr('legacyAde.cacheTimer.timeLeft')}
 	>
 		<Icon name="clock" size={11} />{formatCacheLeft(left)}
 	</span>

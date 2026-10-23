@@ -171,7 +171,16 @@ export async function mockTauri(
 				pty_kill: () => null,
 				pty_foreground: () => ({}),
 				agent_cli_found: () => [],
-				agent_runtimes: () => [{ id: 'claude', name: 'Claude Code', installed: true, models: [] }],
+				agent_runtimes: () => [
+					{ id: 'claude', name: 'Claude Code', installed: true, models: [] },
+					{ id: 'opencode', name: 'OpenCode', protocol: 'acp', features: { rewind: false, models: true }, custom: false },
+					{ id: 'codex', name: 'Codex', protocol: 'codex', features: { rewind: false, models: true }, custom: false }
+				],
+				// `list_models` (a new chat's picker): every runtime answers the same list (Rust returns the array).
+				agent_list_models: () => [
+					{ value: 'opencode/beam-free', display_name: 'OpenCode/Beam Free', description: '' },
+					{ value: 'opencode/big-pickle', display_name: 'OpenCode/Big Pickle', description: '' }
+				],
 				agent_start: (args: any) => {
 					const send = (index: number, message: unknown) =>
 						(globalThis as any)[`_${args?.onEvent?.id}`]?.({ index, message });
@@ -208,6 +217,9 @@ export async function mockTauri(
 				mcp_trust: () => null,
 				ai_usage_refresh: () => [],
 				ai_accounts_list: () => ({ accounts: [], own: {} }),
+				managed_accounts_list: () => ({}),
+				memories_list: () => [],
+				scm_graph_log: () => ({ commits: [], head: 'abc1234', branch: 'main', upstream: null, merge_base: null }),
 				cli_queued: () => [],
 				cli_skill_plugin: () => null,
 				usage_detect: () => [],
