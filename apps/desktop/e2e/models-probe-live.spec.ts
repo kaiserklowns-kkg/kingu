@@ -20,7 +20,7 @@ const opencodeOnPath = (() => {
 test('the model picker lists what the real OpenCode runtime names', async ({ page }) => {
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { liveModels: true });
+	await openApp(page, READY, {}, { live: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
@@ -46,7 +46,7 @@ test('a real OpenCode session answers a sent chat message', async ({ page }) => 
 	test.setTimeout(180_000) // a real model answers on its own clock (slow free-model queues)
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { liveModels: true });
+	await openApp(page, READY, {}, { live: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	// Real runtime, real model (the first of what the real CLI named), real first prompt.

@@ -31,7 +31,7 @@ export async function mockTauri(
 	setup: SetupReport = READY,
 	workspace = '/tmp/kingu-e2e',
 	initialSettings: Record<string, unknown> = {},
-	initialOpts: { probeFail?: boolean; liveModels?: boolean } = {}
+	initialOpts: { probeFail?: boolean; live?: boolean } = {}
 ) {
 	await page.addInitScript(
 		({ setup, workspace, initialSettings, initialOpts }) => {
@@ -305,7 +305,7 @@ export async function mockTauri(
 			const internals = {
 				invoke: async (cmd: string, args?: any) => {
 					calls[cmd] = (calls[cmd] ?? 0) + 1;
-					if (initialOpts.liveModels && (cmd === 'agent_list_models' || cmd === 'agent_start' || cmd === 'agent_send')) {
+					if (initialOpts.live && (cmd === 'agent_list_models' || cmd === 'agent_start' || cmd === 'agent_send' || cmd === 'agent_interrupt' || cmd === 'agent_answer_permission')) {
 						// The real sidecar answers (live-bridge.ts); same throw-on-failure as Tauri's invoke.
 						const r = await fetch('http://127.0.0.1:4179/invoke', { method: 'POST', body: JSON.stringify({ command: cmd, args }) });
 						const out = (await r.json()) as { ok: boolean; value?: unknown; error?: string };

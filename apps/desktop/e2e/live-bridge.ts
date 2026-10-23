@@ -25,15 +25,20 @@ const host = Bun.spawn(['bun', new URL('../../agent-host/src/main.ts', import.me
 let nextId = 1;
 let nextRun = 1;
 let raw = '';
+/** Every complete JSON-RPC line the host wrote (partial chunks fold at the newline they end). */
+const hostLines: string[] = [];
 let partial = '';
 const pump = (async () => {
 	const dec = new TextDecoder();
 	for await (const chunk of host.stdout) {
 		const text = partial + dec.decode(chunk);
-		raw += text; // full log for the reply finder
+		raw += text; // full log for debugging
 		const lines = text.split('\n');
 		partial = lines.pop() ?? '';
-		for (const line of lines) handleHostMessage(line);
+		for (const line of lines) {
+			hostLines.push(line);
+			handleHostMessage(line);
+		}
 	}
 })();
 
@@ -71,11 +76,13 @@ function handleHostMessage(line: string) {
 
 async function ask(method: string, params: unknown): Promise<unknown> {
 	const id = nextId++;
+	// Complete lines only: scan the reply among the ones the pump finished after this ask started.
+	const fromLine = hostLines.length;
 	host.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
 	const reply = await new Promise<string>((resolve, reject) => {
 		const started = Date.now();
 		const wait = () => {
-			const found = raw.split('\n').find((line) => line.includes(`"id":${id},`) || line.endsWith(`"id":${id}}`) || line.includes(`"id": ${id},`));
+			const found = hostLines.slice(fromLine).find((line) => line.includes(`"id":${id},`) || line.endsWith(`"id":${id}}`) || line.includes(`"id": ${id},`));
 			if (found) return resolve(found);
 			if (Date.now() - started > 90_000) return reject(new Error(`${method}: no answer from the agent host`));
 			setTimeout(wait, 200);
@@ -166,8 +173,14 @@ const live = Bun.serve({
 				case 'agent_send':
 					await ask('send', { runId: args.runId, text: args.text, images: (args.images as string[] | null) ?? [] });
 					return response(null);
+				case 'agent_interrupt':
+					await ask('interrupt', { runId: args.runId });
+					return response(null);
+				case 'agent_answer_permission':
+					await ask('answer', { runId: args.runId, requestId: args.requestId, decision: args.decision, message: args.message ?? null, answers: args.answers ?? null });
+					return response(null);
 				default:
-					return failure(`the bridge speaks list_models/start/send only, asked for ${command}`, 400);
+					return failure(`the bridge speaks list_models/start/send/interrupt/answer only, asked for ${command}`, 400);
 			}
 		} catch (e) {
 			return failure(e);

@@ -64,6 +64,8 @@ export const modelCatalog = new ModelCatalog();
  */
 const probed = new Set<string>();
 export function probeRuntimeModels(runtime: string) {
+	// Claude names no probe (its own list has a fixed fallback) — nothing to ask the sidecar for.
+	if (runtime === 'claude') return;
 	if (modelCatalog.busy[runtime] || (modelCatalog.for(runtime).length && !modelCatalog.failed[runtime])) return;
 	if (modelCatalog.failed[runtime]) probed.delete(runtime);
 	if (probed.has(runtime)) return;
