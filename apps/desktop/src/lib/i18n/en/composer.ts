@@ -15,6 +15,8 @@ export const composer = {
 	'composer.model.hint': 'Model: {model} ({key})',
 	'composer.model.search': 'Search models',
 	'composer.model.default': 'Default',
+	'composer.model.loading': 'Asking the agent for models…',
+	'composer.model.probeFail': 'Could not list models — open the picker again to retry',
 
 	'composer.effort.title': 'Effort Level',
 	'composer.effort.label': 'Effort Level: {effort}',

@@ -897,6 +897,14 @@
 	const modelShort = $derived(
 		runtimeId === ARKAI_RUNTIME && !modelRows.length && !arkaiProviders.loading ? t('chatWelcome.noModels') : shortModelLabel(modelRows.find((r) => r.checked)?.label || currentModel || t('composer.model.default'))
 	);
+	/** Under the model rows: while the one-off ask runs, and when it came back with nothing. */
+	const modelFooter = $derived.by(() => {
+		if (modelRows.length) return undefined;
+		if (runtimeId === ARKAI_RUNTIME) return arkaiProviders.loading ? t('arkai.picker.loading') : t('arkai.picker.none');
+		if (modelCatalog.busy[runtimeId]) return t('composer.model.loading');
+		if (modelCatalog.failed[runtimeId]) return t('composer.model.probeFail');
+		return undefined;
+	});
 	const runtimeProtocol = $derived(agentRuntimes.list.find((r) => r.id === runtimeId)?.protocol ?? null);
 	/**
 	 * The Effort Level beside the model (old's model picker config readout): the levels the
@@ -1644,7 +1652,7 @@
 										search
 										placeholder={t('composer.model.search')}
 										width={300}
-										footer={runtimeId === ARKAI_RUNTIME && !modelRows.length ? (arkaiProviders.loading ? t('arkai.picker.loading') : t('arkai.picker.none')) : undefined}
+										footer={modelFooter}
 										onpick={(id) => (closeMenu(), void changeModel(id))}
 										onclose={closeMenu}
 									/>

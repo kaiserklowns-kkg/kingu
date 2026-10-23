@@ -49,3 +49,23 @@ test('New Chat keeps the last agent and drops the Claude default model', async (
 	await expect(page.getByRole('option', { name: 'Big Pickle' })).toBeVisible({ timeout: 5_000 });
 	expect(errors).toEqual([]);
 });
+
+test('a failed model ask says so and the picker offers a retry', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, {}, { probeFail: true });
+
+	const chat = page.getByRole('complementary', { name: 'Chat' });
+	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
+	await target.click();
+	await page.getByRole('option', { name: 'OpenCode' }).click();
+	const model = chat.getByRole('button', { name: /Model: / });
+	await model.click();
+	// The ask ran and failed: the picker names it, the chip stays "Default".
+	await expect(page.getByText('Could not list models')).toBeVisible();
+	await expect(chat.getByRole('button', { name: /Model: / })).toHaveAccessibleName(/Model: Default/);
+	// The next open retries (the mock answers fine now); the rows fill.
+	await page.keyboard.press('Escape');
+	await model.click();
+	await expect(page.getByRole('option', { name: 'Big Pickle' })).toBeVisible({ timeout: 5_000 });
+	expect(errors).toEqual([]);
+});

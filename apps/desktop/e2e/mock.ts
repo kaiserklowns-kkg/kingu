@@ -30,10 +30,11 @@ export async function mockTauri(
 	page: Page,
 	setup: SetupReport = READY,
 	workspace = '/tmp/kingu-e2e',
-	initialSettings: Record<string, unknown> = {}
+	initialSettings: Record<string, unknown> = {},
+	initialOpts: { probeFail?: boolean } = {}
 ) {
 	await page.addInitScript(
-		({ setup, workspace, initialSettings }) => {
+		({ setup, workspace, initialSettings, initialOpts }) => {
 			const noop = () => 0;
 			const settingsKey = '__kingu_e2e_settings';
 			const file = { content: sessionStorage.getItem(settingsKey) ?? JSON.stringify(initialSettings) };
@@ -177,10 +178,14 @@ export async function mockTauri(
 					{ id: 'codex', name: 'Codex', protocol: 'codex', features: { rewind: false, models: true }, custom: false }
 				],
 				// `list_models` (a new chat's picker): every runtime answers the same list (Rust returns the array).
-				agent_list_models: () => [
-					{ value: 'opencode/beam-free', display_name: 'OpenCode/Beam Free', description: '' },
-					{ value: 'opencode/big-pickle', display_name: 'OpenCode/Big Pickle', description: '' }
-				],
+				agent_list_models: () => {
+					// A retry (`probeFail`): the first ask fails, the next asks answer.
+					if (initialOpts.probeFail && (calls.agent_list_models ?? 0) <= 1) throw new Error('e2e: the agent has no answer');
+					return [
+						{ value: 'opencode/beam-free', display_name: 'OpenCode/Beam Free', description: '' },
+						{ value: 'opencode/big-pickle', display_name: 'OpenCode/Big Pickle', description: '' }
+					];
+				},
 				agent_start: (args: any) => {
 					const send = (index: number, message: unknown) =>
 						(globalThis as any)[`_${args?.onEvent?.id}`]?.({ index, message });
@@ -319,7 +324,7 @@ export async function mockTauri(
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},
-		{ setup, workspace, initialSettings }
+		{ setup, workspace, initialSettings, initialOpts }
 	);
 }
 

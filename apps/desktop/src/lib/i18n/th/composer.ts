@@ -13,6 +13,8 @@ export const composer = {
 	'composer.model.hint': 'โมเดล: {model} ({key})',
 	'composer.model.search': 'ค้นหาโมเดล',
 	'composer.model.default': 'ค่าเริ่มต้น',
+	'composer.model.loading': 'กำลังขอโมเดลจากเอเจนต์…',
+	'composer.model.probeFail': 'ขอโมเดลไม่สำเร็จ — เปิดแถบโมเดลอีกครั้งเพื่อลองใหม่',
 
 	'composer.effort.title': 'ระดับการคิด',
 	'composer.effort.label': 'ระดับการคิด: {effort}',

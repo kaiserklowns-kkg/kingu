@@ -34,6 +34,10 @@ function readAll(): Record<string, ModelOption[]> {
 
 class ModelCatalog {
 	byRuntime = $state<Record<string, ModelOption[]>>(readAll());
+	/** Runtimes whose one-off model ask is running (the picker says so — the ask can be slow). */
+	busy = $state<Record<string, true>>({});
+	/** Runtimes whose last ask failed (the picker offers a retry on the next open). */
+	failed = $state<Record<string, true>>({});
 
 	for(runtime: string): ModelOption[] {
 		return this.byRuntime[runtime] ?? [];
@@ -55,18 +59,34 @@ export const modelCatalog = new ModelCatalog();
 
 /**
  * A runtime with no cached choices gets one ask before its first run (`agent_list_models`, a
- * throwaway session in the agent host): the result lands in the cache. Once per app — an agent
- * that names no models this way (or that is not installed) does not get asked again; its next
- * real session lists anyway.
+ * throwaway session in the agent host): the result lands in the cache. A failure only blocks the
+ * next ask until the picker opens again.
  */
 const probed = new Set<string>();
 export function probeRuntimeModels(runtime: string) {
-	if (probed.has(runtime) || modelCatalog.for(runtime).length) return;
+	if (modelCatalog.busy[runtime] || (modelCatalog.for(runtime).length && !modelCatalog.failed[runtime])) return;
+	if (modelCatalog.failed[runtime]) probed.delete(runtime);
+	if (probed.has(runtime)) return;
 	probed.add(runtime);
+	modelCatalog.busy = { ...modelCatalog.busy, [runtime]: true };
 	invoke<ModelOption[]>('agent_list_models', { runtime })
-		.then((models) => modelCatalog.set(runtime, Array.isArray(models) ? models : []))
-		.catch((e) => clientLog('info', `agent_list_models ${runtime}: ${e}`));
+		.then((models) => {
+			modelCatalog.set(runtime, Array.isArray(models) ? models : []);
+			modelCatalog.failed = rest(modelCatalog.failed, runtime);
+		})
+		.catch((e) => {
+			modelCatalog.failed = { ...modelCatalog.failed, [runtime]: true };
+			// The picker shows a retry hint; the reason goes to the log for a report.
+			clientLog('info', `agent_list_models ${runtime}: ${e}`);
+		})
+		.finally(() => (modelCatalog.busy = rest(modelCatalog.busy, runtime)));
 }
+
+const rest = (rec: Record<string, true>, key: string): Record<string, true> => {
+	const { [key]: _gone, ...out } = rec;
+	return out;
+};
+
 
 chats.onEvent((id, ev) => {
 	if (ev.kind !== 'models') return;
