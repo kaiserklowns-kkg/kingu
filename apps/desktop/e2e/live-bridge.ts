@@ -179,8 +179,12 @@ const live = Bun.serve({
 				case 'agent_answer_permission':
 					await ask('answer', { runId: args.runId, requestId: args.requestId, decision: args.decision, message: args.message ?? null, answers: args.answers ?? null });
 					return response(null);
+				case 'agent_set_options':
+					// The page changes the live run's model / permission mode / effort; the host maps it per runtime.
+					await ask('set_options', { runId: args.runId, model: args.model ?? null, permissionMode: args.permissionMode ?? null, effort: args.effort ?? null });
+					return response(null);
 				default:
-					return failure(`the bridge speaks list_models/start/send/interrupt/answer only, asked for ${command}`, 400);
+					return failure(`the bridge speaks list_models/start/send/interrupt/answer/set_options only, asked for ${command}`, 400);
 			}
 		} catch (e) {
 			return failure(e);
