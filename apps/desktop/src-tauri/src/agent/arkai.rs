@@ -6,7 +6,8 @@
 //!   a server): `{"openrouter": {"baseUrl": "https://openrouter.ai/api/v1", "models": ["…"]}}`,
 //!   with `name`, `api` (`openai`, the default, or `anthropic`), `headers`, and models as ids or
 //!   `{id, name, contextWindow, maxTokens, light}`. A provider with no models listed is asked for
-//!   them (`GET {baseUrl}/models`). A local Ollama is offered without settings when it answers.
+//!   them (`GET {baseUrl}/models`). A local Ollama is offered without settings when it answers, and
+//!   so is Clyde 1X, Kingu's own model served by vLLM on this Mac's port 8000.
 //! - API keys: in the macOS Keychain (`dev.kingu.arkai`, one item per provider id), set from
 //!   Settings › Arkai; never in settings.json (an `Authorization` header there is dropped). The
 //!   key goes to the agent host with the run and is never logged (`SecretKey`).
@@ -32,6 +33,9 @@ pub const SETTING: &str = "kingu.arkai.providers";
 pub const KEYCHAIN_SERVICE: &str = "dev.kingu.arkai";
 pub const OLLAMA: &str = "ollama";
 const OLLAMA_BASE: &str = "http://127.0.0.1:11434/v1";
+/// Kingu's own model, served by vLLM (its default port) with `--served-model-name clyde-1x`.
+pub const CLYDE: &str = "clyde";
+const CLYDE_BASE: &str = "http://127.0.0.1:8000/v1";
 /// The window Ollama serves a model at when neither the model nor a loaded copy says otherwise
 /// (its OpenAI-compatible API cannot ask for more); old Arkai's Chyle ran at this size, in light mode.
 const OLLAMA_CONTEXT: u64 = 16_384;
@@ -157,6 +161,9 @@ pub fn parse(value: Option<&Value>) -> Vec<Provider> {
   if !out.iter().any(|p| p.id == OLLAMA) {
     out.push(Provider { id: OLLAMA.into(), name: "Ollama".into(), api: Api::Openai, base_url: OLLAMA_BASE.into(), headers: BTreeMap::new(), models: Vec::new(), implicit: true });
   }
+  if !out.iter().any(|p| p.id == CLYDE) {
+    out.push(Provider { id: CLYDE.into(), name: "Clyde 1X".into(), api: Api::Openai, base_url: CLYDE_BASE.into(), headers: BTreeMap::new(), models: Vec::new(), implicit: true });
+  }
   out
 }
 
@@ -181,7 +188,14 @@ pub fn discover(transport: &dyn Transport, p: &Provider, key: Option<&str>) -> R
   let windows = if p.id == OLLAMA {
     ollama_windows(transport, p, &models)
   } else if p.local() {
-    lmstudio_windows(transport, p)
+    let mut w = lmstudio_windows(transport, p);
+    // vLLM names the window it serves each model at (`max_model_len`).
+    for m in v["data"].as_array().into_iter().flatten() {
+      if let (Some(id), Some(n)) = (m["id"].as_str(), m["max_model_len"].as_u64().and_then(sane)) {
+        w.insert(id.to_owned(), n);
+      }
+    }
+    w
   } else {
     HashMap::new()
   };
@@ -547,10 +561,10 @@ mod tests {
   }
 
   #[test]
-  fn providers_come_from_the_setting_and_ollama_is_added() {
+  fn providers_come_from_the_setting_and_the_local_servers_are_added() {
     let ps = parse(Some(&settings()));
     let ids: Vec<_> = ps.iter().map(|p| (p.id.as_str(), p.implicit)).collect();
-    assert_eq!(ids, [("openrouter", false), ("claude", false), ("lmstudio", false), ("ollama", true)]);
+    assert_eq!(ids, [("openrouter", false), ("claude", false), ("lmstudio", false), ("ollama", true), ("clyde", true)]);
     let or = ps.iter().find(|p| p.id == "openrouter").unwrap();
     assert_eq!(or.base_url, "https://openrouter.ai/api/v1");
     assert_eq!(or.models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["qwen/qwen3-coder", "deepseek/deepseek-chat"]);
@@ -558,11 +572,11 @@ mod tests {
     assert_eq!(or.headers, BTreeMap::from([("HTTP-Referer".to_owned(), "https://kingu.dev".to_owned())]), "a key in settings.json is never sent");
     assert_eq!(ps.iter().find(|p| p.id == "claude").unwrap().api, Api::Anthropic);
     assert!(ps.iter().find(|p| p.id == "lmstudio").unwrap().local() && !or.local());
-    // A configured `ollama` replaces the built-in one.
-    let own = parse(Some(&json!({"ollama": {"baseUrl": "http://10.0.0.2:11434/v1"}})));
-    assert_eq!(own.len(), 1);
-    assert!(!own[0].implicit);
-    assert_eq!(parse(None).len(), 1);
+    // A configured `ollama` or `clyde` replaces the built-in one.
+    let own = parse(Some(&json!({"ollama": {"baseUrl": "http://10.0.0.2:11434/v1"}, "clyde": {"baseUrl": "http://10.0.0.2:8000/v1", "models": ["clyde-1x"]}})));
+    assert_eq!(own.len(), 2);
+    assert!(own.iter().all(|p| !p.implicit));
+    assert_eq!(parse(None).len(), 2);
   }
 
   #[test]
@@ -586,6 +600,12 @@ mod tests {
     // A provider that does not answer shows why.
     t.replies.remove("http://localhost:1234/v1/models");
     assert_eq!(infos(&ps, &t, &key).iter().find(|p| p.id == "lmstudio").unwrap().error.as_deref(), Some("unreachable"));
+    // Clyde 1X answers on vLLM's port: offered, at the window vLLM serves it.
+    t.replies.insert("http://127.0.0.1:8000/v1/models".into(), json!({"data": [{"id": "clyde-1x", "max_model_len": 131072}]}));
+    let list = infos(&ps, &t, &key);
+    let clyde = list.iter().find(|p| p.id == "clyde").unwrap();
+    assert_eq!(clyde.models, [Model { context_window: Some(131072), ..Model::bare("clyde-1x") }]);
+    assert!(clyde.local && clyde.implicit && !clyde.has_key);
   }
 
   #[test]

@@ -3,15 +3,15 @@
 export const arkai = {
 	// The chat's model picker when the chat runs on Arkai
 	'arkai.picker.label': 'Arkai model',
-	'arkai.picker.hint': 'The model Arkai runs on: your providers in kingu.arkai.providers, and Ollama on this Mac',
+	'arkai.picker.hint': 'The model Arkai runs on: your providers in kingu.arkai.providers, plus Ollama and Clyde 1X (vLLM) on this Mac',
 	'arkai.picker.loading': 'Looking for models…',
 	'arkai.picker.none': 'No models: set up a provider',
 	'arkai.picker.noKey': '{name} (no API key)',
 	'arkai.picker.light': 'light mode',
 	// Settings › Arkai › Model providers
 	'arkai.settings.title': 'Model providers',
-	'arkai.settings.hint': 'Arkai runs chats on these models. Add a provider in settings.json under kingu.arkai.providers; Ollama on this Mac is found by itself. API keys stay in the macOS Keychain.',
-	'arkai.settings.empty': 'No providers yet. Start Ollama, or add one in kingu.arkai.providers.',
+	'arkai.settings.hint': 'Arkai runs chats on these models. Add a provider in settings.json under kingu.arkai.providers; Ollama, and Clyde 1X on a local vLLM (port 8000), are found by themselves. API keys stay in the macOS Keychain.',
+	'arkai.settings.empty': 'No providers yet. Start Ollama or a local vLLM (Clyde 1X), or add one in kingu.arkai.providers.',
 	'arkai.settings.refresh': 'Refresh',
 	'arkai.settings.models': '{count|# model|# models}',
 	'arkai.settings.local': 'On this Mac',
