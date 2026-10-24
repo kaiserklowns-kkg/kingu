@@ -53,6 +53,18 @@ function modelSetting(configOptions: unknown): { configId: string; choices: { va
 }
 
 /**
+ * Models from the older `session/new` field (`models.availableModels`, before ACP config options):
+ * `{modelId, name, description}` each. Switching them is `session/set_model`.
+ */
+function legacyModels(models: unknown): { value: string; name: string; description: string }[] {
+	if (!isObj(models) || !Array.isArray(models.availableModels)) return [];
+	return models.availableModels.flatMap((m) => {
+		const value = isObj(m) ? str(m.modelId) : null;
+		return value ? [{ value, name: str(m.name) ?? value, description: str(m.description) ?? '' }] : [];
+	});
+}
+
+/**
  * The agent's model choices before its first run (`host`'s `list_models`, a new chat's picker):
  * a throwaway process, one handshake up to `session/new` — where the config options arrive — and
  * no turn runs. `session/new` is the earliest point ACP names the models.
@@ -69,7 +81,8 @@ export async function probeModels(spawn: SpawnFn | undefined, command: string, a
 		if (num(init?.protocolVersion) !== ACP_PROTOCOL_VERSION) throw new Error(`the agent speaks ACP version ${String(init?.protocolVersion)}, Kingu speaks ${ACP_PROTOCOL_VERSION}`);
 		const r = await peer.request<Obj>('session/new', { cwd, mcpServers: [] }, OPEN_TIMEOUT_MS);
 		const models = modelSetting(r?.configOptions);
-		return models ? modelOptions(models.choices.map((c) => ({ value: c.value, displayName: c.name, description: '' }))) : [];
+		if (models) return modelOptions(models.choices.map((c) => ({ value: c.value, displayName: c.name, description: '' })));
+		return modelOptions(legacyModels(r?.models).map((m) => ({ value: m.value, displayName: m.name, description: m.description })));
 	} finally {
 		child.kill();
 	}
@@ -140,18 +153,26 @@ export class AcpSession extends ProcessSession {
 		}
 	}
 
-	/** The agent's model choices (session config options, category `model`), as a `models` event. */
+	/** The agent's model choices (session config options, category `model`, else the older `models` field), as a `models` event. */
 	private reportModels() {
 		const m = modelSetting(this.configOptions);
-		// shortcut: an agent advertising models only in the legacy `models` field of session/new gets no picker
-		if (!m) return;
-		this.emit({ kind: 'models', models: m.choices.map((c) => ({ value: c.value, display_name: c.name, description: '' })) });
-		this.models = { currentModelId: m.current, availableModels: m.choices };
+		if (m) {
+			this.emit({ kind: 'models', models: m.choices.map((c) => ({ value: c.value, display_name: c.name, description: '' })) });
+			this.models = { currentModelId: m.current, availableModels: m.choices };
+			return;
+		}
+		const legacy = legacyModels(this.models);
+		if (legacy.length) this.emit({ kind: 'models', models: legacy.map((c) => ({ value: c.value, display_name: c.name, description: c.description })) });
 	}
 
 	private async modelChanged(value: string) {
 		const m = modelSetting(this.configOptions);
-		if (!m) throw new Error('this agent has no model to switch to');
+		if (!m) {
+			if (!legacyModels(this.models).some((c) => c.value === value)) throw new Error('this agent has no model to switch to');
+			await this.peer.request('session/set_model', { sessionId: this.sessionId, modelId: value }, OPEN_TIMEOUT_MS);
+			this.models = { ...this.models, currentModelId: value };
+			return;
+		}
 		const r = await this.peer.request<Obj>('session/set_config_option', { sessionId: this.sessionId, configId: m.configId, value }, OPEN_TIMEOUT_MS);
 		this.models = { currentModelId: value, availableModels: m.choices };
 		if (Array.isArray(r?.configOptions)) {

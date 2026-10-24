@@ -8,6 +8,8 @@
 // FAKE_ACP_AUTH=1: `session/new` fails with "auth required".
 // FAKE_ACP_THOUGHT=1: the session advertises a `thought_level` config option (Low / Medium /
 // High / Extra High); `session/set_config_option` is logged as `got session/set_config_option <value>`.
+// FAKE_ACP_LEGACY_MODEL=1: models only in the older `models.availableModels` field of `session/new`;
+// `session/set_model` is logged as `got session/set_model <modelId>`.
 
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -96,7 +98,7 @@ const thoughtOption = (current: string) => ({
 const configOptions = () => [...(process.env.FAKE_ACP_MODEL === '1' ? [modelOption()] : []), ...(process.env.FAKE_ACP_THOUGHT === '1' ? [thoughtOption('medium')] : [])];
 
 async function handle(msg: any) {
-	if (msg.method) process.stderr.write(`got ${msg.method}${msg.method === 'session/set_mode' ? ` ${msg.params.modeId}` : msg.method === 'session/set_config_option' ? ` ${msg.params.configId}=${msg.params.value}` : ''}\n`);
+	if (msg.method) process.stderr.write(`got ${msg.method}${msg.method === 'session/set_mode' ? ` ${msg.params.modeId}` : msg.method === 'session/set_model' ? ` ${msg.params.modelId}` : msg.method === 'session/set_config_option' ? ` ${msg.params.configId}=${msg.params.value}` : ''}\n`);
 	if (msg.id !== undefined && !msg.method) return waiting.get(msg.id)?.(msg.result);
 	switch (msg.method) {
 		case 'initialize':
@@ -108,7 +110,10 @@ async function handle(msg: any) {
 				result: {
 					sessionId: SESSION,
 					modes: { currentModeId: 'default', availableModes: [{ id: 'default', name: 'Default' }, { id: 'yolo', name: 'YOLO' }] },
-					models: { currentModelId: 'fake-model', availableModels: [] },
+					models: {
+						currentModelId: 'fake-model',
+						availableModels: process.env.FAKE_ACP_LEGACY_MODEL === '1' ? [{ modelId: 'fake-model', name: 'Fake' }, { modelId: 'alt-model', name: 'Alt', description: 'the other' }] : []
+					},
 					...(configOptions().length ? { configOptions: configOptions() } : {})
 				}
 			});
@@ -123,6 +128,8 @@ async function handle(msg: any) {
 			return send({ id: msg.id, result: null });
 		case 'session/set_config_option':
 			return send({ id: msg.id, result: { configOptions: configOptions().map((o) => (o.id === msg.params.configId ? { ...o, currentValue: msg.params.value } : o)) } });
+		case 'session/set_model':
+			return send({ id: msg.id, result: null });
 		case 'session/prompt': {
 			// The skill index Kingu puts first (src/skills.ts) is logged, not echoed.
 			if (msg.params.prompt.some((b: any) => b.type === 'text' && b.text.startsWith('# Skills'))) process.stderr.write('got skills\n');

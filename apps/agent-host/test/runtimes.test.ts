@@ -315,6 +315,25 @@ describe('reasoning effort (fake agents)', () => {
 		expect(none.events().some((e) => e.kind === 'models')).toBe(false);
 	});
 
+	test('ACP: the older `models` field still gets a picker, and its switch is session/set_model', async () => {
+		const { cwd, event, stderr, call } = setup();
+		const env = { FAKE_ACP_LEGACY_MODEL: '1' };
+		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: ACP, env });
+		expect(await event('models')).toEqual({
+			kind: 'models',
+			models: [
+				{ value: 'fake-model', display_name: 'Fake', description: '' },
+				{ value: 'alt-model', display_name: 'Alt', description: 'the other' }
+			]
+		});
+		await event('result');
+		expect((await call(2, 'set_options', { runId: 1, model: 'alt-model' })).result).toMatchObject({ model: null });
+		await stderr('got session/set_model alt-model');
+		expect((await call(3, 'set_options', { runId: 1, model: 'nope' })).error?.message).toContain('no model to switch to');
+		const r = await call(4, 'list_models', { runtime: ACP, cwd, env });
+		expect(r.result).toMatchObject({ models: [{ value: 'fake-model', display_name: 'Fake' }, { value: 'alt-model', display_name: 'Alt', description: 'the other' }] });
+	});
+
 	test('ACP thinking: effort set on start reaches the agent as config option, listed, and switchable mid-session', async () => {
 		const { cwd, events, event, stderr, call } = setup();
 		await call(1, 'start', { runId: 1, cwd, prompt: 'x', runtime: ACP, env: { FAKE_ACP_THOUGHT: '1' }, effort: 'xhigh' });
