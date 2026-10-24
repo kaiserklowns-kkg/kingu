@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { arkaiDefault, arkaiGroups, needsKey, parseArkaiProviders, splitArkaiModel, type ArkaiProviderInfo } from './arkai';
+import { arkaiDefault, arkaiGroups, needsKey, parseArkaiProviders, providerEntry, splitArkaiModel, withProvider, type ArkaiProviderInfo } from './arkai';
 import { setLocale } from '#lib/i18n/index.ts';
 
 const provider = (over: Partial<ArkaiProviderInfo>): ArkaiProviderInfo => ({
@@ -61,5 +61,16 @@ describe('Arkai models', () => {
 	test('a remote provider without a key needs one; a local one does not', () => {
 		expect(needsKey(provider({ has_key: false }))).toBe(true);
 		expect(needsKey(provider({ has_key: false, local: true }))).toBe(false);
+	});
+});
+
+describe('Arkai provider settings', () => {
+	test('a new provider is added once; a bad or taken id is refused', () => {
+		const entry = providerEntry('http://192.168.1.10:11434/v1/', 'openai', ['clyde-1x', 'qwen3.5:9b'], 'KGF Server');
+		expect(entry).toEqual({ name: 'KGF Server', baseUrl: 'http://192.168.1.10:11434/v1', api: 'openai', models: ['clyde-1x', 'qwen3.5:9b'] });
+		expect(withProvider({}, 'kgf', entry)).toEqual({ kgf: entry });
+		expect(withProvider({ kgf: {} }, 'kgf', entry)).toBeNull();
+		expect(withProvider({}, 'Bad Id', entry)).toBeNull();
+		expect(withProvider({}, 'kgf', providerEntry('http://x/v1', 'anthropic', [], ''))).toEqual({ kgf: { baseUrl: 'http://x/v1', api: 'anthropic' } });
 	});
 });

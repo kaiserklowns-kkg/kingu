@@ -99,3 +99,14 @@ export function arkaiDefault(providers: readonly ArkaiProviderInfo[], current: s
 
 /** A provider that needs a key it does not have (a remote one, set up by the user). */
 export const needsKey = (p: ArkaiProviderInfo) => !p.local && !p.has_key;
+
+/** `providers` with a new one added; null for a bad id or one already set (no silent overwrite). */
+export function withProvider(current: Record<string, unknown>, id: string, entry: Record<string, unknown>): Record<string, unknown> | null {
+	if (!PROVIDER_ID.test(id) || Object.hasOwn(current, id)) return null;
+	return { ...current, [id]: entry };
+}
+
+/** The provider entry the settings schema takes (`settings/arkai.ts` `PROVIDER`). */
+export function providerEntry(baseUrl: string, api: 'openai' | 'anthropic', models: string[], name: string): Record<string, unknown> {
+	return { ...(name ? { name } : {}), baseUrl: baseUrl.replace(/\/+$/, ''), api, ...(models.length ? { models } : {}) };
+}
