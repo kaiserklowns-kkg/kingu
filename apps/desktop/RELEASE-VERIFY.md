@@ -8,7 +8,13 @@ Checklist from docs/PLAN.md §7 (security baseline) and §11 (REA release verifi
     bun run build:desktop            # tools/build-desktop.ts → target/aarch64-apple-darwin/release/bundle/macos/Kingu.app
     bun run verify:desktop           # tools/release-verify.ts on that bundle; exits 1 on any failure
 
-## Latest rebuild: 2026-10-23 (ad-hoc signed, not notarized)
+## Latest rebuild: 2026-10-24 (ad-hoc signed, this machine only)
+
+Scope for now: the app is built and run on this Mac, so **ad-hoc signing is the target**. Notarization
+and a Developer ID are out of scope until the app is handed to another Mac (the steps stay below for
+that day); a local build carries no quarantine flag, so Gatekeeper does not block it. This rebuild also
+carries the ACP change that gives agents advertising models only in the older `models` field a picker
+(`session/set_model` switches them).
 
 `bun run build:desktop -- --auditable` (cargo-auditable 0.7.7 through `tools/auditable-runner.sh`:
 a tauri `--runner` is exec'd directly, which cargo-auditable ≥ 0.7 refuses, so the wrapper reaches
@@ -22,8 +28,7 @@ Also new: a hand smoke test of the release sidecar answered `list_models` (Codex
 per-runtime model probe shipped with this build. No disassembler needed for the deps evidence:
 `otool -s __DATA .dep-v0` reads the section directly on the shipped macOS binary (~5 KB in
 `kingu-desktop`; the other Rust crates, `kingu-cli`/`kingu-ptyd`, are not plan-scoped for it). DMG
-built from this app: `bundle/macos/Kingu-0.1.0-aarch64.dmg` (52.4 MiB). Notarization/Developer ID
-still pending (below).
+built from this app: `bundle/macos/Kingu-0.1.0-aarch64.dmg` (52.4 MiB).
 
 - `build:desktop` = `tauri build --config src-tauri/tauri.release.conf.json --target <host> --bundles app`
   (compiles the sidecar first, adds `bundle.externalBin`), then re-signs the sidecar with
@@ -34,8 +39,9 @@ still pending (below).
   (`bundle.macOS.signingIdentity`). No secrets are in the repo. Set `KINGU_EXPECT_TEAM_ID` when
   verifying a Developer ID build.
 - `--auditable` builds the Rust binary with `cargo auditable` (`tauri build --runner cargo-auditable`)
-  so REA `inspect_rust_binary` can read the dependency list. Needs `cargo install cargo-auditable`;
-  not installed on the build machine used here, so this path is untested.
+  so REA `inspect_rust_binary` can read the dependency list. Needs `cargo install cargo-auditable`
+  (0.7.7 is installed here); tauri exec's the `--runner` directly and cargo-auditable ≥ 0.7 refuses
+  that, hence `tools/auditable-runner.sh`.
 - `release-verify.ts` needs only Xcode CLT (`codesign`, `otool`, `plutil`); it is the CI gate. REA
   runs on top of it for a release: `open_binary` (each executable) → `inspect_signature`,
   `inspect_macho`, `inspect_plist`, `inspect_rust_binary`, `search_strings`.
