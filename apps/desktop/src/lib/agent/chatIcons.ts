@@ -17,6 +17,7 @@ export const ICON_CODICON: Record<IconName, string> = {
 	account: 'account',
 	chevronRight: 'chevron-right',
 	arrowLeft: 'arrow-left',
+	globe: 'globe',
 	arrowRight: 'arrow-right',
 	chevronDown: 'chevron-down',
 	close: 'close',

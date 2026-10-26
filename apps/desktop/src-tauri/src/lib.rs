@@ -10,6 +10,7 @@ mod doctor;
 mod external;
 mod fileops;
 mod floating;
+mod floating_browser;
 mod fs;
 mod git;
 mod git_editor;
@@ -1467,6 +1468,14 @@ pub fn run() {
       voice::voice_clear_openai_key,
       voice::voice_transcribe,
       floating_note_new,
+      floating_browser::floating_browser_open,
+      floating_browser::floating_browser_bounds,
+      floating_browser::floating_browser_navigate,
+      floating_browser::floating_browser_history,
+      floating_browser::floating_browser_reload,
+      floating_browser::floating_browser_show,
+      floating_browser::floating_browser_open_external,
+      floating_browser::floating_browser_close,
       floating_note_read,
       floating_note_write,
       floating_dir,

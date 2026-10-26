@@ -84,3 +84,11 @@ export function resizeRect(r: Rect, edge: Edge, dx: number, dy: number): Rect {
 	}
 	return { left, top, width, height };
 }
+
+/** The URL a browser tab loads: a bare host is https, except this machine (dev servers are http). */
+export function browserUrl(raw: string): string {
+	const s = raw.trim();
+	if (!s) return 'about:blank';
+	if (/^about:/i.test(s) || /^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
+	return /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(s) ? `http://${s}` : `https://${s}`;
+}

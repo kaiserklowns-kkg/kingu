@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { anchorButton, anchorRect, buttonPos, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
+import { anchorButton, anchorRect, browserUrl, buttonPos, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
 
 test('default panel sits bottom right, 920×560', () => {
 	expect(defaultRect(1440, 900)).toEqual({ width: 920, height: 560, left: 496, top: 256 });
@@ -30,4 +30,13 @@ test('resizing from the west edge keeps the east edge', () => {
 	expect(resizeRect(r, 'w', 50, 0)).toEqual({ left: 150, top: 100, width: 450, height: 400 });
 	expect(resizeRect(r, 'nw', 300, 300)).toEqual({ left: 180, top: 220, width: 420, height: 280 });
 	expect(resizeRect(r, 'se', 10, 20)).toEqual({ left: 100, top: 100, width: 510, height: 420 });
+});
+
+test('a bare host loads over http only on this machine', () => {
+	expect(browserUrl('localhost:3000')).toBe('http://localhost:3000');
+	expect(browserUrl('127.0.0.1:5173/app')).toBe('http://127.0.0.1:5173/app');
+	expect(browserUrl('example.com/docs')).toBe('https://example.com/docs');
+	expect(browserUrl('https://example.com')).toBe('https://example.com');
+	expect(browserUrl('about:blank')).toBe('about:blank');
+	expect(browserUrl('  ')).toBe('about:blank');
 });

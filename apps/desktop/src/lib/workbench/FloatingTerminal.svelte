@@ -1,14 +1,15 @@
 <script lang="ts">
-	// Orca's floating workspace panel: a 36px title bar holding the tab strip (terminals and
-	// markdown notes, "+" for more) with Maximize / Minimize at the right, eight resize handles,
-	// drag the title bar to move, double-click it to maximize. Minimize only hides the panel; its
-	// shells keep running. Shortcuts inside it: ⌘T terminal, ⇧⌘M new note, ⇧⌘O open note,
-	// ⌘W close tab (hide when none), ⌘1–9 select a tab.
+	// Orca's floating workspace panel: a 36px title bar holding the tab strip (terminals, markdown
+	// notes and browser tabs, "+" for more) with Maximize / Minimize at the right, eight resize
+	// handles, drag the title bar to move, double-click it to maximize. Minimize only hides the
+	// panel; its shells keep running. Shortcuts inside it: ⌘T terminal, ⇧⌘B new browser,
+	// ⇧⌘M new note, ⇧⌘O open note, ⌘W close tab (hide when none), ⌘1–9 select a tab.
 	import Terminal from '#lib/terminal/Terminal.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import Icon from './Icon.svelte';
 	import PopupMenu, { menuItem } from './PopupMenu.svelte';
 	import FloatingNote from './FloatingNote.svelte';
+	import FloatingBrowser from './FloatingBrowser.svelte';
 	import FloatingToggle from './FloatingToggle.svelte';
 	import { floating } from './floating.svelte';
 	import { clampRect, resizeRect, type Edge, type Rect } from './floating';
@@ -58,9 +59,10 @@
 	// --- Tabs -----------------------------------------------------------------------------------
 	let renaming = $state<string | null>(null);
 	let newMenu = $state<{ x: number; y: number } | null>(null);
-	const NEW_ITEMS = [menuItem('note', 'New Markdown', { keyLabel: '⇧⌘M' }), menuItem('open', 'Open Markdown...', { keyLabel: '⇧⌘O' }), menuItem('terminal', 'New Terminal', { keyLabel: '⌘T' })];
+	const NEW_ITEMS = [menuItem('browser', 'New Browser', { keyLabel: '⇧⌘B' }), menuItem('note', 'New Markdown', { keyLabel: '⇧⌘M' }), menuItem('open', 'Open Markdown...', { keyLabel: '⇧⌘O' }), menuItem('terminal', 'New Terminal', { keyLabel: '⌘T' })];
 	function runNew(id: string) {
-		if (id === 'note') void floating.newNote();
+		if (id === 'browser') floating.newBrowser();
+		else if (id === 'note') void floating.newNote();
 		else if (id === 'open') void floating.openNote();
 		else floating.newTerminal();
 	}
@@ -71,6 +73,7 @@
 		const k = e.key.toLowerCase();
 		let handled = true;
 		if (!e.shiftKey && !e.altKey && k === 't') floating.newTerminal();
+		else if (e.shiftKey && !e.altKey && k === 'b') floating.newBrowser();
 		else if (e.shiftKey && !e.altKey && k === 'm') void floating.newNote();
 		else if (e.shiftKey && !e.altKey && k === 'o') void floating.openNote();
 		else if (!e.shiftKey && !e.altKey && k === 'w') {
@@ -142,7 +145,7 @@
 							onauxclick={(e) => e.button === 1 && floating.closeTab(t.id)}
 						>
 							{#if on}<span class="absolute inset-x-2.5 top-0 h-0.5 rounded-b-full bg-(--vscode-tab-activeBorderTop,var(--vscode-focusBorder))"></span>{/if}
-							<Icon name={t.kind === 'terminal' ? 'terminal' : 'fileText'} size={13} />
+							<Icon name={t.kind === 'terminal' ? 'terminal' : t.kind === 'browser' ? 'globe' : 'fileText'} size={13} />
 							{#if renaming === t.id}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
@@ -193,6 +196,8 @@
 					<div class={['absolute inset-0', floating.active !== t.id && 'invisible']} data-floating-active={floating.active === t.id ? '' : undefined}>
 						{#if t.kind === 'terminal'}
 							<Terminal key={floating.terminalKey(t.id)} floatingCwd={cwd} onoutput={() => floating.activity(t.id)} />
+						{:else if t.kind === 'browser'}
+							<FloatingBrowser id={t.id} url={t.url} />
 						{:else if t.path}
 							<FloatingNote path={t.path} />
 						{/if}
@@ -202,6 +207,7 @@
 					<div class="grid h-full place-items-center bg-(--vscode-editor-background)">
 						<div class="flex w-[360px] flex-col gap-1.5">
 							<button class={EMPTY_ROW} onclick={() => floating.newTerminal()}><Icon name="terminal" size={15} />New Terminal<span class="flex gap-0.5"><kbd class={KBD}>⌘</kbd><kbd class={KBD}>T</kbd></span></button>
+							<button class={EMPTY_ROW} onclick={() => floating.newBrowser()}><Icon name="globe" size={15} />New Browser<span class="flex gap-0.5"><kbd class={KBD}>⇧</kbd><kbd class={KBD}>⌘</kbd><kbd class={KBD}>B</kbd></span></button>
 							<button class={EMPTY_ROW} onclick={() => floating.newNote()}><Icon name="fileText" size={15} />New Markdown Note<span class="flex gap-0.5"><kbd class={KBD}>⇧</kbd><kbd class={KBD}>⌘</kbd><kbd class={KBD}>M</kbd></span></button>
 							<button class={EMPTY_ROW} onclick={() => floating.openNote()}><Icon name="fileText" size={15} />Open Markdown Note<span class="flex gap-0.5"><kbd class={KBD}>⇧</kbd><kbd class={KBD}>⌘</kbd><kbd class={KBD}>O</kbd></span></button>
 							<button class={EMPTY_ROW} onclick={() => floating.hide()}><Icon name="minus" size={15} />Minimize<span class="flex gap-0.5"><kbd class={KBD}>⌘</kbd><kbd class={KBD}>W</kbd></span></button>

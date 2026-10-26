@@ -3,7 +3,7 @@
 // hides it, so its shells keep running. Open/maximized, bounds and the toggle button's place are
 // remembered.
 //   floating.toggle() / show() / hide() / openMaximized()
-//   floating.newTerminal() / newNote() / openNote() / closeTab(id)
+//   floating.newTerminal() / newNote() / openNote() / newBrowser() / closeTab(id)
 
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -36,7 +36,7 @@ function write(key: string, v: unknown) {
 	}
 }
 
-export type FloatingTab = { id: string; kind: 'terminal' | 'note'; title: string; path?: string };
+export type FloatingTab = { id: string; kind: 'terminal' | 'note' | 'browser'; title: string; path?: string; url?: string };
 
 class Floating {
 	enabled = $derived(settings.get<boolean>('kingu.floating.enabled') !== false);
@@ -124,6 +124,11 @@ class Floating {
 		return floatingKey(LAUNCH, id);
 	}
 
+	/** The webview label of browser tab `id` (Rust floating_browser_*). */
+	browserLabel(id: string) {
+		return `floating-browser-${LAUNCH}-${id}`;
+	}
+
 	/** Shells of an earlier launch's floating tabs (tabs are not restored): ended once at start. */
 	async endStaleShells() {
 		// Another open window's floating tabs are its own (each page load has its own LAUNCH).
@@ -140,6 +145,10 @@ class Floating {
 		this.select(id);
 		this.show();
 		return id;
+	}
+	newBrowser(url = 'about:blank') {
+		const n = this.tabs.filter((t) => t.kind === 'browser').length + 1;
+		return this.#add({ kind: 'browser', title: n === 1 ? 'Browser' : `Browser ${n}`, url });
 	}
 	newTerminal() {
 		const n = this.tabs.filter((t) => t.kind === 'terminal').length + 1;

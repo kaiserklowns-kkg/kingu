@@ -55,3 +55,18 @@ test('opens Settings from the Manage menu and goes back to the app', async ({ pa
 	await expect(page.getByRole('navigation', { name: 'Settings' })).toBeHidden();
 	expect(errors).toEqual([]);
 });
+
+test('the floating workspace opens a browser tab with an address bar', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page);
+
+	await runCommand(page, 'Toggle Floating Terminal');
+	const panel = page.getByRole('region', { name: 'Floating workspace' });
+	await expect(panel).toBeVisible();
+	await panel.getByRole('button', { name: 'New tab' }).click();
+	await page.getByRole('menuitem', { name: /New Browser/ }).click();
+
+	await expect(panel.getByRole('tab', { name: /Browser/ })).toBeVisible();
+	await expect(panel.getByRole('textbox', { name: 'Address' })).toBeVisible();
+	expect(errors).toEqual([]);
+});

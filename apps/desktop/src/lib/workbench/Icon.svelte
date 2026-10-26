@@ -111,7 +111,8 @@
 		DownloadSimpleIcon,
 		DesktopIcon,
 		LightningIcon,
-		CaretLeftIcon
+		CaretLeftIcon,
+		GlobeIcon
 	} from 'phosphor-svelte';
 	import ArkaiMark from './ArkaiMark.svelte';
 	import KinguMark from './KinguMark.svelte';
@@ -179,6 +180,7 @@
 		/** The Agents layout (Open in Agents); `code` is its way back to the editor. */
 		agentsLayout: SquaresFourIcon,
 		terminal: TerminalWindowIcon,
+		globe: GlobeIcon,
 		coffee: CoffeeIcon,
 		usage: ChartDonutIcon,
 		sparkle: SparkleIcon,
