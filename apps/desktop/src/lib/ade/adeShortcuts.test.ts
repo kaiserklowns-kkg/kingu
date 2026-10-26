@@ -8,6 +8,7 @@ describe("Orca's default keys", () => {
 	test('macOS', () => {
 		const mac = (s: Shortcut) => keyOf(s, true);
 		expect(mac(ADE_SHORTCUTS.newTerminal)).toBe('cmd+t');
+		expect(mac(ADE_SHORTCUTS.newBrowser)).toBe('cmd+shift+b');
 		expect(mac(ADE_SHORTCUTS.reopenClosed)).toBe('cmd+shift+t');
 		expect(mac(ADE_SHORTCUTS.rename)).toBe('cmd+r');
 		expect(mac(ADE_SHORTCUTS.recentNext)).toBe('ctrl+tab');

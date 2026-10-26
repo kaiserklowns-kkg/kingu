@@ -9,6 +9,7 @@
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
+	import AdeBrowser from './AdeBrowser.svelte';
 	import FilePlaceholder from '#lib/workbench/FilePlaceholder.svelte';
 	import SaveConflictCompare from '#lib/workbench/SaveConflictCompare.svelte';
 	import { textFiles } from '#lib/workbench/textFileService.svelte.ts';
@@ -333,6 +334,13 @@
 				<!-- Quick reply while the CLI asks a question (top right: the CLI draws its question at the bottom). -->
 				<CliQuestion slug={s} class="absolute top-2 right-4 z-10 max-h-[70%] w-80 overflow-y-auto text-xs shadow-lg shadow-black/30" />
 			</div>
+		{/each}
+		{#each Object.entries(adeLayout.browsers) as [k, list] (k)}
+			{#each list as b (b.id)}
+				<div class={['absolute inset-0', (adeLayout.board || k !== key || activeTab !== b.id) && 'hidden']}>
+					<AdeBrowser worktree={k} id={b.id} />
+				</div>
+			{/each}
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}

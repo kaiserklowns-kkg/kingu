@@ -85,12 +85,26 @@ export function resizeRect(r: Rect, edge: Edge, dx: number, dy: number): Rect {
 	return { left, top, width, height };
 }
 
-/** The URL a browser tab loads: a bare host is https, except this machine (dev servers are http). */
+/** The search a bare word (not a host) goes to, like Orca's address bar. */
+const SEARCH = 'https://www.google.com/search?q=';
+/** This machine's names and addresses: dev servers there speak http, not https. */
+const LOCAL = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|(?:\d{1,3}\.){3}\d{1,3}|[^\s/]+\.localhost)(?::\d+)?(?:\/|$)/i;
+const HOST = /^[^\s/]+\.[a-z]{2,}(?::\d+)?(?:\/.*)?$/i;
+const HOST_PORT = /^[^\s/]+:\d+(?:\/.*)?$/i;
+
+/**
+ * The URL a browser tab loads: a bare host is https, except this machine (dev servers are http);
+ * anything that is not a host is a web search (Orca's address bar).
+ */
 export function browserUrl(raw: string): string {
 	const s = raw.trim();
 	if (!s) return 'about:blank';
-	if (/^about:/i.test(s) || /^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
-	return /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(s) ? `http://${s}` : `https://${s}`;
+	if (/^about:/i.test(s)) return s;
+	if (/^https?:\/\//i.test(s)) return s;
+	if (LOCAL.test(s)) return `http://${s}`;
+	if (HOST.test(s)) return `https://${s}`;
+	if (HOST_PORT.test(s)) return `http://${s}`;
+	return SEARCH + encodeURIComponent(s.toWellFormed());
 }
 
 /** Whether a URL is the floating browser's own new-tab page (the app serves it). */

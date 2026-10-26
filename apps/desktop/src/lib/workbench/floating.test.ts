@@ -35,10 +35,20 @@ test('resizing from the west edge keeps the east edge', () => {
 test('a bare host loads over http only on this machine', () => {
 	expect(browserUrl('localhost:3000')).toBe('http://localhost:3000');
 	expect(browserUrl('127.0.0.1:5173/app')).toBe('http://127.0.0.1:5173/app');
+	expect(browserUrl('192.168.1.10:11434/v1')).toBe('http://192.168.1.10:11434/v1');
+	expect(browserUrl('devbox:8080')).toBe('http://devbox:8080');
+	expect(browserUrl('app.localhost:3000')).toBe('http://app.localhost:3000');
 	expect(browserUrl('example.com/docs')).toBe('https://example.com/docs');
 	expect(browserUrl('https://example.com')).toBe('https://example.com');
 	expect(browserUrl('about:blank')).toBe('about:blank');
 	expect(browserUrl('  ')).toBe('about:blank');
+});
+
+test('anything that is not a host is a web search, like Orca', () => {
+	expect(browserUrl('kingu browser')).toBe('https://www.google.com/search?q=kingu%20browser');
+	expect(browserUrl('สวัสดี')).toBe(`https://www.google.com/search?q=${encodeURIComponent('สวัสดี')}`);
+	expect(browserUrl('javascript:alert(1)')).toBe('https://www.google.com/search?q=javascript%3Aalert(1)');
+	expect(browserUrl('file:///etc/passwd')).toBe('https://www.google.com/search?q=file%3A%2F%2F%2Fetc%2Fpasswd');
 });
 
 test('a browser tab is named after the page host', () => {

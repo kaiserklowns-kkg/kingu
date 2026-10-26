@@ -33,11 +33,13 @@ import {
 	tabPanes,
 	touchMru,
 	type AdeTab,
+	type BrowserTab,
 	type ClosedTab,
 	type FileTab,
 	type TerminalTab
 } from './adeTabs.ts';
 import { switcherOrder } from './sidebarView.ts';
+import { browserTitle } from '#lib/workbench/floating.ts';
 import { t } from '#lib/i18n/index.ts';
 
 export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
@@ -53,6 +55,8 @@ class AdeLayout {
 	terminals = $state<Record<string, TerminalTab[]>>({});
 	/** Files and task diffs opened in each worktree's tab row. */
 	files = $state<Record<string, FileTab[]>>({});
+	/** Browser tabs of each worktree (Orca's browser tabs); their pages live in the center. */
+	browsers = $state<Record<string, BrowserTab[]>>({});
 	/** Active tab per worktree ('main', a terminal id or a file tab id). */
 	active = $state<Record<string, string>>({});
 	#seq = $state(0);
@@ -73,6 +77,7 @@ class AdeLayout {
 	loadTerminals(tag: string) {
 		const saved = restore(storeName(STORE, tag), parseAdeTerminals);
 		this.terminals = saved ? Object.fromEntries(Object.entries(saved.terminals).map(([k, list]) => [k, list.map(withoutRun)])) : {};
+		this.browsers = {};
 		this.active = saved?.active ?? {};
 		this.#seq = saved?.seq ?? 0;
 		this.mru = {};
@@ -85,6 +90,7 @@ class AdeLayout {
 	unloadTerminals() {
 		this.#tag = null;
 		this.terminals = {};
+		this.browsers = {};
 		this.active = {};
 	}
 
@@ -213,6 +219,7 @@ class AdeLayout {
 		if (!last) return;
 		this.closed[key] = stack.slice(0, -1);
 		if (last.kind === 'file') this.openFile(key, last.key, { preview: false });
+		else if (last.kind === 'browser') this.newBrowser(key, last.url);
 		else this.newTerminal(key, { title: last.title, index: last.index });
 	}
 
@@ -269,14 +276,56 @@ class AdeLayout {
 	}
 
 	tabs(key: string): AdeTab[] {
-		return adeTabs(key, this.terminals[key] ?? [], this.files[key] ?? []);
+		return adeTabs(key, this.terminals[key] ?? [], this.files[key] ?? [], this.browsers[key] ?? []);
+	}
+
+	browserTab(key: string, id: string): BrowserTab | undefined {
+		return this.browsers[key]?.find((b) => b.id === id);
+	}
+
+	/** The shown worktree's active browser tab, if a browser tab is active. */
+	activeBrowser(): { key: string; tab: BrowserTab } | null {
+		if (this.board) return null;
+		const key = this.key;
+		const tab = this.browserTab(key, this.activeTab(key));
+		return tab ? { key, tab } : null;
+	}
+
+	/** A new browser tab in `key`, loaded with `url` (`''`: New Tab); `background` opens it without showing it. */
+	newBrowser(key: string, url = '', { background = false }: { background?: boolean } = {}): string {
+		const id = `b${++this.#seq}`;
+		const tab: BrowserTab = { id, url, title: browserTitle(url) };
+		this.browsers[key] = [...(this.browsers[key] ?? []), tab];
+		if (background) return id;
+		this.select(key, id);
+		this.board = false;
+		return id;
+	}
+
+	/** The page's title (Orca names the tab after it). */
+	renameBrowser(key: string, id: string, title: string) {
+		const list = this.browsers[key];
+		if (!list || !title.trim()) return;
+		const tab = list.find((b) => b.id === id);
+		if (!tab || tab.title === title) return;
+		this.browsers[key] = list.map((b) => (b.id === id ? { ...b, title: title.trim() } : b));
+	}
+
+	closeBrowser(key: string, id: string) {
+		const list = this.browsers[key] ?? [];
+		const tab = list.find((b) => b.id === id);
+		if (!tab) return;
+		const index = list.findIndex((b) => b.id === id);
+		this.closed[key] = pushClosed(this.closed[key] ?? [], { kind: 'browser', url: tab.url, title: tab.title, index });
+		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
+		this.browsers[key] = list.filter((b) => b.id !== id);
 	}
 
 	activeTab(key: string): string {
 		const id = this.active[key] ?? 'main';
 		const file = keyOfTabId(id);
 		if (file !== null) return this.files[key]?.some((f) => f.key === file) ? id : 'main';
-		return id === 'main' || this.terminals[key]?.some((t) => t.id === id) ? id : 'main';
+		return id === 'main' || this.terminals[key]?.some((t) => t.id === id) || this.browsers[key]?.some((b) => b.id === id) ? id : 'main';
 	}
 
 	/** The file or task diff key of the shown worktree's active tab, while the Agents layout shows one. */
@@ -336,6 +385,7 @@ class AdeLayout {
 	close(key: string, id: string) {
 		const file = keyOfTabId(id);
 		if (file !== null) void this.closeFile(key, file);
+		else if (this.browserTab(key, id)) this.closeBrowser(key, id);
 		else void this.closeTerminal(key, id);
 	}
 
@@ -398,6 +448,7 @@ class AdeLayout {
 		for (const t of this.terminals[key] ?? []) for (const p of tabPanes(t)) killPty(this.ptyKey(key, p));
 		delete this.terminals[key];
 		delete this.files[key];
+		delete this.browsers[key];
 		delete this.active[key];
 		delete this.mru[key];
 		delete this.closed[key];

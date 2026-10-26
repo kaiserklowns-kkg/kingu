@@ -65,6 +65,21 @@
 		}
 	}
 
+	// The "+" is Orca's create menu: a new tab of a kind in this worktree.
+	let create = $state<{ x: number; y: number } | null>(null);
+	const createItems = $derived([
+		menuItem('terminal', 'New Terminal', { keyLabel: keyLabel('cmd+t'), enabled: !!workspace.root }),
+		menuItem('browser', 'New Browser Tab', { keyLabel: keyLabel('cmd+shift+b'), enabled: !!workspace.root })
+	]);
+	function openCreate(e: MouseEvent) {
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		create = { x: r.left, y: r.bottom + 2 };
+	}
+	function runCreate(id: string) {
+		if (id === 'browser') adeLayout.newBrowser(key);
+		else adeLayout.newTerminal(key);
+	}
+
 	const key = $derived(adeLayout.key);
 	const view = $derived(key ? adeTasks.find(key) : undefined);
 	const tabs = $derived(adeLayout.tabs(key));
@@ -105,6 +120,8 @@
 						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 						<AgentIcon agent={view.meta.agent || 'claude'} size={14} />
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
+					{:else if t.kind === 'browser'}
+						<Icon name="globe" size={14} /><span class="truncate" title={t.label}>{t.label}</span>
 					{:else if t.kind === 'file' || t.kind === 'diff'}
 						<FileIcon icon={fileIcon(t.label)} />
 						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? tr('legacyAde.adeTabBar.diffOfTask', { file: fileOf(t.key) }) : t.key}>{t.label}</span>
@@ -138,18 +155,19 @@
 				</div>
 			{/each}
 		</div>
-		<div class="flex items-center self-center px-1">
-			<button
-				class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
-				aria-label={tr('legacyAde.adeTabBar.newTerminal')}
-				title={tr('legacyAde.adeTabBar.newTerminalTip', { shortcut: keyLabel('cmd+t') })}
-				disabled={!workspace.root}
-				onclick={() => adeLayout.newTerminal(key)}
-			>
-				<Icon name="plus" size={16} />
-			</button>
-		</div>
 	{/if}
+	<!-- Also on a page (Now, Tasks…): a new tab leaves the page for the worktree. -->
+	<div class="flex items-center self-center px-1">
+		<button
+			class="grid size-6 place-items-center rounded-md enabled:hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-35"
+			aria-label="New Tab"
+			title="New Tab"
+			disabled={!workspace.root}
+			onclick={openCreate}
+		>
+			<Icon name="plus" size={16} />
+		</button>
+	</div>
 	<span class="flex-1"></span>
 	{#if attention}
 		<button
@@ -162,6 +180,10 @@
 	{/if}
 </div>
 
+{#if create}
+	{@const at = create}
+	<PopupMenu items={createItems} label="New Tab" x={at.x} y={at.y} focusFirst onRun={(node) => node.type === 'item' && runCreate(node.id)} onClose={() => (create = null)} />
+{/if}
 {#if menu}
 	{@const target = menu.tab}
 	<PopupMenu items={menuItems} label="Tab" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, target)} onClose={() => (menu = null)} />

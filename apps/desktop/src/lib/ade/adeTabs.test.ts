@@ -33,6 +33,15 @@ describe('adeTabs', () => {
 	test('a terminal can carry its own title', () => {
 		expect(adeTabs('x', [{ id: 't1', n: 1, title: 'test (Go)' }])[1].label).toBe('test (Go)');
 	});
+	test('browser tabs sit between the terminals and the files', () => {
+		const tabs = adeTabs('x', [{ id: 't1', n: 1 }], [{ key: 'src/a.ts', preview: false }], [{ id: 'b2', url: '', title: 'New Tab' }]);
+		expect(tabs.map((t) => [t.kind, t.label])).toEqual([
+			['agent', 'Agent'],
+			['terminal', 'Terminal 1'],
+			['browser', 'New Tab'],
+			['file', 'a.ts']
+		]);
+	});
 	test('a task starts with its agent session, then its terminals', () => {
 		expect(adeTabs('fix-login', [{ id: 't1', n: 1 }, { id: 't4', n: 2 }]).map((t) => [t.kind, t.label])).toEqual([
 			['agent', 'Agent'],

@@ -55,8 +55,11 @@ export function cycleTab(ids: string[], active: string, step: 1 | -1): string {
 /** Orca's Select Tab n: the n-th tab (1-based), or null when there are fewer (9 is the 9th, not the last). */
 export const tabAtIndex = (ids: string[], n: number): string | null => ids[n - 1] ?? null;
 
+/** A browser tab of the Agents layout (Orca's browser tabs): a real page, its title from the page. */
+export type BrowserTab = { id: string; url: string; title: string };
+
 /** A closed tab, enough to open it again (Orca: a fresh shell keeps only the title). */
-export type ClosedTab = { kind: 'terminal'; title?: string; index: number } | { kind: 'file'; key: string };
+export type ClosedTab = { kind: 'terminal'; title?: string; index: number } | { kind: 'file'; key: string } | { kind: 'browser'; url: string; title?: string; index: number };
 /** Orca keeps the last 10 closes per worktree. */
 export function pushClosed(stack: ClosedTab[], tab: ClosedTab, cap = 10): ClosedTab[] {
 	return [...stack, tab].slice(-cap);
@@ -69,18 +72,20 @@ export function pushClosed(stack: ClosedTab[], tab: ClosedTab, cap = 10): Closed
 export type FileTab = { key: string; preview: boolean };
 export type AdeTab =
 	| { id: string; kind: 'agent' | 'compose' | 'terminal'; label: string; color?: string }
+	| { id: string; kind: 'browser'; label: string }
 	| { id: string; kind: 'file' | 'diff'; label: string; key: string; preview: boolean };
 
 /** Prefixed so a file named like a terminal id (`t1`, `main`) cannot clash with it. */
 export const fileTabId = (key: string) => `f:${key}`;
 export const keyOfTabId = (id: string) => (id.startsWith('f:') ? id.slice(2) : null);
 
-/** The main tab (the task's agent session, or the new-task composer for the folder), its terminals, then its files. */
-export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] = []): AdeTab[] {
+/** The main tab (the task's agent session, or the new-task composer for the folder), its terminals, its browser tabs, then its files. */
+export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] = [], browsers: BrowserTab[] = []): AdeTab[] {
 	const main: AdeTab = key ? { id: 'main', kind: 'agent', label: 'Agent' } : { id: 'main', kind: 'compose', label: t('ade.tabs.newTask') };
 	return [
 		main,
 		...terminals.map((t) => ({ id: t.id, kind: 'terminal' as const, label: t.title ?? `Terminal ${t.n}`, ...(t.color ? { color: t.color } : {}) })),
+		...browsers.map((b) => ({ id: b.id, kind: 'browser' as const, label: b.title })),
 		...files.map((f) => ({
 			id: fileTabId(f.key),
 			kind: isDiffKey(f.key) ? ('diff' as const) : ('file' as const),

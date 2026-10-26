@@ -23,6 +23,7 @@ export function installAdeCommands(): () => void {
 	const cmd = (s: Shortcut, run: () => unknown, when: () => boolean = front) => commands.register({ ...s, category: 'Agents', scope: 'agents', when, run });
 	const unregister = [
 		cmd(K.newTerminal, () => adeLayout.newTerminal(adeLayout.key)),
+		cmd(K.newBrowser, () => adeLayout.newBrowser(adeLayout.key)),
 		cmd(K.reopenClosed, () => adeLayout.reopenClosed(adeLayout.key), () => front() && (adeLayout.closed[adeLayout.key]?.length ?? 0) > 0),
 		cmd(K.rename, () => {
 			const t = terminal();

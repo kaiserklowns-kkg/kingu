@@ -7,6 +7,7 @@ export type Shortcut = { id: string; title: string; key?: string; mac?: string }
 
 export const ADE_SHORTCUTS = {
 	newTerminal: { id: 'kingu.ade.tab.newTerminal', title: 'New Terminal Tab', key: 'cmd+t' },
+	newBrowser: { id: 'kingu.ade.tab.newBrowser', title: 'New Browser Tab', key: 'cmd+shift+b' },
 	reopenClosed: { id: 'kingu.ade.tab.reopenClosed', title: 'Reopen Closed Tab', key: 'cmd+shift+t' },
 	// Off macOS Ctrl+R stays the shell's reverse search (Orca leaves it unbound there).
 	rename: { id: 'kingu.ade.tab.rename', title: 'Rename Tab…', mac: 'cmd+r' },
