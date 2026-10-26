@@ -124,14 +124,17 @@
 	let editing = $state(false);
 	let renamingId = $state<string | null>(null);
 	let renameText = $state('');
+	/** The runtime a new chat starts on: `kingu.agent.runtime`, else Claude. */
+	const startRuntime = $derived(settings.get<string>('kingu.agent.runtime')?.trim() || runtimeOf(null));
 	/** New chat picks: where it runs ('' = this folder, else a task slug), model, mode. */
 	let newWhere = $state('');
-	let newModel = $state(chats.defaults().model ?? '');
+	let newModel = $state('');
 	/** The new chat's reasoning effort (null: the runtime's default, else the model's). */
 	let newEffort = $state<Effort | null>(null);
 	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
-	/** The new chat's agent (runtimes.ts); kept for the next new chat. */
-	let newRuntime = $state(runtimeOf(null));
+	/** The runtime picked for the next new chat; null until one is picked (the setting's, once it loads). */
+	let pickedRuntime = $state<string | null>(null);
+	const newRuntime = $derived(pickedRuntime ?? startRuntime);
 	/** Agent mode's approval, kept while Ask is picked. */
 	let approval = $state<AgentApproval>(chats.defaults().permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default');
 	/** Where the last model / mode change took effect, shown under the input. */
@@ -987,7 +990,7 @@
 			if (id === runtimeId) return;
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
 			if (chatMeta) newChat();
-			newRuntime = id;
+			pickedRuntime = id;
 			newModel = freshModel(id); // another agent starts with the model last used with it, never Claude's
 		}
 	});
@@ -1096,8 +1099,8 @@
 			if (id === 'new') return newChat();
 			if (id.startsWith('runtime:')) {
 				newChat();
-				newRuntime = id.slice(8);
-				if (newRuntime !== CLAUDE_RUNTIME) newModel = '';
+				pickedRuntime = id.slice(8);
+				if (pickedRuntime !== CLAUDE_RUNTIME) newModel = '';
 			}
 			return;
 		}

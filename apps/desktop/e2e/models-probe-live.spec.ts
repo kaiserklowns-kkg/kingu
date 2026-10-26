@@ -3,6 +3,9 @@ import { expect, test } from '@playwright/test';
 import { calls, openApp } from './helpers';
 import { READY, watchErrors } from './mock';
 
+// These specs drive Claude Code; pin the runtime since the default is now Arkai.
+const CLAUDE = { 'kingu.agent.runtime': 'claude' };
+
 /**
  * The real thing in the browser flow: this picker's model rows are named by the installed
  * OpenCode CLI through the live bridge (e2e/live-bridge.ts → the real agent host `main.ts`).
@@ -20,7 +23,7 @@ const opencodeOnPath = (() => {
 test('the model picker lists what the real OpenCode runtime names', async ({ page }) => {
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { live: true });
+	await openApp(page, READY, CLAUDE, { live: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
@@ -46,7 +49,7 @@ test('a real OpenCode session answers a sent chat message', async ({ page }) => 
 	test.setTimeout(180_000) // a real model answers on its own clock (slow free-model queues)
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { live: true });
+	await openApp(page, READY, CLAUDE, { live: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	// Real runtime, real model (the first of what the real CLI named), real first prompt.
@@ -71,7 +74,7 @@ test('a real OpenCode session answers a sent chat message', async ({ page }) => 
 test('a live OpenCode chat switches its model for real', async ({ page }) => {
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { live: true });
+	await openApp(page, READY, CLAUDE, { live: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	await chat.getByRole('button', { name: 'Agent: Claude Code' }).click();
@@ -98,7 +101,7 @@ test('a live OpenCode chat switches its model for real', async ({ page }) => {
 test('the agent list comes from the real PATH (installed CLIs only)', async ({ page }) => {
 	test.skip(!opencodeOnPath, 'the OpenCode CLI is not installed');
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { live: true });
+	await openApp(page, READY, CLAUDE, { live: true });
 
 	// The Agent picker names every runtime whose CLI is really on this machine's PATH.
 	const chat = page.getByRole('complementary', { name: 'Chat' });

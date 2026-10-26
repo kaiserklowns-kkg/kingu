@@ -2,9 +2,12 @@ import { expect, test } from '@playwright/test';
 import { calls, openApp } from './helpers';
 import { READY, watchErrors } from './mock';
 
+// These specs drive Claude Code; pin the runtime since the default is now Arkai.
+const CLAUDE = { 'kingu.agent.runtime': 'claude' };
+
 test('a new chat asks the agent once for models and lists them in the picker', async ({ page }) => {
 	const errors = watchErrors(page);
-	await openApp(page);
+	await openApp(page, READY, CLAUDE);
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	// Switch the session target to OpenCode (an ACP agent).
@@ -30,7 +33,7 @@ test('a new chat asks the agent once for models and lists them in the picker', a
 
 test('New Chat keeps the last agent and drops the Claude default model', async ({ page }) => {
 	const errors = watchErrors(page);
-	await openApp(page, READY, { 'kingu.agent.model': 'claude-opus-5-5' });
+	await openApp(page, READY, { ...CLAUDE, 'kingu.agent.model': 'claude-opus-5-5' });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
@@ -52,7 +55,7 @@ test('New Chat keeps the last agent and drops the Claude default model', async (
 
 test('a failed model ask says so and the picker offers a retry', async ({ page }) => {
 	const errors = watchErrors(page);
-	await openApp(page, READY, {}, { probeFail: true });
+	await openApp(page, READY, CLAUDE, { probeFail: true });
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	const target = chat.getByRole('button', { name: 'Agent: Claude Code' });
@@ -72,7 +75,7 @@ test('a failed model ask says so and the picker offers a retry', async ({ page }
 
 test('a picked model stays the default of that runtime\'s next new chat', async ({ page }) => {
 	const errors = watchErrors(page);
-	await openApp(page, READY);
+	await openApp(page, READY, CLAUDE);
 
 	const chat = page.getByRole('complementary', { name: 'Chat' });
 	// Move to OpenCode and pick a real model for the about-to-open chat.

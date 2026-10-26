@@ -242,6 +242,14 @@ const CORE_SETTINGS: SettingSchema[] = [
 		description: "ฟอนต์ของ terminal เว้นว่างเพื่อใช้ฟอนต์ของ editor (Controls the font family of the terminal. Defaults to `#editor.fontFamily#`'s value.)"
 	},
 	{
+		id: 'kingu.agent.runtime',
+		group: 'Agent',
+		type: 'string',
+		default: 'arkai',
+		description:
+			'เอเจนต์ที่แชตใหม่เริ่มบน: id ของรันไทม์ เช่น arkai (ค่าเริ่มต้น), claude, codex หรือ id ของ ACP agent ที่ตั้งไว้ แชตเก่ายังใช้รันไทม์ที่บันทึกไว้ (The runtime a new chat starts on: arkai by default, claude, codex, or a configured ACP agent id; chats already saved keep theirs.)'
+	},
+	{
 		id: 'kingu.agent.model',
 		group: 'Agent',
 		type: 'string',
