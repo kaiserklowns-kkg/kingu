@@ -41,6 +41,8 @@ export type MenuItem =
 			label: string;
 			key?: string;
 			mac?: string;
+			/** Show the keybinding but give the native menu no accelerator, so the webview sees the key first. */
+			noAccelerator?: boolean;
 			toggle?: boolean;
 			/** A two-state item whose label names the other state (Open in Agents / Open in Editor) instead of a check mark. */
 			checkedLabel?: string;
@@ -377,7 +379,9 @@ export const MENUS: Menu[] = [
 			{ command: 'workbench.action.terminal.new', label: 'New Terminal' },
 			SEP,
 			{ command: 'workbench.action.tasks.runTask', label: 'Run Task...' },
-			{ command: 'workbench.action.tasks.build', label: 'Run Build Task...' },
+			// ⇧⌘B opens a browser tab in the floating workspace (Orca's key); a native accelerator would
+			// take the key before the webview, so the menu shows it and the webview handles it.
+			{ command: 'workbench.action.tasks.build', label: 'Run Build Task...', noAccelerator: true },
 			{ command: 'workbench.action.tasks.showTasks', label: 'Show Running Tasks...' },
 			{ command: 'workbench.action.tasks.restartTask', label: 'Restart Running Task...' },
 			{ command: 'workbench.action.tasks.terminate', label: 'Terminate Task...' },
@@ -482,6 +486,7 @@ function resolveItems(items: MenuItem[], ctx: MenuContext): MenuNode[] {
 			const key = (ctx.mac ? item.mac : undefined) ?? item.key ?? ctx.keyOf(item.command);
 			const text = item.checkedLabel && ctx.checked(item.command) ? item.checkedLabel : item.label;
 			const node: MenuNode = { type: 'item', id: item.command, text, ...keyInfo(key, ctx.mac), enabled: ctx.enabled(item.command) };
+			if (item.noAccelerator) delete node.accelerator;
 			if (item.toggle) node.checked = ctx.checked(item.command);
 			out.push(node);
 		}

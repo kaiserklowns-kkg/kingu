@@ -92,3 +92,18 @@ export function browserUrl(raw: string): string {
 	if (/^about:/i.test(s) || /^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
 	return /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(s) ? `http://${s}` : `https://${s}`;
 }
+
+/** Whether a URL is the floating browser's own new-tab page (the app serves it). */
+export function isNewTabPage(url: string): boolean {
+	return url === '' || url === 'about:blank' || url.startsWith('kingu-newtab:');
+}
+
+/** A browser tab's title: the page's host, or New Tab while the page is blank. */
+export function browserTitle(url: string): string {
+	if (isNewTabPage(url)) return 'New Tab';
+	try {
+		return new URL(url).host || 'New Tab';
+	} catch {
+		return 'New Tab';
+	}
+}

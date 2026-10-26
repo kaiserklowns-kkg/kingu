@@ -1293,6 +1293,7 @@ pub fn run() {
     .manage(snap_view::SnapViews::default())
     .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
+    .register_uri_scheme_protocol(floating_browser::SCHEME, floating_browser::handle)
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .register_uri_scheme_protocol(snap_view::SCHEME, snap_view::handle)
     .setup(|app| {

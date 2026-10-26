@@ -66,7 +66,11 @@ test('the floating workspace opens a browser tab with an address bar', async ({ 
 	await panel.getByRole('button', { name: 'New tab' }).click();
 	await page.getByRole('menuitem', { name: /New Browser/ }).click();
 
-	await expect(panel.getByRole('tab', { name: /Browser/ })).toBeVisible();
 	await expect(panel.getByRole('textbox', { name: 'Address' })).toBeVisible();
+
+	// ⇧⌘B belongs to the panel while it has focus, not to Run Build Task.
+	await panel.getByRole('textbox', { name: 'Address' }).focus();
+	await page.keyboard.press('Meta+Shift+B');
+	await expect(panel.getByRole('tab', { name: /New Tab/ })).toHaveCount(2);
 	expect(errors).toEqual([]);
 });

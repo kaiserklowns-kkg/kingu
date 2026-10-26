@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { anchorButton, anchorRect, browserUrl, buttonPos, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
+import { anchorButton, anchorRect, browserTitle, browserUrl, buttonPos, isNewTabPage, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
 
 test('default panel sits bottom right, 920×560', () => {
 	expect(defaultRect(1440, 900)).toEqual({ width: 920, height: 560, left: 496, top: 256 });
@@ -39,4 +39,19 @@ test('a bare host loads over http only on this machine', () => {
 	expect(browserUrl('https://example.com')).toBe('https://example.com');
 	expect(browserUrl('about:blank')).toBe('about:blank');
 	expect(browserUrl('  ')).toBe('about:blank');
+});
+
+test('a browser tab is named after the page host', () => {
+	expect(browserTitle('about:blank')).toBe('New Tab');
+	expect(browserTitle('')).toBe('New Tab');
+	expect(browserTitle('http://localhost:3000/app')).toBe('localhost:3000');
+	expect(browserTitle('https://example.com/docs')).toBe('example.com');
+	expect(browserTitle('nonsense')).toBe('New Tab');
+});
+
+test('the app-served new-tab page reads as blank', () => {
+	expect(isNewTabPage('kingu-newtab://localhost/')).toBe(true);
+	expect(isNewTabPage('about:blank')).toBe(true);
+	expect(isNewTabPage('http://localhost:3000')).toBe(false);
+	expect(browserTitle('kingu-newtab://localhost/')).toBe('New Tab');
 });

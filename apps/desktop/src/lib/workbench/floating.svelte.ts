@@ -146,9 +146,8 @@ class Floating {
 		this.show();
 		return id;
 	}
-	newBrowser(url = 'about:blank') {
-		const n = this.tabs.filter((t) => t.kind === 'browser').length + 1;
-		return this.#add({ kind: 'browser', title: n === 1 ? 'Browser' : `Browser ${n}`, url });
+	newBrowser(url = '') {
+		return this.#add({ kind: 'browser', title: 'New Tab', url });
 	}
 	newTerminal() {
 		const n = this.tabs.filter((t) => t.kind === 'terminal').length + 1;

@@ -59,6 +59,9 @@ function context(mac: boolean, over: Partial<MenuContext> = {}): MenuContext {
  * while the debugger is stopped, else Toggle Full Screen; Kingu gives full screen the lower weight). */
 const SHARED_KEYS = new Set(['workbench.action.debug.stepInto workbench.action.toggleFullScreen']);
 
+/** Menu items that show a key but leave it to the webview (the floating workspace owns ⇧⌘B). */
+const NO_ACCELERATOR = new Set(['workbench.action.tasks.build']);
+
 function walk(items: MenuItem[], visit: (i: MenuItem) => void) {
 	for (const i of items) {
 		visit(i);
@@ -124,7 +127,13 @@ describe('menu model', () => {
 			expect(accelerators.length).toBeGreaterThan(15);
 			for (const a of accelerators) expect(a).toMatch(/^((Ctrl|Alt|Shift|Cmd)\+)*([A-Z0-9]|F\d{1,2}|Backquote|Backslash|Comma|Period|Equal|Minus|Slash|Semicolon|Quote|BracketLeft|BracketRight|Arrow(Left|Right|Up|Down)|Page(Up|Down))$/);
 			// Every item with a single-chord keybinding gets an accelerator; two-part chords only a label.
-			for (const i of items) if (i.keyLabel && !i.keyLabel.includes(' ')) expect([i.id, i.accelerator]).toEqual([i.id, expect.any(String)]);
+			for (const i of items) if (i.keyLabel && !i.keyLabel.includes(' ') && !NO_ACCELERATOR.has(i.id)) expect([i.id, i.accelerator]).toEqual([i.id, expect.any(String)]);
+		});
+
+		test(`${platform}: Run Build Task keeps its label but not the native accelerator (the floating browser takes ⇧⌘B)`, () => {
+			const item = flattenItems(resolveMenubar(context(mac))).find((i) => i.type === 'item' && i.id === 'workbench.action.tasks.build');
+			expect(item).toMatchObject({ keyLabel: keyLabel('cmd+shift+b', mac) });
+			expect(item).not.toHaveProperty('accelerator');
 		});
 
 		test(`${platform}: labels are set, without mnemonic markers or stray separators`, () => {

@@ -88,13 +88,14 @@
 			e.stopImmediatePropagation();
 		}
 	}
-	// Opening focuses the active terminal, or the panel so the empty-state shortcuts work.
+	// Opening focuses the active tab: a browser's address bar, else the terminal, else the panel
+	// (so the empty-state shortcuts work).
 	$effect(() => {
 		if (!floating.open || !panel) return;
 		const el = panel;
 		requestAnimationFrame(() => {
-			const term = el.querySelector<HTMLElement>('[data-floating-active] .xterm-helper-textarea, [data-floating-active] textarea');
-			(term ?? el).focus({ preventScroll: true });
+			const field = el.querySelector<HTMLElement>('[data-floating-active] input[aria-label="Address"], [data-floating-active] .xterm-helper-textarea, [data-floating-active] textarea');
+			(field ?? el).focus({ preventScroll: true });
 		});
 	});
 
