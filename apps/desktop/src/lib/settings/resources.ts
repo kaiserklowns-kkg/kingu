@@ -111,6 +111,8 @@ export type TextWrite = { kind: 'saved'; stat?: FileStat } | { kind: 'conflict';
 
 /** `readResource` with encodings, binary and large file detection (Rust `textfile_read`). */
 export async function readTextResource(key: string, options: ReadOptions = {}): Promise<TextRead> {
+	// An untitled editor starts empty; it has nothing on disk (New Markdown, New Untitled File).
+	if (isUntitled(key)) return { kind: 'text', content: '', encoding: 'utf8', lossy: false };
 	if (isExternalKey(key)) return invoke<TextRead>('external_textfile_read', { path: externalPath(key), options });
 	// A local history entry (Show Contents) decodes like the file it is a copy of.
 	const entry = parseLocalHistoryKey(key);

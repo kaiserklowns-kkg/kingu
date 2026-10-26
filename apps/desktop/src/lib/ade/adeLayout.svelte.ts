@@ -6,8 +6,11 @@
 // so dirty state and Save are per file, whichever layout shows it.
 
 import { textFiles } from '#lib/workbench/textFileService.svelte.ts';
+import { nextUntitledKey } from '#lib/workbench/untitled.ts';
+import { forgetUntitledMarkdown, isMarkdownEditor, markUntitledMarkdown } from './adeMarkdown.ts';
 import { editors, type Reveal } from '#lib/workbench/editors.svelte.ts';
 import { appMode } from '#lib/workbench/mode.svelte.ts';
+import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
@@ -19,6 +22,7 @@ import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } fr
 import {
 	activeAfterClose,
 	activePane,
+	applyTabOrder,
 	adeTabs,
 	cycleTab,
 	fileTabId,
@@ -59,6 +63,12 @@ class AdeLayout {
 	browsers = $state<Record<string, BrowserTab[]>>({});
 	/** Active tab per worktree ('main', a terminal id or a file tab id). */
 	active = $state<Record<string, string>>({});
+	/** The user's dragged tab order per worktree (Orca's tab strip); unlisted tabs follow it. */
+	order = $state<Record<string, string[]>>({});
+	/** Pinned tabs per worktree: no close button, middle-click ignored, bulk closes skip them. */
+	pinned = $state<Record<string, string[]>>({});
+	/** A tab's color dot (`#rrggbb`), keyed by worktree and tab id. */
+	colors = $state<Record<string, string>>({});
 	#seq = $state(0);
 	/** Root tag of the folder whose terminal tabs these are; null until loaded. */
 	#tag = $state<string | null>(null);
@@ -78,6 +88,9 @@ class AdeLayout {
 		const saved = restore(storeName(STORE, tag), parseAdeTerminals);
 		this.terminals = saved ? Object.fromEntries(Object.entries(saved.terminals).map(([k, list]) => [k, list.map(withoutRun)])) : {};
 		this.browsers = {};
+		this.order = {};
+		this.pinned = {};
+		this.colors = {};
 		this.active = saved?.active ?? {};
 		this.#seq = saved?.seq ?? 0;
 		this.mru = {};
@@ -91,6 +104,9 @@ class AdeLayout {
 		this.#tag = null;
 		this.terminals = {};
 		this.browsers = {};
+		this.order = {};
+		this.pinned = {};
+		this.colors = {};
 		this.active = {};
 	}
 
@@ -276,7 +292,36 @@ class AdeLayout {
 	}
 
 	tabs(key: string): AdeTab[] {
-		return adeTabs(key, this.terminals[key] ?? [], this.files[key] ?? [], this.browsers[key] ?? []);
+		return applyTabOrder(adeTabs(key, this.terminals[key] ?? [], this.files[key] ?? [], this.browsers[key] ?? []), this.order[key] ?? []);
+	}
+
+	/** Drag reorder: `id` moves before `before` (null: to the end). */
+	moveTab(key: string, id: string, before: string | null) {
+		const ids = this.tabs(key).map((t) => t.id).filter((x) => x !== id);
+		const at = before === null ? ids.length : Math.max(0, ids.indexOf(before));
+		const next = [...ids.slice(0, at), id, ...ids.slice(at)];
+		if (next.join() !== this.tabs(key).map((t) => t.id).join()) this.order[key] = next;
+	}
+
+	isPinned(key: string, id: string): boolean {
+		return this.pinned[key]?.includes(id) ?? false;
+	}
+
+	/** Orca's Pin Tab: no close button, survives bulk closes. */
+	togglePin(key: string, id: string) {
+		const list = this.pinned[key] ?? [];
+		this.pinned[key] = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+	}
+
+	colorOf(key: string, id: string): string | undefined {
+		return this.colors[`${key}\u0000${id}`];
+	}
+
+	/** Orca's Tab Color; `undefined` clears it. */
+	setColor(key: string, id: string, color: string | undefined) {
+		const k = `${key}\u0000${id}`;
+		if (!color) delete this.colors[k];
+		else this.colors[k] = color;
 	}
 
 	browserTab(key: string, id: string): BrowserTab | undefined {
@@ -352,6 +397,40 @@ class AdeLayout {
 		this.board = false;
 	}
 
+	/** Orca's New Markdown (⇧⌘M): an untitled Markdown buffer in this worktree, saved with Save As. */
+	newMarkdown(key: string): string {
+		const file = nextUntitledKey([...editors.allTabs().map((t) => t.path), ...this.openFiles()]);
+		markUntitledMarkdown(file);
+		this.openFile(key, file, { preview: false });
+		return file;
+	}
+
+	/** Orca's Open Markdown… (⇧⌘O): a Markdown file from the disk, as a tab of this worktree. */
+	async openMarkdown(key: string) {
+		const { open } = await import('@tauri-apps/plugin-dialog');
+		const picked = await open({
+			multiple: false,
+			filters: [{ name: 'Markdown', extensions: ['md', 'markdown', 'mdx'] }],
+			defaultPath: workspace.root ?? undefined
+		});
+		if (!picked || Array.isArray(picked)) return;
+		this.openFile(key, workspace.keyFor(picked), { preview: false });
+	}
+
+	/** The active tab renders its Markdown instead of editing it (Orca's markdown-preview mode). */
+	markdownPreview(key: string): boolean {
+		const file = this.activeFile();
+		return !!file && isMarkdownEditor(file) && !!this.files[key]?.find((f) => f.key === file)?.mdPreview;
+	}
+
+	/** ⇧⌘V: preview ↔ source of the active Markdown tab. */
+	toggleMarkdownPreview(key: string) {
+		const file = this.activeFile();
+		const list = this.files[key];
+		if (!file || !list || !isMarkdownEditor(file)) return;
+		this.files[key] = list.map((f) => (f.key === file ? { ...f, mdPreview: !f.mdPreview } : f));
+	}
+
 	/** Double-click on the tab, or an edit: the tab stays when the next preview opens. */
 	pin(key: string, file: string) {
 		const list = this.files[key];
@@ -374,6 +453,7 @@ class AdeLayout {
 		const id = fileTabId(file);
 		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
 		this.files[key] = list.filter((f) => f.key !== file);
+		if (!editors.openPaths().has(file)) forgetUntitledMarkdown(file);
 		this.closed[key] = pushClosed(this.closed[key] ?? [], { kind: 'file', key: file });
 	}
 

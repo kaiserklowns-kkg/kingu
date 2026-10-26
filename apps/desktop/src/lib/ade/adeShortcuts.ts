@@ -8,6 +8,11 @@ export type Shortcut = { id: string; title: string; key?: string; mac?: string }
 export const ADE_SHORTCUTS = {
 	newTerminal: { id: 'kingu.ade.tab.newTerminal', title: 'New Terminal Tab', key: 'cmd+t' },
 	newBrowser: { id: 'kingu.ade.tab.newBrowser', title: 'New Browser Tab', key: 'cmd+shift+b' },
+	newMarkdown: { id: 'kingu.ade.tab.newMarkdown', title: 'New Markdown', key: 'cmd+shift+m' },
+	openMarkdown: { id: 'kingu.ade.tab.openMarkdown', title: 'Open Markdown…', key: 'cmd+shift+o' },
+	// Orca: New agent tab (default agent), macOS only.
+	newAgent: { id: 'kingu.ade.tab.newAgent', title: 'New Agent Tab', mac: 'cmd+alt+t' },
+	markdownPreview: { id: 'kingu.ade.markdown.togglePreview', title: 'Toggle Markdown Preview', key: 'cmd+shift+v' },
 	reopenClosed: { id: 'kingu.ade.tab.reopenClosed', title: 'Reopen Closed Tab', key: 'cmd+shift+t' },
 	// Off macOS Ctrl+R stays the shell's reverse search (Orca leaves it unbound there).
 	rename: { id: 'kingu.ade.tab.rename', title: 'Rename Tab…', mac: 'cmd+r' },

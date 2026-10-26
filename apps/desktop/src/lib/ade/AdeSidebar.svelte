@@ -847,13 +847,14 @@
 	{@const path = externalMenu.path}
 	{@const openIn = actionsFor('').flatMap((r) => (r !== 'separator' && r.id.startsWith('openIn:') ? [r] : []))}
 	<PopupMenu
-		items={[...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath'))]}
+		items={[menuItem('open', t('legacyAde.adeSidebar.openInKingu')), menuSeparator, ...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath'))]}
 		label="Worktree"
 		x={externalMenu.x}
 		y={externalMenu.y}
 		onRun={(node) => {
 			if (node.type !== 'item') return;
-			if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
+			if (node.id === 'open') void workspace.openFolder(path);
+			else if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
 			else void navigator.clipboard.writeText(path).then(() => status.flash(t('legacyAde.adeSidebar.copiedPath')));
 		}}
 		onClose={() => (externalMenu = null)}

@@ -208,7 +208,7 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		id: 'kingu.worktree.externalVisibility',
 		group: 'Worktrees',
 		type: 'string',
-		default: 'hide',
+		default: 'show',
 		enum: ['hide', 'show'],
 		enumDescriptions: ['ไม่แสดง (Hide.)', 'แสดงเป็นการ์ดอ่านอย่างเดียว (Show as read-only cards.)'],
 		description:

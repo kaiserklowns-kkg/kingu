@@ -17,7 +17,9 @@
 	import { clientLog } from '#lib/client-log.ts';
 	import { editorOptions, installEditorSettings } from '#lib/settings/apply.svelte.ts';
 	import { modelEntry } from '#lib/workbench/editorModels.ts';
+	import { isUntitled } from '#lib/workbench/untitled.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
+	import { isMarkdownEditor } from './adeMarkdown.ts';
 
 	let { path, onedit, onfail }: { path: string; onedit: () => void; onfail: (error: unknown) => void } = $props();
 
@@ -48,6 +50,8 @@
 				installEditorSettings(m.monaco);
 				const entry = await modelEntry(m, file);
 				if (disposed || entry.model.isDisposed()) return;
+				// New Markdown's untitled buffer (files.defaultLanguage would make it plain text).
+				if (isUntitled(file) && isMarkdownEditor(file)) m.monaco.editor.setModelLanguage(entry.model, 'markdown');
 				// The IDE's editor settings from the first paint, as EditorHost does.
 				editor = m.monaco.editor.create(host, { ...editorOptions(), model: entry.model, theme: m.THEME_ID, automaticLayout: true });
 				const view = views.get(file);

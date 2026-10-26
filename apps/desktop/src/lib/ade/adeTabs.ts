@@ -3,6 +3,7 @@
 import { leaves, type PaneNode } from '#lib/terminal/paneLayout.ts';
 import { fileOf, isDiffKey, splitPath } from '#lib/workbench/scm.ts';
 import { t } from '#lib/i18n/index.ts';
+import { isUntitled, untitledName } from '#lib/workbench/untitled.ts';
 
 /** `title`: a task or agent name instead of "Terminal n"; `run`: the command typed into its shell. */
 export type TerminalTab = {
@@ -69,7 +70,7 @@ export function pushClosed(stack: ClosedTab[], tab: ClosedTab, cap = 10): Closed
  * workspace-relative path or a `taskdiff://<slug>/<rel>` key; a `preview` tab is replaced by the
  * next preview open, like VS Code's italic tabs.
  */
-export type FileTab = { key: string; preview: boolean };
+export type FileTab = { key: string; preview: boolean; /** Orca's markdown-preview mode: the tab renders instead of editing. */ mdPreview?: boolean };
 export type AdeTab =
 	| { id: string; kind: 'agent' | 'compose' | 'terminal'; label: string; color?: string }
 	| { id: string; kind: 'browser'; label: string }
@@ -89,11 +90,21 @@ export function adeTabs(key: string, terminals: TerminalTab[], files: FileTab[] 
 		...files.map((f) => ({
 			id: fileTabId(f.key),
 			kind: isDiffKey(f.key) ? ('diff' as const) : ('file' as const),
-			label: splitPath(fileOf(f.key))[0],
+			label: isUntitled(f.key) ? untitledName(f.key) : splitPath(fileOf(f.key))[0],
 			key: f.key,
 			preview: f.preview
 		}))
 	];
+}
+
+/**
+ * Tabs in the user's dragged order (Orca's tab strip): ids named in `order` first, the rest after
+ * them in their usual order. Unknown ids (a tab closed since) are ignored.
+ */
+export function applyTabOrder(tabs: AdeTab[], order: readonly string[]): AdeTab[] {
+	const rank = new Map(order.map((id, i) => [id, i]));
+	const at = (id: string) => rank.get(id) ?? Number.MAX_SAFE_INTEGER;
+	return [...tabs].sort((a, b) => at(a.id) - at(b.id));
 }
 
 /**

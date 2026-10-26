@@ -47,3 +47,24 @@ test('the Agents layout opens browser tabs from the tab row', async ({ page }) =
 	await expect(page.getByRole('tab', { name: /^New Tab/ })).toHaveCount(2);
 	expect(errors).toEqual([]);
 });
+
+test('the new-tab menu makes a Markdown tab and previews it', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page);
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'New Tab', exact: true }).click();
+
+	const menu = page.getByRole('dialog', { name: 'New Tab' });
+	await expect(menu.getByRole('menuitem', { name: /New Markdown/ })).toBeVisible();
+	await expect(menu.getByRole('menuitem', { name: /Open Markdown/ })).toBeVisible();
+	await menu.getByRole('textbox', { name: 'Search' }).fill('markdown');
+	await menu.getByRole('textbox', { name: 'Search' }).press('Enter');
+	await expect(page.getByRole('tab', { name: /Untitled-1/ })).toBeVisible();
+
+	// A saved Markdown file opens as a tab and ⇧⌘V renders it in place.
+	await page.getByRole('treeitem', { name: 'README.md' }).dblclick();
+	await page.getByRole('tab', { name: /README\.md/ }).click();
+	await page.keyboard.press('Meta+Shift+V');
+	await expect(page.getByRole('heading', { name: 'Kingu E2E' })).toBeVisible();
+	expect(errors).toEqual([]);
+});

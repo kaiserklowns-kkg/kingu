@@ -3,6 +3,7 @@ import { leaf, splitPane } from '#lib/terminal/paneLayout.ts';
 import {
 	activeAfterClose,
 	activePane,
+	applyTabOrder,
 	adeTabs,
 	cycleTab,
 	fileTabId,
@@ -164,5 +165,12 @@ describe('tab switching (Orca)', () => {
 		expect(activePane({ ...tab, pane: 't9' })).toBe('t9');
 		expect(activePane({ ...tab, pane: 'gone' })).toBe('t3');
 		expect(tabPanes({ id: 't1', n: 1 })).toEqual(['t1']);
+	});
+
+	test('dragged tab order: listed ids first, the rest keep their usual order', () => {
+		const tabs = adeTabs('', [], [], [{ id: 'b1', url: '', title: 'A' }, { id: 'b2', url: '', title: 'B' }]);
+		expect(applyTabOrder(tabs, []).map((t) => t.id)).toEqual(['main', 'b1', 'b2']);
+		expect(applyTabOrder(tabs, ['b2', 'main']).map((t) => t.id)).toEqual(['b2', 'main', 'b1']);
+		expect(applyTabOrder(tabs, ['gone']).map((t) => t.id)).toEqual(['main', 'b1', 'b2']);
 	});
 });

@@ -19,7 +19,12 @@
 	import { keyLabel } from '#lib/workbench/keys.ts';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
+	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
+	import NewTabMenu, { type NewTabItem } from './NewTabMenu.svelte';
+	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
+	import { enabledBins } from './agentCli';
+	import { isMarkdownEditor } from './adeMarkdown.ts';
 	import type { AdeTab } from './adeTabs';
 	import { terminalBells } from './terminalBell.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
@@ -27,20 +32,35 @@
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
 	let menu = $state<{ tab: AdeTab; x: number; y: number } | null>(null);
-	const closable = (t: AdeTab) => t.kind !== 'agent' && t.kind !== 'compose';
+	/** Bulk closes skip the agent session, the composer and pinned tabs (Orca's pinned tabs). */
+	const closable = (t: AdeTab) => t.kind !== 'agent' && t.kind !== 'compose' && !adeLayout.isPinned(key, t.id);
+	const TAB_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ec4899', '#64748b'];
 	const menuItems = $derived.by(() => {
 		if (!menu) return [];
 		const t = menu.tab;
 		const i = tabs.findIndex((x) => x.id === t.id);
 		const file = t.kind === 'file' || t.kind === 'diff';
 		return [
-			menuItem('close', 'Close', { enabled: closable(t) }),
+			menuItem('close', 'Close', { enabled: t.kind !== 'agent' && t.kind !== 'compose' }),
 			menuItem('others', 'Close Others', { enabled: tabs.some((x) => x.id !== t.id && closable(x)) }),
 			menuItem('right', 'Close to the Right', { enabled: tabs.slice(i + 1).some(closable) }),
 			menuSeparator,
 			menuItem('copyPath', 'Copy Path', { enabled: file }),
 			menuItem('reveal', 'Reveal in Finder', { enabled: file }),
-			menuItem('keep', 'Keep Open', { enabled: file && 'preview' in t && t.preview })
+			menuItem('keep', 'Keep Open', { enabled: file && 'preview' in t && t.preview }),
+			menuItem('preview', 'Toggle Markdown Preview', { enabled: file && 'key' in t && isMarkdownEditor(t.key) }),
+			menuSeparator,
+			menuItem('pin', adeLayout.isPinned(key, t.id) ? 'Unpin Tab' : 'Pin Tab', { enabled: closable(t) || adeLayout.isPinned(key, t.id) }),
+			{
+				type: 'submenu' as const,
+				id: 'color',
+				text: 'Tab Color',
+				items: [
+					...TAB_COLORS.map((c) => menuItem(`color:${c}`, c, { checked: adeLayout.colorOf(key, t.id) === c })),
+					menuSeparator,
+					menuItem('color:', 'None', { checked: !adeLayout.colorOf(key, t.id) })
+				]
+			}
 		];
 	});
 	async function runMenu(id: string, t: AdeTab) {
@@ -62,22 +82,45 @@
 				return invoke('fs_reveal', { rel }).catch((e) => status.error(String(e)));
 			case 'keep':
 				return 'key' in t && adeLayout.pin(key, t.key);
+			case 'preview':
+				adeLayout.select(key, t.id);
+				return adeLayout.toggleMarkdownPreview(key);
+			case 'pin':
+				return adeLayout.togglePin(key, t.id);
 		}
+		if (id.startsWith('color:')) return adeLayout.setColor(key, t.id, id.slice(6) || undefined);
 	}
 
-	// The "+" is Orca's create menu: a new tab of a kind in this worktree.
+	// The "+" is Orca's new-tab menu: a searchable list of a new tab's kinds, then the agent CLIs
+	// found on the PATH (each runs in a new terminal of this worktree, so agents can run side by side).
 	let create = $state<{ x: number; y: number } | null>(null);
-	const createItems = $derived([
-		menuItem('terminal', 'New Terminal', { keyLabel: keyLabel('cmd+t'), enabled: !!workspace.root }),
-		menuItem('browser', 'New Browser Tab', { keyLabel: keyLabel('cmd+shift+b'), enabled: !!workspace.root })
+	let found = $state<string[]>([]);
+	const createItems = $derived<NewTabItem[]>([
+		{ id: 'terminal', label: 'New Terminal', keyLabel: keyLabel('cmd+t') },
+		{ id: 'browser', label: 'New Browser Tab', keyLabel: keyLabel('cmd+shift+b') },
+		{ id: 'markdown', label: 'New Markdown', keyLabel: keyLabel('cmd+shift+m') },
+		{ id: 'openMarkdown', label: 'Open Markdown…', keyLabel: keyLabel('cmd+shift+o') },
+		...pickerItems(found, '')
+			.filter((r) => r.id !== CUSTOM_PICK)
+			.map((r) => ({ id: `agent:${r.id}`, label: r.label, description: r.description, agent: r.agent, group: 'Agents' }))
 	]);
-	function openCreate(e: MouseEvent) {
+	async function openCreate(e: MouseEvent) {
 		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		create = { x: r.left, y: r.bottom + 2 };
+		found = enabledBins(
+			await invoke<string[]>('agent_cli_found', { names: KNOWN_BINS }).catch(() => [] as string[]),
+			settings.get<string[]>('kingu.agent.disabled'),
+			null
+		);
 	}
 	function runCreate(id: string) {
 		if (id === 'browser') adeLayout.newBrowser(key);
-		else adeLayout.newTerminal(key);
+		else if (id === 'markdown') adeLayout.newMarkdown(key);
+		else if (id === 'openMarkdown') void adeLayout.openMarkdown(key);
+		else if (id.startsWith('agent:')) {
+			const bin = id.slice(6);
+			adeLayout.newTerminal(key, { title: pickerItems(found, '').find((r) => r.id === bin)?.label ?? bin, run: [bin] });
+		} else adeLayout.newTerminal(key);
 	}
 
 	const key = $derived(adeLayout.key);
@@ -85,6 +128,33 @@
 	const tabs = $derived(adeLayout.tabs(key));
 	const activeTab = $derived(adeLayout.activeTab(key));
 	const attention = $derived(sessionsAttentionLabel(adeTasks.counts.needsInput));
+
+	// Orca's drag reorder: drop a tab on another to put it before it, on the strip to move it last.
+	let dragId = $state<string | null>(null);
+	let dropId = $state<string | null>(null);
+	function dragStart(e: DragEvent, id: string) {
+		dragId = id;
+		e.dataTransfer?.setData('text/plain', id);
+		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+	}
+	function dragOver(e: DragEvent, id: string) {
+		if (!dragId || dragId === id) return;
+		e.preventDefault();
+		dropId = id;
+	}
+	function drop(e: DragEvent, id: string) {
+		e.preventDefault();
+		e.stopPropagation();
+		if (dragId && dragId !== id) adeLayout.moveTab(key, dragId, id);
+		dragId = null;
+		dropId = null;
+	}
+	function dropEnd(e: DragEvent) {
+		e.preventDefault();
+		if (dragId) adeLayout.moveTab(key, dragId, null);
+		dragId = null;
+		dropId = null;
+	}
 
 	// Same look as the IDE's editor tabs: rounded tops in the strip, an accent line on the active one.
 	const TAB = 'group relative flex h-[30px] max-w-60 min-w-0 shrink-0 cursor-default items-center gap-1.5 rounded-t-lg pr-1.5 pl-3 text-[13px] transition-colors';
@@ -101,21 +171,37 @@
 			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={tr('legacyAde.adeTabBar.closePage', { page: adeLayout.page === 'now' ? 'Now' : adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks' })} onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
-		<div class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label={tr('legacyAde.adeTabBar.worktreeTabs')}>
+		<div
+			class="flex min-w-0 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
+			role="tablist"
+			tabindex="-1"
+			aria-label={tr('legacyAde.adeTabBar.worktreeTabs')}
+			ondragover={(e) => dragId && e.preventDefault()}
+			ondrop={dropEnd}
+		>
 			{#each tabs as t (t.id)}
 				{@const active = t.id === activeTab}
 				<div
 					role="tab"
 					tabindex="0"
 					aria-selected={active}
-					class={[TAB, active ? ACTIVE : INACTIVE]}
+					class={[TAB, active ? ACTIVE : INACTIVE, dropId === t.id && 'border-l-2 border-(--vscode-focusBorder)']}
+					draggable="true"
+					ondragstart={(e) => dragStart(e, t.id)}
+					ondragover={(e) => dragOver(e, t.id)}
+					ondrop={(e) => drop(e, t.id)}
+					ondragend={() => (dragId = null, dropId = null)}
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
-					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && adeLayout.close(key, t.id)}
+					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && !adeLayout.isPinned(key, t.id) && adeLayout.close(key, t.id)}
 					ondblclick={() => (t.kind === 'file' || t.kind === 'diff' ? adeLayout.pin(key, t.key) : t.kind === 'terminal' && adeLayout.rename(key, t.id))}
 					oncontextmenu={(e) => (e.preventDefault(), (menu = { tab: t, x: e.clientX, y: e.clientY }))}
 				>
 					{#if active}<span class={ACCENT}></span>{/if}
+					{#if adeLayout.colorOf(key, t.id) ?? (t.kind === 'terminal' ? t.color : undefined)}
+						{@const dot = adeLayout.colorOf(key, t.id) ?? (t.kind === 'terminal' ? t.color : undefined)}
+						<span class="size-2 shrink-0 rounded-full" style:background={dot} aria-hidden="true"></span>
+					{/if}
 					{#if t.kind === 'agent' && view}
 						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
 						<AgentIcon agent={view.meta.agent || 'claude'} size={14} />
@@ -127,14 +213,13 @@
 						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? tr('legacyAde.adeTabBar.diffOfTask', { file: fileOf(t.key) }) : t.key}>{t.label}</span>
 						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
-						{#if t.kind === 'terminal' && t.color}<span class="size-2 shrink-0 rounded-full" style:background={t.color} aria-hidden="true"></span>{/if}
 						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
 					{/if}
 					{#if !active && terminalBells.has(key, t.id)}
 						<!-- kingu.agent.notifications.terminalBell: this terminal rang while hidden. -->
 						<span class="size-1.5 shrink-0 rounded-full bg-(--vscode-activityBarBadge-background)" role="status" aria-label={tr('ade.bell.dot')} title={tr('ade.bell.dot')}></span>
 					{/if}
-					{#if t.kind !== 'agent' && t.kind !== 'compose'}
+					{#if t.kind !== 'agent' && t.kind !== 'compose' && !adeLayout.isPinned(key, t.id)}
 						{@const dirty = t.kind === 'file' && editors.isDirty(t.key)}
 						<button
 							class={['grid size-5 shrink-0 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)', !active && !dirty && 'invisible group-hover:visible']}
@@ -182,7 +267,7 @@
 
 {#if create}
 	{@const at = create}
-	<PopupMenu items={createItems} label="New Tab" x={at.x} y={at.y} focusFirst onRun={(node) => node.type === 'item' && runCreate(node.id)} onClose={() => (create = null)} />
+	<NewTabMenu items={createItems} x={at.x} y={at.y} onRun={runCreate} onClose={() => (create = null)} />
 {/if}
 {#if menu}
 	{@const target = menu.tab}

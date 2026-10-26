@@ -108,6 +108,7 @@ export const legacyAde = {
 	'legacyAde.adeSidebar.externalWorktreeTitle': '{path} — worktree not created by Kingu ({kind})',
 	'legacyAde.adeSidebar.externalKindAgent': 'agent',
 	'legacyAde.adeSidebar.externalKindExternal': 'external',
+	'legacyAde.adeSidebar.openInKingu': 'Open in Kingu',
 	'legacyAde.adeSidebar.copyPath': 'Copy path',
 	'legacyAde.adeSidebar.copiedPath': 'Copied path',
 

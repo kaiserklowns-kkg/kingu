@@ -9,6 +9,9 @@ import { focusedTerminal } from '#lib/terminal/registry.ts';
 import { ADE_SHORTCUTS as K, selectTabShortcut, type Shortcut } from './adeShortcuts.ts';
 import { adeLayout } from './adeLayout.svelte';
 import { tabPanes } from './adeTabs.ts';
+import { cliName, parseCliCommand } from './agentCli';
+import { isMarkdownEditor } from './adeMarkdown.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 /** The Agents layout is what the window shows. */
 export const adeInFront = () => appMode.isAgents && !systemSettings.visible;
@@ -24,6 +27,16 @@ export function installAdeCommands(): () => void {
 	const unregister = [
 		cmd(K.newTerminal, () => adeLayout.newTerminal(adeLayout.key)),
 		cmd(K.newBrowser, () => adeLayout.newBrowser(adeLayout.key)),
+		cmd(K.newMarkdown, () => adeLayout.newMarkdown(adeLayout.key)),
+		cmd(K.openMarkdown, () => void adeLayout.openMarkdown(adeLayout.key)),
+		cmd(K.newAgent, () => {
+			const argv = parseCliCommand(settings.get<string>('kingu.agent.cli') ?? '') ?? ['claude'];
+			adeLayout.newTerminal(adeLayout.key, { title: cliName(argv), run: argv });
+		}),
+		cmd(K.markdownPreview, () => adeLayout.toggleMarkdownPreview(adeLayout.key), () => {
+			const file = front() ? adeLayout.activeFile() : null;
+			return !!file && isMarkdownEditor(file);
+		}),
 		cmd(K.reopenClosed, () => adeLayout.reopenClosed(adeLayout.key), () => front() && (adeLayout.closed[adeLayout.key]?.length ?? 0) > 0),
 		cmd(K.rename, () => {
 			const t = terminal();

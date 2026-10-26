@@ -9,6 +9,8 @@
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
+	import MarkdownPreview from '#lib/workbench/MarkdownPreview.svelte';
+	import { previewKey } from '#lib/workbench/viewers.ts';
 	import AdeBrowser from './AdeBrowser.svelte';
 	import FilePlaceholder from '#lib/workbench/FilePlaceholder.svelte';
 	import SaveConflictCompare from '#lib/workbench/SaveConflictCompare.svelte';
@@ -212,6 +214,9 @@
 				<div class="absolute inset-0">
 					<DiffHost active={activeFile} onfail={(k) => adeLayout.closeFile(key, k)} />
 				</div>
+			{:else if adeLayout.markdownPreview(key)}
+				<!-- Orca's markdown-preview mode (⇧⌘V): the shared Markdown viewer, following unsaved edits. -->
+				<div class="absolute inset-0"><MarkdownPreview previewKey={previewKey(activeFile)} /></div>
 			{:else}
 				<!-- The IDE's text file service: binary, too large and unreadable files keep their tab as a
 				     placeholder with "Open Anyway", and a save conflict opens its compare here. -->
