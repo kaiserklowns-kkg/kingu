@@ -71,11 +71,16 @@ External
 | `kingu.agent.cliPermissions` | ADE | `manual` / `yolo` |
 | `kingu.agent.permissionMode` | ทั้งคู่ | ค่าเริ่มต้นของสิทธิ์ (SDK mode) |
 | `kingu.agent.statusHooks` | ADE | hooks รายงานสถานะ CLI |
+| `kingu.agent.claudeAgentTeams` | ADE | Claude agent teams (in-process) |
+| `kingu.agent.hibernation*` | ADE | hibernate CLI ที่ idle |
+| `kingu.agent.promptCache*` | ADE | ตัวนับเวลา prompt cache |
+| `kingu.agent.safetyChecks`, `protectedPaths`, `ask.*` | ทั้งคู่ | policy (§7) |
 | `kingu.agent.trustWorkspace` | ทั้งคู่ | trust ของ workspace |
 | `kingu.agent.notifications*` | ทั้งคู่ | การแจ้งเตือน |
 | `kingu.chat.*` | IDE chat | UI/พฤติกรรมของ chat |
 
-**กติกา:** setting ใหม่ต้องระบุเจ้าของในตารางนี้ก่อนเพิ่มลง registry
+**กติกา:** setting ใหม่ต้องระบุเจ้าของในตารางนี้ก่อนเพิ่มลง registry — บังคับด้วย `agent/settingOwners.ts`
+(`settingOwners.test.ts` ล้มเมื่อ `kingu.agent.*` / `kingu.chat.*` ใดไม่มีเจ้าของ)
 
 ## 5. เส้นทางการรัน
 
