@@ -54,6 +54,7 @@ import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
 import { chatsToResume, RESUME_PROMPT } from './chatResume.ts';
 import { autoApprover } from './toolApproval.ts';
 import type { Effort } from './effort.ts';
+import { resolveLaunchSpec } from './launchSpec.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import {
 	chatCwdPath,
@@ -63,7 +64,6 @@ import {
 	newChatId,
 	optionChange,
 	patchChat,
-	PERMISSION_MODES,
 	removeChat,
 	renamedChatTitle,
 	replayTranscript,
@@ -146,11 +146,8 @@ class Chats {
 
 	/** Defaults for a new chat (the composer's initial picks). */
 	defaults(): { model: string | null; permissionMode: PermissionMode } {
-		const mode = settings.get<string>('kingu.agent.permissionMode');
-		return {
-			model: settings.get<string>('kingu.agent.model')?.trim() || null,
-			permissionMode: PERMISSION_MODES.includes(mode as PermissionMode) ? (mode as PermissionMode) : 'default'
-		};
+		const { model, permissionMode } = resolveLaunchSpec({ surface: 'ide', get: (k) => settings.get(k) });
+		return { model, permissionMode };
 	}
 
 	async load() {

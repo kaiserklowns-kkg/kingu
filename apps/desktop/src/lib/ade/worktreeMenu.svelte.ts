@@ -22,6 +22,10 @@ import { CUSTOM_PICK, KNOWN_BINS, pickerItems, programOf } from './agentProfiles
 import { canResumeWith, sessionProgram, sessionsOf, type SessionRef } from './sessionHistory';
 import { workflowOf, workflowStatuses } from './workflow';
 import { attempts } from './attempts.svelte';
+import { newChatInTask, openChat } from '#lib/agent/chatCommands.svelte.ts';
+import { chats } from '#lib/agent/chats.svelte.ts';
+import { chatHandoffSessions, chatRuntimeFor } from '#lib/agent/sessionHandoff.ts';
+import { cliSessions } from './cliSessions.svelte.ts';
 
 const FOLDER_ID = '@folder';
 
@@ -36,6 +40,7 @@ export function actionsFor(key: string) {
 		hasWorktree: !view?.statError,
 		openIn,
 		sessions: view ? sessionsOf(view.meta).length : 0,
+		chatSessions: view ? chatHandoffSessions(view.meta).length : 0,
 		attempts: !!view?.meta.group
 	});
 }
@@ -55,10 +60,10 @@ async function moveToStatus(slug: string) {
 }
 
 /** One of the task's saved sessions, newest first; undefined when dismissed or there is none. */
-async function pickSession(slug: string, placeholder: (title: string) => string, describe: (s: SessionRef) => string): Promise<SessionRef | undefined> {
+async function pickSession(slug: string, placeholder: (title: string) => string, describe: (s: SessionRef) => string, only: (s: SessionRef) => boolean = () => true): Promise<SessionRef | undefined> {
 	const meta = adeTasks.find(slug)?.meta;
 	if (!meta) return;
-	const list = sessionsOf(meta);
+	const list = sessionsOf(meta).filter(only);
 	if (!list.length) {
 		status.flash(t('adeWorkflow.pick.noSessions', { title: meta.title }));
 		return;
@@ -68,6 +73,21 @@ async function pickSession(slug: string, placeholder: (title: string) => string,
 		items: list.map((s, i) => ({ id: s.id, label: `${sessionProgram(s.agent)} · ${timeAgo(s.at, Date.now())}`, description: [i === 0 ? t('adeWorkflow.pick.sessionLatest') : null, describe(s), s.id].filter(Boolean).join(' · ') }))
 	});
 	return picked && list.find((s) => s.id === picked.id);
+}
+
+/**
+ * Continue in Agent Chat… (docs/AI-SURFACES.md §9): a claude session of the task, continued by a
+ * new IDE chat in the task's worktree (or the chat that already continues it). The task's CLI must
+ * be stopped, so two agents never write one session at once; nothing of the task changes.
+ */
+async function continueInChat(slug: string) {
+	const meta = adeTasks.find(slug)?.meta;
+	if (!meta) return;
+	if (cliSessions.working(slug) || adeTasks.find(slug)?.runtime?.working) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
+	const s = await pickSession(slug, (title) => t('adeTasks.worktree.continueInChatPick', { title }), () => '', (s) => chatRuntimeFor(s.agent) !== null);
+	if (!s) return;
+	const id = await chats.adopt({ title: meta.title, sessionId: s.id, cwd: { kind: 'task', slug } });
+	if (id) openChat(id);
 }
 
 /** Continue Session…: resume a saved session, or hand it off when the task's agent cannot resume it. */
@@ -138,6 +158,10 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 		case 'openInEditor':
 			adeLayout.show(key);
 			return openEditor();
+		case 'openInChat':
+			return slug && newChatInTask(slug);
+		case 'continueInChat':
+			return slug && continueInChat(slug);
 		case 'newTerminal':
 			appMode.setMode('agents');
 			adeLayout.show(key);

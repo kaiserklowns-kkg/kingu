@@ -81,6 +81,7 @@
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
 	import { agentRuntimes } from './runtimes.svelte.ts';
 	import { runtimeChoices, runtimeOf } from './runtimes.ts';
+	import { resolveLaunchSpec } from './launchSpec.ts';
 	import { arkaiProviders } from './arkai.svelte.ts';
 	import { ARKAI_RUNTIME, arkaiDefault } from './arkai.ts';
 	import { chatExtras } from './chatExtras.svelte.ts';
@@ -125,7 +126,7 @@
 	let renamingId = $state<string | null>(null);
 	let renameText = $state('');
 	/** The runtime a new chat starts on: `kingu.agent.runtime`, else Claude. */
-	const startRuntime = $derived(settings.get<string>('kingu.agent.runtime')?.trim() || runtimeOf(null));
+	const startRuntime = $derived(resolveLaunchSpec({ surface: 'ide', get: (k) => settings.get(k) }).runtime);
 	/** New chat picks: where it runs ('' = this folder, else a task slug), model, mode. */
 	let newWhere = $state('');
 	let newModel = $state('');
@@ -339,6 +340,17 @@
 	});
 	$effect(() => {
 		if (runtimeId === ARKAI_RUNTIME) void arkaiProviders.load();
+	});
+	// Open in Agent Chat (an ADE task's menu): a new chat in that task's worktree.
+	let seenNewIn = chatSignals.newChatIn?.n;
+	$effect(() => {
+		const req = chatSignals.newChatIn;
+		if (!req || req.n === seenNewIn || inEditor) return;
+		seenNewIn = req.n;
+		untrack(() => {
+			newChat();
+			newWhere = req.slug;
+		});
 	});
 	// A clicked chat notification: show that chat.
 	let seenOpen = chatSignals.open?.n;

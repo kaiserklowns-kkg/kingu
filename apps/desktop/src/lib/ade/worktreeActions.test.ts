@@ -22,6 +22,20 @@ describe('worktree actions', () => {
 		expect(enabled({ slug: 'fix', status: 'review', sessions: 0 })).toEqual([true, false, false]);
 		expect(enabled({ slug: 'fix', status: 'running', sessions: 2, running: true })).toEqual([true, false, false]);
 	});
+	test('a task opens in a new IDE agent chat once it has a worktree (AI-SURFACES §9)', () => {
+		const chat = (w: Parameters<typeof worktreeActions>[0]) => worktreeActions(w).find((r) => r !== 'separator' && r.id === 'openInChat');
+		expect(chat({ slug: null })).toBeUndefined();
+		expect(chat({ slug: 'fix' })).toMatchObject({ enabled: true });
+		expect(chat({ slug: 'gone', hasWorktree: false })).toMatchObject({ enabled: false });
+	});
+	test('a claude session continues in agent chat only while the task agent is stopped', () => {
+		const cont = (w: Parameters<typeof worktreeActions>[0]) => worktreeActions(w).find((r) => r !== 'separator' && r.id === 'continueInChat');
+		expect(cont({ slug: null })).toBeUndefined();
+		expect(cont({ slug: 'fix', chatSessions: 1 })).toMatchObject({ enabled: true });
+		expect(cont({ slug: 'fix', chatSessions: 0 })).toMatchObject({ enabled: false });
+		expect(cont({ slug: 'fix', chatSessions: 1, running: true })).toMatchObject({ enabled: false });
+		expect(cont({ slug: 'fix', chatSessions: 1, hasWorktree: false })).toMatchObject({ enabled: false });
+	});
 	test('any task can have a task stacked on it; only an attempt compares', () => {
 		expect(ids(worktreeActions({ slug: 'fix', status: 'review' }))).not.toContain('compareAttempts');
 		expect(ids(worktreeActions({ slug: 'fix-a', status: 'review', attempts: true })).slice(-4)).toEqual(['newFromTask', 'compareAttempts', '-', 'remove']);
