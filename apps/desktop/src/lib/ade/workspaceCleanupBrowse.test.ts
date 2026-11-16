@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { en } from '../i18n/en';
 import { th } from '../i18n/th';
-import { formatBytes, reclaimable, BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_SORT_FIELDS, agentStateOf, browseCleanupRows, gitStateOf, matchesCleanupFilters, rowFacts, type CleanupRowFacts } from './workspaceCleanupBrowse';
+import { formatBytes, reclaimable, BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_REVIEW_STATES, BROWSE_SORT_FIELDS, BROWSE_TICKET_SOURCES, reviewStateOf, ticketSourceOf, agentStateOf, browseCleanupRows, gitStateOf, matchesCleanupFilters, rowFacts, type CleanupRowFacts } from './workspaceCleanupBrowse';
 import { createDefaultWorkspaceCleanupFilterState, DEFAULT_WORKSPACE_CLEANUP_SORT } from './workspaceCleanupFilters';
 import type { CleanupCandidate } from './workspaceCleanupScan';
 
 const NOW = Date.UTC(2026, 10, 16);
 const DAY = 86_400_000;
-const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, ...over });
+const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, review: null, ticket: null, ...over });
 const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({ path: '/p', branch: 'kingu/a', head: 'x', slug: 'a', isMain: false, detached: false, locked: false, checkedAt: NOW, clean: true, ignoredFiles: false, unpushed: false, merged: true, unchanged: false, squashMerged: false, prMerged: false, unknownBase: false, base: 'main', error: null, lastActivityAt: NOW - DAY, ...over });
 const filters = () => createDefaultWorkspaceCleanupFilterState();
 const ok = (r: CleanupRowFacts, patch: (f: ReturnType<typeof filters>) => void) => {
@@ -77,9 +77,64 @@ describe('workspace cleanup browse', () => {
 			...BROWSE_IDLE_SIGNALS.map((v) => `signal.${camel(v)}`),
 			...BROWSE_GIT_STATES.map((v) => `git.${v}`),
 			...BROWSE_AGENT_STATES.map((v) => `agent.${v}`),
-			...BROWSE_BLOCKERS.map((v) => `blocker.${camel(v)}`)
+			...BROWSE_BLOCKERS.map((v) => `blocker.${camel(v)}`),
+			...BROWSE_REVIEW_STATES.map((v) => `review.${v}`),
+			...BROWSE_TICKET_SOURCES.map((v) => `ticket.${v}`),
+			'presence.some',
+			'presence.none'
 		].map((k) => `workspaceCleanup.filter.${k}`);
 		for (const k of keys) expect([k, k in en, k in th]).toEqual([k, true, true]);
+	});
+
+	test('review: a PR is read into one state, a draft is not open', () => {
+		expect(reviewStateOf(undefined)).toBeNull();
+		expect(reviewStateOf(null)).toBeNull();
+		expect(reviewStateOf({ state: 'OPEN', draft: false })).toBe('open');
+		expect(reviewStateOf({ state: 'OPEN', draft: true })).toBe('draft');
+		expect(reviewStateOf({ state: 'MERGED' })).toBe('merged');
+		expect(reviewStateOf({ state: 'CLOSED' })).toBe('closed');
+		expect(reviewStateOf({ state: 'WEIRD' })).toBe('unknown');
+	});
+
+	test('review: presence and states; an unread task is unknown and stays unless a PR or other states are asked for', () => {
+		const unread = row({ review: null });
+		const open = row({ review: 'open' });
+		const merged = row({ review: 'merged' });
+		expect(ok(unread, (f) => (f.review.presence = 'some'))).toBe(false);
+		expect(ok(open, (f) => (f.review.presence = 'some'))).toBe(true);
+		expect(ok(unread, (f) => (f.review.presence = 'none'))).toBe(true);
+		expect(ok(open, (f) => (f.review.presence = 'none'))).toBe(false);
+		expect(ok(unread, (f) => (f.review.states = ['unknown']))).toBe(true);
+		expect(ok(unread, (f) => (f.review.states = ['merged']))).toBe(false);
+		expect(ok(merged, (f) => (f.review.states = ['merged', 'closed']))).toBe(true);
+		expect(ok(open, (f) => (f.review.states = ['merged', 'closed']))).toBe(false);
+		expect(ok(row({ review: 'unknown' }), (f) => (f.review.presence = 'some'))).toBe(false);
+		// An untouched review facet hides nothing, whatever the data.
+		for (const review of [null, 'open', 'draft', 'merged', 'closed', 'unknown'] as const) expect(matchesCleanupFilters(row({ review }), filters(), NOW)).toBe(true);
+	});
+
+	test('ticket: source is told from the link provider; presence and sources narrow', () => {
+		expect(ticketSourceOf(null)).toBeNull();
+		expect(ticketSourceOf({})).toBe('issue');
+		expect(ticketSourceOf({ provider: 'github' })).toBe('issue');
+		expect(ticketSourceOf({ provider: 'linear' })).toBe('linear');
+		const lin = row({ ticket: 'linear' });
+		const none = row({ ticket: null });
+		expect(ok(lin, (f) => (f.ticket.presence = 'some'))).toBe(true);
+		expect(ok(none, (f) => (f.ticket.presence = 'some'))).toBe(false);
+		expect(ok(none, (f) => (f.ticket.presence = 'none'))).toBe(true);
+		expect(ok(lin, (f) => (f.ticket.presence = 'none'))).toBe(false);
+		expect(ok(lin, (f) => (f.ticket.sources = ['issue']))).toBe(false);
+		expect(ok(lin, (f) => (f.ticket.sources = ['issue', 'linear']))).toBe(true);
+		expect(ok(none, (f) => (f.ticket.sources = ['linear']))).toBe(false);
+	});
+
+	test('rowFacts carries the PR state and the ticket source', () => {
+		const task = { slug: 'a', title: 'T', branch: 'b', status: 'done', working: false, createdAt: 1, updatedAt: NOW };
+		const f = rowFacts(task, undefined, undefined, null, { pr: { state: 'OPEN', draft: true }, issue: { provider: 'linear' } });
+		expect([f.review, f.ticket]).toEqual(['draft', 'linear']);
+		const g = rowFacts(task, undefined, undefined);
+		expect([g.review, g.ticket]).toEqual([null, null]);
 	});
 
 	test('size: min and max narrow the measured ones; an unmeasured one follows "include unmeasured"', () => {

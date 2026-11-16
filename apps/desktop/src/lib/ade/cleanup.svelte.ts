@@ -9,6 +9,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeTasks } from './tasks.svelte';
 import { runtime } from './runtime.svelte';
+import { prStatuses } from './prStatus.svelte';
 import { tabsOfTask } from './agentGuard';
 import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
@@ -32,6 +33,9 @@ class Cleanup {
 	sizes = $state.raw<ReadonlyMap<string, number | null>>(new Map());
 	measuring = $state(false);
 	sizeProgress = $state<CleanupProgress | null>(null);
+	/** Pull requests read for the review facet: `scanned` of `total` tasks; null when no read is going. */
+	prProgress = $state<CleanupProgress | null>(null);
+	#prRun = 0;
 	/** Runs since the window opened, newest first (Settings › Workspace Cleanup › Activity). */
 	activity = $state.raw<CleanupActivity[]>([]);
 	/** A run is going (the removal loop), so an automatic one never starts on top of it. */
@@ -88,6 +92,31 @@ class Cleanup {
 			this.measuring = false;
 			this.sizeProgress = null;
 		}
+	}
+
+	/**
+	 * Reads the PR of each task (one `gh` call each, `limit` at a time) so the review facet can use
+	 * it. Never awaited by the list: a task stays `unknown` until its read lands, and a read that
+	 * fails just leaves it so. A newer call or closing the dialog stops the one before it.
+	 */
+	async readPullRequests(slugs: readonly string[], limit = 3) {
+		const run = ++this.#prRun;
+		const queue = [...slugs];
+		const total = queue.length;
+		let done = 0;
+		if (!total) {
+			this.prProgress = null;
+			return;
+		}
+		this.prProgress = { scanned: 0, total } as CleanupProgress;
+		const worker = async () => {
+			for (let slug = queue.shift(); slug !== undefined && run === this.#prRun; slug = queue.shift()) {
+				await prStatuses.refresh(slug, { threads: false }).catch(() => {});
+				if (run === this.#prRun) this.prProgress = { scanned: ++done, total } as CleanupProgress;
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(limit, total) }, worker));
+		if (run === this.#prRun) this.prProgress = null;
 	}
 
 	#inflight: Promise<CleanupScan | null> | null = null;
@@ -167,6 +196,8 @@ class Cleanup {
 	}
 
 	close() {
+		this.#prRun++;
+		this.prProgress = null;
 		this.open = false;
 		this.only = null;
 	}

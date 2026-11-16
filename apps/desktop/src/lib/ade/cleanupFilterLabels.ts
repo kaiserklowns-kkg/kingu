@@ -18,6 +18,8 @@ export const cleanupFilterLabels: WorkspaceCleanupFilterLabels = {
 		if (kind === 'status') return t('workspaceCleanup.chip.status', { count });
 		if (kind === 'agent') return t('workspaceCleanup.chip.agent', { count });
 		if (kind === 'git') return t('workspaceCleanup.chip.git', { count });
+		if (kind === 'reviewState') return t('workspaceCleanup.chip.reviewState', { count });
+		if (kind === 'ticketSource') return t('workspaceCleanup.chip.ticketSource', { count });
 		if (kind === 'blocker') return t('workspaceCleanup.chip.blocker', { count });
 		return other(kind, count);
 	},
@@ -25,7 +27,11 @@ export const cleanupFilterLabels: WorkspaceCleanupFilterLabels = {
 	minAhead: (days) => other('ahead ≥', days),
 	minBehind: (days) => other('behind ≥', days),
 	branchQuery: (query) => t('workspaceCleanup.chip.branch', { query }),
-	presence: (kind, value) => other(`${kind}: ${value}`, 1),
+	presence(kind, value) {
+		if (kind === 'review') return t(value === 'some' ? 'workspaceCleanup.chip.hasPr' : 'workspaceCleanup.chip.noPr');
+		if (kind === 'ticket') return t(value === 'some' ? 'workspaceCleanup.chip.hasTicket' : 'workspaceCleanup.chip.noTicket');
+		return other(`${kind}: ${value}`, 1);
+	},
 	completelyEmpty: () => other('empty', 1),
 	pathPrefix: (prefix) => other(`path ${prefix}`, 1)
 };

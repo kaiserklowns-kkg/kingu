@@ -7,7 +7,7 @@
 	import { STATUS_LABEL } from './model';
 	import { cleanupBrowse as browse } from './cleanupBrowse.svelte';
 	import { cleanupFilterLabels } from './cleanupFilterLabels';
-	import { BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_SORT_FIELDS, BROWSE_TASK_STATUSES } from './workspaceCleanupBrowse';
+	import { BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_REVIEW_STATES, BROWSE_SORT_FIELDS, BROWSE_TASK_STATUSES, BROWSE_TICKET_SOURCES } from './workspaceCleanupBrowse';
 	import { listAppliedWorkspaceCleanupFilters } from './workspaceCleanupAppliedFilters';
 	import type { WorkspaceCleanupFilterState, WorkspaceCleanupSortField } from './workspaceCleanupFilters';
 
@@ -29,6 +29,8 @@
 		return list.includes(v) ? list.filter((x) => x !== v) : [...list, v];
 	}
 
+	// "Has one" / "None" for the PR and ticket facets; pressing the active one goes back to "any".
+	const PRESENCE = ['some', 'none'] as const;
 	const CHIP = 'rounded-full border px-2.5 py-0.5 text-xs transition-colors';
 	const chip = (on: boolean) => [CHIP, on ? 'border-(--vscode-focusBorder) bg-(--vscode-list-inactiveSelectionBackground)' : 'border-(--vscode-widget-border) text-(--vscode-descriptionForeground) hover:bg-(--vscode-list-hoverBackground)'];
 	const INPUT = 'h-7 rounded-md border border-(--vscode-input-border) bg-(--vscode-input-background) px-2 text-xs outline-none focus:border-(--vscode-focusBorder)';
@@ -102,6 +104,20 @@
 				<span class={LABEL}>{t('workspaceCleanup.filter.agent')}</span>
 				<div class="flex flex-wrap gap-1.5">
 					{#each BROWSE_AGENT_STATES as s (s)}<button class={chip(f.agent.states.includes(s))} aria-pressed={f.agent.states.includes(s)} onclick={() => edit((n) => (n.agent.states = toggle(n.agent.states, s)))}>{t(`workspaceCleanup.filter.agent.${s}`)}</button>{/each}
+				</div>
+			</div>
+			<div>
+				<span class={LABEL}>{t('workspaceCleanup.filter.review')}</span>
+				<div class="flex flex-wrap gap-1.5">
+					{#each PRESENCE as p (p)}<button class={chip(f.review.presence === p)} aria-pressed={f.review.presence === p} onclick={() => edit((n) => (n.review.presence = n.review.presence === p ? 'any' : p))}>{t(`workspaceCleanup.filter.presence.${p}` as never)}</button>{/each}
+					{#each BROWSE_REVIEW_STATES as s (s)}<button class={chip(f.review.states.includes(s))} aria-pressed={f.review.states.includes(s)} onclick={() => edit((n) => (n.review.states = toggle(n.review.states, s)))}>{t(`workspaceCleanup.filter.review.${s}` as never)}</button>{/each}
+				</div>
+			</div>
+			<div>
+				<span class={LABEL}>{t('workspaceCleanup.filter.ticket')}</span>
+				<div class="flex flex-wrap gap-1.5">
+					{#each PRESENCE as p (p)}<button class={chip(f.ticket.presence === p)} aria-pressed={f.ticket.presence === p} onclick={() => edit((n) => (n.ticket.presence = n.ticket.presence === p ? 'any' : p))}>{t(`workspaceCleanup.filter.presence.${p}` as never)}</button>{/each}
+					{#each BROWSE_TICKET_SOURCES as s (s)}<button class={chip(f.ticket.sources.includes(s))} aria-pressed={f.ticket.sources.includes(s)} onclick={() => edit((n) => (n.ticket.sources = toggle(n.ticket.sources, s)))}>{t(`workspaceCleanup.filter.ticket.${s}` as never)}</button>{/each}
 				</div>
 			</div>
 			<div class="sm:col-span-2">

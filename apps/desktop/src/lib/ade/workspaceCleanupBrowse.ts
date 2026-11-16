@@ -4,7 +4,7 @@
 // Git state, branch, task status, agent state and blockers. A facet the dialog never sets stays at
 // its default and filters nothing, so a state saved by another build still loads (normalize…).
 
-import { getWorkspaceCleanupAgentRank, getWorkspaceCleanupBlockerSeverity, getWorkspaceCleanupGitRank, type WorkspaceCleanupAgentState, type WorkspaceCleanupBlockerValue, type WorkspaceCleanupFilterState, type WorkspaceCleanupGitState, type WorkspaceCleanupSortField, type WorkspaceCleanupSortState } from './workspaceCleanupFilters';
+import { getWorkspaceCleanupAgentRank, getWorkspaceCleanupBlockerSeverity, getWorkspaceCleanupGitRank, type WorkspaceCleanupAgentState, type WorkspaceCleanupBlockerValue, type WorkspaceCleanupFilterState, type WorkspaceCleanupGitState, type WorkspaceCleanupReviewState, type WorkspaceCleanupSortField, type WorkspaceCleanupSortState, type WorkspaceCleanupTicketSource } from './workspaceCleanupFilters';
 import { candidateInput, type CleanupCandidate, type CleanupTaskContext } from './workspaceCleanupScan';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -13,6 +13,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const BROWSE_BLOCKERS: readonly WorkspaceCleanupBlockerValue[] = ['active-workspace', 'live-agent', 'dirty-editor-buffer', 'unpushed-commits', 'dirty-files', 'ignored-files', 'git-status-error'];
 export const BROWSE_GIT_STATES: readonly WorkspaceCleanupGitState[] = ['clean', 'dirty', 'unpushed', 'unknown'];
 export const BROWSE_AGENT_STATES: readonly WorkspaceCleanupAgentState[] = ['idle', 'working', 'permission'];
+/** Review states the dialog offers; `unknown` is a PR that has not been read (or is not recognised). */
+export const BROWSE_REVIEW_STATES: readonly WorkspaceCleanupReviewState[] = ['open', 'draft', 'merged', 'closed', 'unknown'];
+/** Ticket sources a task can have in Kingu: a GitHub/other tracker issue or a Linear one (no work items). */
+export const BROWSE_TICKET_SOURCES: readonly WorkspaceCleanupTicketSource[] = ['issue', 'linear'];
 export const BROWSE_TASK_STATUSES = ['running', 'waiting', 'review', 'done', 'failed'] as const;
 export const BROWSE_IDLE_SIGNALS = ['last-activity', 'created'] as const;
 export const BROWSE_SORT_FIELDS: readonly WorkspaceCleanupSortField[] = ['last-activity', 'created', 'size', 'name', 'branch', 'workspace-status', 'agent', 'git', 'blocker-count'];
@@ -30,7 +34,29 @@ export type CleanupRowFacts = {
 	createdAt: number;
 	/** Disk use of the worktree; `null` while unmeasured or when it could not be measured. */
 	sizeBytes: number | null;
+	/** The task's PR; `null` while it is unread or when the branch has none (the dialog cannot tell them apart before the read). */
+	review: WorkspaceCleanupReviewState | null;
+	/** Where the task's linked ticket lives; `null` when it has none. */
+	ticket: WorkspaceCleanupTicketSource | null;
 };
+
+/** The slice of Kingu's PR status the cleanup facet needs. */
+export type CleanupPrFact = { state: string; draft?: boolean };
+
+/** A draft is its own state even though GitHub still calls it OPEN. */
+export function reviewStateOf(pr: CleanupPrFact | null | undefined): WorkspaceCleanupReviewState | null {
+	if (!pr) return null;
+	if (pr.state === 'OPEN') return pr.draft ? 'draft' : 'open';
+	if (pr.state === 'MERGED') return 'merged';
+	if (pr.state === 'CLOSED') return 'closed';
+	return 'unknown';
+}
+
+/** No provider means GitHub (links saved before Linear came); GitLab and Jira links are plain issues here. */
+export function ticketSourceOf(issue: { provider?: string } | null | undefined): WorkspaceCleanupTicketSource | null {
+	if (!issue) return null;
+	return issue.provider === 'linear' ? 'linear' : 'issue';
+}
 
 /** One state per workspace, the most worrying first: unpushed, dirty, unknown, clean. */
 export function gitStateOf(c: CleanupCandidate | undefined): WorkspaceCleanupGitState | null {
@@ -50,7 +76,8 @@ export function rowFacts(
 	task: { slug: string; title: string; branch: string; status: string; working: boolean; createdAt: number; updatedAt: number },
 	candidate: CleanupCandidate | undefined,
 	ctx: CleanupTaskContext | undefined,
-	sizeBytes: number | null = null
+	sizeBytes: number | null = null,
+	extra: { pr?: CleanupPrFact | null; issue?: { provider?: string } | null } = {}
 ): CleanupRowFacts {
 	const blockers = candidate ? (candidateInput(candidate, ctx).blockers as readonly string[]).filter((b) => (BROWSE_BLOCKERS as readonly string[]).includes(b)) as WorkspaceCleanupBlockerValue[] : [];
 	return {
@@ -63,7 +90,9 @@ export function rowFacts(
 		blockers,
 		lastActivityAt: Math.max(candidate?.lastActivityAt ?? 0, task.updatedAt),
 		createdAt: task.createdAt,
-		sizeBytes
+		sizeBytes,
+		review: reviewStateOf(extra.pr),
+		ticket: ticketSourceOf(extra.issue)
 	};
 }
 
@@ -81,6 +110,14 @@ export function matchesCleanupFilters(row: CleanupRowFacts, f: WorkspaceCleanupF
 	if (row.sizeBytes === null) {
 		if (!includeUnsized) return false;
 	} else if ((minBytes !== null && row.sizeBytes < minBytes) || (maxBytes !== null && row.sizeBytes > maxBytes)) return false;
+	// Same principle for the PR: a task whose PR is unread is `unknown`, not "no review", so it only
+	// drops out when the user asks for a PR (some) or for specific states without `unknown`.
+	if (f.review.presence === 'some' && (row.review === null || row.review === 'unknown')) return false;
+	if (f.review.presence === 'none' && row.review !== null) return false;
+	if (f.review.states.length && !f.review.states.includes(row.review ?? 'unknown')) return false;
+	if (f.ticket.presence === 'some' && row.ticket === null) return false;
+	if (f.ticket.presence === 'none' && row.ticket !== null) return false;
+	if (f.ticket.sources.length && (row.ticket === null || !f.ticket.sources.includes(row.ticket))) return false;
 	if (f.git.states.length && (row.git === null || !f.git.states.includes(row.git))) return false;
 	if (f.git.branchQuery.trim() && !contains(row.branch, f.git.branchQuery)) return false;
 	if (f.status.workspaceStatuses.length && !f.status.workspaceStatuses.includes(row.status)) return false;

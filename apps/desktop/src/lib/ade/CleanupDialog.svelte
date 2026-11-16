@@ -9,6 +9,7 @@
 	import { adeTasks } from './tasks.svelte';
 	import { runtime } from './runtime.svelte';
 	import { cleanup } from './cleanup.svelte';
+	import { prStatuses } from './prStatus.svelte';
 	import { STATUS_LABEL, timeAgo } from './model';
 	import { STATUS_DOT } from './ui';
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
@@ -31,7 +32,8 @@
 				{ slug: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), status: v.status, working: runtime.isWorking(v.meta.slug), createdAt: v.meta.created_at, updatedAt: v.meta.updated_at },
 				candidates.get(v.meta.slug),
 				cleanup.taskContext(v.meta.slug),
-				cleanup.sizes.get(candidates.get(v.meta.slug)?.path ?? '') ?? null
+				cleanup.sizes.get(candidates.get(v.meta.slug)?.path ?? '') ?? null,
+				{ pr: prStatuses.bySlug[v.meta.slug]?.pr, issue: v.meta.issue }
 			)
 		)
 	);
@@ -49,7 +51,14 @@
 	let touched = false;
 	const selectByRules = () => (picked = Object.fromEntries(rows.map((v) => [v.meta.slug, ready.has(v.meta.slug)])));
 	// Git facts first (fast), then the sizes (`du`, slow) while the list is already usable.
-	const refresh = () => void cleanup.rescan().then((scan) => scan && cleanup.measureSizes());
+	// Pull requests in the background too (one `gh` call per task): until a task's is read its review
+	// state is `unknown`, which the review filter does not treat as "no PR".
+	const refresh = () =>
+		void cleanup.rescan().then((scan) => {
+			if (!scan) return;
+			void cleanup.readPullRequests(base.map((v) => v.meta.slug));
+			return cleanup.measureSizes();
+		});
 	$effect(() => {
 		if (!only) untrack(refresh);
 	});
@@ -156,6 +165,9 @@
 				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{base.length ? t('workspaceCleanup.filter.noMatch') : t('adeAttempts.cleanup.empty')}</li>
 			{/each}
 		</ul>
+		{#if !only && cleanup.prProgress}
+			<div class="px-5 pt-2 text-xs text-(--vscode-descriptionForeground)" role="status">{t('workspaceCleanup.readingPrs', { scanned: cleanup.prProgress.scanned, total: cleanup.prProgress.total })}</div>
+		{/if}
 		{#if !only && (cleanup.measuring || frees.bytes > 0)}
 			<div class="px-5 pt-2 text-xs text-(--vscode-descriptionForeground)" role="status">
 				{#if cleanup.measuring}
