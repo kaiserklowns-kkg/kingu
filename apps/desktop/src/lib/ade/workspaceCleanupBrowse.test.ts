@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { en } from '../i18n/en';
 import { th } from '../i18n/th';
-import { BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_SORT_FIELDS, agentStateOf, browseCleanupRows, gitStateOf, matchesCleanupFilters, rowFacts, type CleanupRowFacts } from './workspaceCleanupBrowse';
+import { formatBytes, reclaimable, BROWSE_AGENT_STATES, BROWSE_BLOCKERS, BROWSE_GIT_STATES, BROWSE_IDLE_SIGNALS, BROWSE_SORT_FIELDS, agentStateOf, browseCleanupRows, gitStateOf, matchesCleanupFilters, rowFacts, type CleanupRowFacts } from './workspaceCleanupBrowse';
 import { createDefaultWorkspaceCleanupFilterState, DEFAULT_WORKSPACE_CLEANUP_SORT } from './workspaceCleanupFilters';
 import type { CleanupCandidate } from './workspaceCleanupScan';
 
 const NOW = Date.UTC(2026, 10, 16);
 const DAY = 86_400_000;
-const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, ...over });
+const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, ...over });
 const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({ path: '/p', branch: 'kingu/a', head: 'x', slug: 'a', isMain: false, detached: false, locked: false, checkedAt: NOW, clean: true, ignoredFiles: false, unpushed: false, merged: true, unchanged: false, unknownBase: false, base: 'main', error: null, lastActivityAt: NOW - DAY, ...over });
 const filters = () => createDefaultWorkspaceCleanupFilterState();
 const ok = (r: CleanupRowFacts, patch: (f: ReturnType<typeof filters>) => void) => {
@@ -80,5 +80,28 @@ describe('workspace cleanup browse', () => {
 			...BROWSE_BLOCKERS.map((v) => `blocker.${camel(v)}`)
 		].map((k) => `workspaceCleanup.filter.${k}`);
 		for (const k of keys) expect([k, k in en, k in th]).toEqual([k, true, true]);
+	});
+
+	test('size: min and max narrow the measured ones; an unmeasured one follows "include unmeasured"', () => {
+		const MB = 1024 * 1024;
+		expect(ok(row({ sizeBytes: 5 * MB }), (f) => (f.size.minBytes = 4 * MB))).toBe(true);
+		expect(ok(row({ sizeBytes: 3 * MB }), (f) => (f.size.minBytes = 4 * MB))).toBe(false);
+		expect(ok(row({ sizeBytes: 5 * MB }), (f) => (f.size.maxBytes = 4 * MB))).toBe(false);
+		expect(ok(row({ sizeBytes: 0 }), (f) => (f.size.maxBytes = 0))).toBe(true);
+		expect(ok(row({ sizeBytes: 1 }), (f) => (f.size.maxBytes = 0))).toBe(false);
+		expect(ok(row({ sizeBytes: null }), (f) => (f.size.minBytes = 4 * MB))).toBe(true);
+		expect(ok(row({ sizeBytes: null }), (f) => ((f.size.minBytes = 4 * MB), (f.size.includeUnsized = false)))).toBe(false);
+		expect(ok(row({ sizeBytes: null }), (f) => (f.size.includeUnsized = false))).toBe(false);
+	});
+
+	test('sorting by size puts the largest first when descending, unmeasured last', () => {
+		const rows = [row({ slug: 'none', sizeBytes: null }), row({ slug: 'big', sizeBytes: 900 }), row({ slug: 'small', sizeBytes: 10 })];
+		expect(browseCleanupRows(rows, filters(), { field: 'size', direction: 'desc' }, NOW).map((r) => r.slug)).toEqual(['big', 'small', 'none']);
+		expect(browseCleanupRows(rows, filters(), { field: 'size', direction: 'asc' }, NOW).map((r) => r.slug)).toEqual(['none', 'small', 'big']);
+	});
+
+	test('sizes read as people say them, and the total counts what could not be measured', () => {
+		expect([0, 812, 1024, 1536, 15 * 1024 * 1024, 3.2 * 1024 ** 3].map(formatBytes)).toEqual(['0 B', '812 B', '1 KB', '1.5 KB', '15 MB', '3.2 GB']);
+		expect(reclaimable([{ sizeBytes: 100 }, { sizeBytes: null }, { sizeBytes: 50 }])).toEqual({ bytes: 150, unmeasured: 1 });
 	});
 });

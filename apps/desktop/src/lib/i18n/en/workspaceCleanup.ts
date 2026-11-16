@@ -102,5 +102,16 @@ export const workspaceCleanup = {
 	'workspaceCleanup.chip.blocker': 'Blockers · {count}',
 	'workspaceCleanup.chip.branch': 'Branch: {query}',
 	'workspaceCleanup.chip.other': '{kind} · {count}',
+	'workspaceCleanup.filter.size': 'Size on disk (MB)',
+	'workspaceCleanup.filter.minSize': 'At least',
+	'workspaceCleanup.filter.maxSize': 'At most',
+	'workspaceCleanup.filter.includeUnsized': 'Include folders not measured',
+	'workspaceCleanup.filter.sort.size': 'Size',
+	'workspaceCleanup.chip.minSize': 'Size ≥ {size}',
+	'workspaceCleanup.chip.maxSize': 'Size ≤ {size}',
+	'workspaceCleanup.chip.unsized': 'Measured only',
+	'workspaceCleanup.measuring': 'Measuring sizes… {scanned}/{total}',
+	'workspaceCleanup.freesUp': 'Frees about {size}',
+	'workspaceCleanup.freesUpPartial': 'Frees about {size} (+{count} not measured)',
 	'workspaceCleanup.saveFailed': 'Could not save: {error}'
 } as const;

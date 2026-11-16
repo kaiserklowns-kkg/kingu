@@ -15,11 +15,17 @@
 //!   merges are not detected from Git alone;
 //! - `unknown_base`: no default branch could be found, so neither can be told;
 //! - `last_activity_at`: the newest of the HEAD commit, the worktree's HEAD and index files.
+//!
+//! Sizes are a separate, slower read (`workspace_cleanup_sizes`: `du -sk` per worktree, one after
+//! another, two minutes each at most), so the dialog shows the Git facts at once and the sizes as
+//! they arrive. A worktree that cannot be measured has no size, which the size filter treats as
+//! "unmeasured", never as empty.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -29,6 +35,10 @@ use crate::projects;
 use crate::workspace::Workspace;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
+static MEASURING: AtomicBool = AtomicBool::new(false);
+
+/// `du` gets two minutes per worktree (Workspace Space's limit).
+const DU_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +69,14 @@ pub struct Candidate {
 pub struct Scan {
   pub scanned_at: u64,
   pub candidates: Vec<Candidate>,
+}
+
+/// One worktree's disk use; `size_bytes` is `None` when it could not be measured.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Size {
+  pub path: String,
+  pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -232,6 +250,78 @@ pub async fn workspace_cleanup_scan(
   result?
 }
 
+/// `du -sk` output (`<kilobytes>\t<path>`): the bytes, or `None` when it does not parse.
+pub fn parse_du_total(output: &str) -> Option<u64> {
+  let kb = output.lines().next()?.split_whitespace().next()?.parse::<u64>().ok()?;
+  Some(kb.saturating_mul(1024))
+}
+
+/// Disk use of `path` (`du -sk`), stopped after `timeout`.
+fn measure(path: &Path, timeout: Duration) -> Option<u64> {
+  let mut child = Command::new("du").arg("-sk").arg(path).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+  let mut stdout = child.stdout.take()?;
+  // `du -sk` prints one line; read it on another thread so a full pipe never blocks the wait.
+  let reader = std::thread::spawn(move || {
+    let mut text = String::new();
+    let _ = stdout.read_to_string(&mut text);
+    text
+  });
+  let start = Instant::now();
+  loop {
+    match child.try_wait() {
+      Ok(Some(_)) => break,
+      Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(50)),
+      _ => {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = reader.join();
+        return None;
+      }
+    }
+  }
+  parse_du_total(&reader.join().ok()?)
+}
+
+/// Sizes of every task worktree of `root` (the main checkout is never removable, so it is skipped).
+pub fn sizes(root: &Path, timeout: Duration, mut emit: impl FnMut(usize, usize, Option<String>)) -> Result<Vec<Size>, String> {
+  let list = worktree::list(root)?;
+  let main = list.first().map(|w| w.path.clone());
+  let todo: Vec<WorktreeInfo> = list.into_iter().filter(|w| !w.prunable && !w.bare && main.as_deref() != Some(w.path.as_str())).collect();
+  let total = todo.len();
+  let mut out = Vec::with_capacity(total);
+  emit(0, total, None);
+  for (i, info) in todo.iter().enumerate() {
+    emit(i, total, Some(display_name(info)));
+    out.push(Size { path: info.path.clone(), size_bytes: measure(Path::new(&info.path), timeout) });
+  }
+  emit(total, total, None);
+  Ok(out)
+}
+
+#[tauri::command]
+pub async fn workspace_cleanup_sizes(
+  app: AppHandle,
+  window: tauri::WebviewWindow,
+  ws: Workspace,
+  projects: State<'_, projects::Projects>,
+  root: Option<String>,
+) -> Result<Vec<Size>, String> {
+  let Some(root) = projects::root_arg(&ws, &projects, root)? else { return Ok(Vec::new()) };
+  if MEASURING.swap(true, Ordering::SeqCst) {
+    return Err("Workspace sizes are already being measured.".into());
+  }
+  let label = window.label().to_string();
+  let result = tauri::async_runtime::spawn_blocking(move || {
+    sizes(&root, DU_TIMEOUT, |scanned, total, current| {
+      let _ = app.emit_to(label.as_str(), "workspace-cleanup-size-progress", Progress { scanned, total, current });
+    })
+  })
+  .await
+  .map_err(|e| e.to_string());
+  MEASURING.store(false, Ordering::SeqCst);
+  result?
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -292,6 +382,35 @@ mod tests {
     assert_eq!((c.clean, c.ignored_files), (Some(true), true));
     std::fs::write(dir.path().join("new.txt"), "x").unwrap();
     assert_eq!(inspect(&info(dir.path(), "main"), false, Some("main")).clean, Some(false));
+  }
+
+  #[test]
+  fn du_output_is_kilobytes_of_the_first_line() {
+    assert_eq!(parse_du_total("120\t/w/repo\n"), Some(122_880));
+    assert_eq!(parse_du_total("0\t/w/empty"), Some(0));
+    assert_eq!(parse_du_total(""), None);
+    assert_eq!(parse_du_total("du: cannot read\n"), None);
+  }
+
+  #[test]
+  fn a_folder_is_measured_and_a_missing_one_is_not() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("big.bin"), vec![1u8; 300_000]).unwrap();
+    let bytes = measure(dir.path(), Duration::from_secs(30)).unwrap();
+    assert!(bytes >= 300_000, "{bytes}");
+    assert_eq!(measure(Path::new("/nonexistent/kingu-cleanup-size"), Duration::from_secs(30)), None);
+  }
+
+  #[test]
+  fn sizes_skip_the_main_checkout_and_list_every_task_worktree() {
+    let repo = repo();
+    let tree = tempfile::tempdir().unwrap();
+    let wt = tree.path().join("wt");
+    run(repo.path(), &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+    std::fs::write(wt.join("x.bin"), vec![2u8; 100_000]).unwrap();
+    let got = sizes(repo.path(), Duration::from_secs(30), |_, _, _| {}).unwrap();
+    assert_eq!(got.len(), 1);
+    assert!(got[0].path.ends_with("/wt") && got[0].size_bytes.unwrap() >= 100_000, "{got:?}");
   }
 
   #[test]

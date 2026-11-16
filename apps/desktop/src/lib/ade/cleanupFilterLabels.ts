@@ -2,6 +2,7 @@
 // workspaceCleanupAppliedFilters.ts). Only the facets the dialog offers have words of their own;
 // a facet a newer state carries shows its kind and count.
 import { t } from '#lib/i18n/index.ts';
+import { formatBytes } from './workspaceCleanupBrowse';
 import type { WorkspaceCleanupFilterLabels } from './workspaceCleanupAppliedFilters';
 
 const other = (kind: string, count: number) => t('workspaceCleanup.chip.other', { kind, count });
@@ -9,9 +10,9 @@ const other = (kind: string, count: number) => t('workspaceCleanup.chip.other', 
 export const cleanupFilterLabels: WorkspaceCleanupFilterLabels = {
 	idleDays: (days) => t('workspaceCleanup.chip.idleDays', { days }),
 	neverVisited: () => other('never visited', 1),
-	minSize: (bytes) => other('size ≥', bytes),
-	maxSize: (bytes) => other('size ≤', bytes),
-	excludesUnsized: () => other('unsized', 0),
+	minSize: (bytes) => t('workspaceCleanup.chip.minSize', { size: formatBytes(bytes) }),
+	maxSize: (bytes) => t('workspaceCleanup.chip.maxSize', { size: formatBytes(bytes) }),
+	excludesUnsized: () => t('workspaceCleanup.chip.unsized'),
 	excludesStatusless: () => other('no status', 0),
 	list(kind, count) {
 		if (kind === 'status') return t('workspaceCleanup.chip.status', { count });

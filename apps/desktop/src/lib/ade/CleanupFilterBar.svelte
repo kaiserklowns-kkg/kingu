@@ -12,6 +12,9 @@
 	import type { WorkspaceCleanupFilterState, WorkspaceCleanupSortField } from './workspaceCleanupFilters';
 
 	const camel = (s: string) => s.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
+	const MB = 1024 * 1024;
+	const mb = (bytes: number | null) => (bytes === null ? '' : String(Math.round((bytes / MB) * 10) / 10));
+	const toBytes = (v: string) => (v.trim() === '' || !Number.isFinite(Number(v)) ? null : Math.max(0, Math.round(Number(v) * MB)));
 	let { shown, total }: { shown: number; total: number } = $props();
 	let open = $state(false);
 
@@ -70,6 +73,18 @@
 			<div>
 				<label class={LABEL} for="kg-cleanup-branch">{t('workspaceCleanup.filter.branch')}</label>
 				<input id="kg-cleanup-branch" class="{INPUT} w-full" value={f.git.branchQuery} oninput={(e) => edit((n) => (n.git.branchQuery = e.currentTarget.value))} />
+			</div>
+			<div>
+				<span class={LABEL}>{t('workspaceCleanup.filter.size')}</span>
+				<div class="flex items-center gap-2">
+					<input class="{INPUT} w-20" type="number" min="0" step="any" placeholder={t('workspaceCleanup.filter.minSize')} aria-label={t('workspaceCleanup.filter.minSize')} value={mb(f.size.minBytes)} onchange={(e) => edit((n) => (n.size.minBytes = toBytes(e.currentTarget.value)))} />
+					<span class="text-xs text-(--vscode-descriptionForeground)">–</span>
+					<input class="{INPUT} w-20" type="number" min="0" step="any" placeholder={t('workspaceCleanup.filter.maxSize')} aria-label={t('workspaceCleanup.filter.maxSize')} value={mb(f.size.maxBytes)} onchange={(e) => edit((n) => (n.size.maxBytes = toBytes(e.currentTarget.value)))} />
+				</div>
+				<label class="mt-1.5 flex items-center gap-1.5 text-xs">
+					<input type="checkbox" class="size-3.5 accent-(--vscode-focusBorder)" checked={f.size.includeUnsized} onchange={(e) => edit((n) => (n.size.includeUnsized = e.currentTarget.checked))} />
+					{t('workspaceCleanup.filter.includeUnsized')}
+				</label>
 			</div>
 			<div>
 				<span class={LABEL}>{t('workspaceCleanup.filter.git')}</span>

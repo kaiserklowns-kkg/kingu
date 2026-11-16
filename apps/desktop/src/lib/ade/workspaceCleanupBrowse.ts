@@ -15,7 +15,7 @@ export const BROWSE_GIT_STATES: readonly WorkspaceCleanupGitState[] = ['clean', 
 export const BROWSE_AGENT_STATES: readonly WorkspaceCleanupAgentState[] = ['idle', 'working', 'permission'];
 export const BROWSE_TASK_STATUSES = ['running', 'waiting', 'review', 'done', 'failed'] as const;
 export const BROWSE_IDLE_SIGNALS = ['last-activity', 'created'] as const;
-export const BROWSE_SORT_FIELDS: readonly WorkspaceCleanupSortField[] = ['last-activity', 'created', 'name', 'branch', 'workspace-status', 'agent', 'git', 'blocker-count'];
+export const BROWSE_SORT_FIELDS: readonly WorkspaceCleanupSortField[] = ['last-activity', 'created', 'size', 'name', 'branch', 'workspace-status', 'agent', 'git', 'blocker-count'];
 
 export type CleanupRowFacts = {
 	slug: string;
@@ -28,6 +28,8 @@ export type CleanupRowFacts = {
 	blockers: WorkspaceCleanupBlockerValue[];
 	lastActivityAt: number;
 	createdAt: number;
+	/** Disk use of the worktree; `null` while unmeasured or when it could not be measured. */
+	sizeBytes: number | null;
 };
 
 /** One state per workspace, the most worrying first: unpushed, dirty, unknown, clean. */
@@ -47,7 +49,8 @@ export function agentStateOf(task: { status: string; working: boolean }): Worksp
 export function rowFacts(
 	task: { slug: string; title: string; branch: string; status: string; working: boolean; createdAt: number; updatedAt: number },
 	candidate: CleanupCandidate | undefined,
-	ctx: CleanupTaskContext | undefined
+	ctx: CleanupTaskContext | undefined,
+	sizeBytes: number | null = null
 ): CleanupRowFacts {
 	const blockers = candidate ? (candidateInput(candidate, ctx).blockers as readonly string[]).filter((b) => (BROWSE_BLOCKERS as readonly string[]).includes(b)) as WorkspaceCleanupBlockerValue[] : [];
 	return {
@@ -59,7 +62,8 @@ export function rowFacts(
 		git: gitStateOf(candidate),
 		blockers,
 		lastActivityAt: Math.max(candidate?.lastActivityAt ?? 0, task.updatedAt),
-		createdAt: task.createdAt
+		createdAt: task.createdAt,
+		sizeBytes
 	};
 }
 
@@ -72,6 +76,11 @@ export function matchesCleanupFilters(row: CleanupRowFacts, f: WorkspaceCleanupF
 		const since = idleSignal === 'created' ? row.createdAt : row.lastActivityAt;
 		if (now - since < idleMinDays * DAY_MS) return false;
 	}
+	const { minBytes, maxBytes, includeUnsized } = f.size;
+	// An unmeasured worktree is not empty: only "include unmeasured" decides about it.
+	if (row.sizeBytes === null) {
+		if (!includeUnsized) return false;
+	} else if ((minBytes !== null && row.sizeBytes < minBytes) || (maxBytes !== null && row.sizeBytes > maxBytes)) return false;
 	if (f.git.states.length && (row.git === null || !f.git.states.includes(row.git))) return false;
 	if (f.git.branchQuery.trim() && !contains(row.branch, f.git.branchQuery)) return false;
 	if (f.status.workspaceStatuses.length && !f.status.workspaceStatuses.includes(row.status)) return false;
@@ -86,6 +95,7 @@ export function matchesCleanupFilters(row: CleanupRowFacts, f: WorkspaceCleanupF
 const SORT_VALUE: Record<string, (r: CleanupRowFacts) => number | string> = {
 	'last-activity': (r) => r.lastActivityAt,
 	created: (r) => r.createdAt,
+	size: (r) => r.sizeBytes ?? -1,
 	name: (r) => r.title.toLowerCase(),
 	branch: (r) => r.branch.toLowerCase(),
 	'workspace-status': (r) => BROWSE_TASK_STATUSES.indexOf(r.status as (typeof BROWSE_TASK_STATUSES)[number]),
@@ -106,4 +116,29 @@ export function compareCleanupRows(a: CleanupRowFacts, b: CleanupRowFacts, sort:
 /** Rows that pass the filters, in the sort's order. */
 export function browseCleanupRows(rows: readonly CleanupRowFacts[], filters: WorkspaceCleanupFilterState, sort: WorkspaceCleanupSortState, now: number): CleanupRowFacts[] {
 	return rows.filter((r) => matchesCleanupFilters(r, filters, now)).sort((a, b) => compareCleanupRows(a, b, sort));
+}
+
+const UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
+
+/** 1024-based sizes: `0 B`, `812 KB`, `1.4 GB` (one decimal under 10, none above). */
+export function formatBytes(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+	let n = bytes;
+	let unit = 0;
+	while (n >= 1024 && unit < UNITS.length - 1) {
+		n /= 1024;
+		unit++;
+	}
+	return `${unit === 0 || n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} ${UNITS[unit]}`;
+}
+
+/** What removing `rows` frees: the sum of the measured ones, and how many had no size. */
+export function reclaimable(rows: readonly Pick<CleanupRowFacts, 'sizeBytes'>[]): { bytes: number; unmeasured: number } {
+	let bytes = 0;
+	let unmeasured = 0;
+	for (const r of rows) {
+		if (r.sizeBytes === null) unmeasured++;
+		else bytes += r.sizeBytes;
+	}
+	return { bytes, unmeasured };
 }

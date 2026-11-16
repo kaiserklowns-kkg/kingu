@@ -102,5 +102,16 @@ export const workspaceCleanup = {
 	'workspaceCleanup.chip.blocker': 'สิ่งที่กัน · {count}',
 	'workspaceCleanup.chip.branch': 'branch: {query}',
 	'workspaceCleanup.chip.other': '{kind} · {count}',
+	'workspaceCleanup.filter.size': 'ขนาดบนดิสก์ (MB)',
+	'workspaceCleanup.filter.minSize': 'อย่างน้อย',
+	'workspaceCleanup.filter.maxSize': 'ไม่เกิน',
+	'workspaceCleanup.filter.includeUnsized': 'รวมโฟลเดอร์ที่ยังวัดไม่ได้',
+	'workspaceCleanup.filter.sort.size': 'ขนาด',
+	'workspaceCleanup.chip.minSize': 'ขนาด ≥ {size}',
+	'workspaceCleanup.chip.maxSize': 'ขนาด ≤ {size}',
+	'workspaceCleanup.chip.unsized': 'เฉพาะที่วัดแล้ว',
+	'workspaceCleanup.measuring': 'กำลังวัดขนาด… {scanned}/{total}',
+	'workspaceCleanup.freesUp': 'จะได้พื้นที่คืนประมาณ {size}',
+	'workspaceCleanup.freesUpPartial': 'จะได้พื้นที่คืนประมาณ {size} (ยังไม่ได้วัดอีก {count})',
 	'workspaceCleanup.saveFailed': 'บันทึกไม่ได้: {error}'
 } as const;

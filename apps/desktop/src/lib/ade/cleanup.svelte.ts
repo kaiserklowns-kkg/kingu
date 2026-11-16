@@ -12,7 +12,7 @@ import { runtime } from './runtime.svelte';
 import { tabsOfTask } from './agentGuard';
 import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
-import { cleanupReceipt, cleanupPreview, evaluateScan, slugsToRemove, type CleanupProgress, type CleanupScan, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
+import { cleanupReceipt, cleanupPreview, evaluateScan, slugsToRemove, type CleanupProgress, type CleanupScan, type CleanupSize, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
 import { hasEnabledWorkspaceCleanupRule } from './workspaceCleanupPolicy';
 import { withActivity, type CleanupActivity, type CleanupSource } from './autoCleanup';
 
@@ -28,6 +28,10 @@ class Cleanup {
 	scanning = $state(false);
 	progress = $state<CleanupProgress | null>(null);
 	error = $state<string | null>(null);
+	/** Disk use by worktree path (Rust `workspace_cleanup_sizes`); a path without an entry is not measured yet. */
+	sizes = $state.raw<ReadonlyMap<string, number | null>>(new Map());
+	measuring = $state(false);
+	sizeProgress = $state<CleanupProgress | null>(null);
 	/** Runs since the window opened, newest first (Settings › Workspace Cleanup › Activity). */
 	activity = $state.raw<CleanupActivity[]>([]);
 	/** A run is going (the removal loop), so an automatic one never starts on top of it. */
@@ -62,6 +66,24 @@ class Cleanup {
 	/** Adds a run to Activity (the dialog removes tasks itself; the others go through `runRules`). */
 	record(source: CleanupSource, removed: string[], failed: { slug: string; error: string }[], kept: number) {
 		this.activity = withActivity(this.activity, { at: Date.now(), source, removed, failed, kept });
+	}
+
+	/** Measures every task worktree (`du`, one after another): slow, so the dialog asks after the Git facts are shown. */
+	async measureSizes() {
+		if (this.measuring || !workspace.root) return;
+		this.measuring = true;
+		this.sizeProgress = null;
+		const unlisten = await listenWindow<CleanupProgress>('workspace-cleanup-size-progress', (e) => (this.sizeProgress = e.payload)).catch(() => null);
+		try {
+			const rows = await invoke<CleanupSize[]>('workspace_cleanup_sizes');
+			this.sizes = new Map(rows.map((r) => [r.path, r.sizeBytes]));
+		} catch {
+			// Sizes are optional: without them the size filter treats every folder as unmeasured.
+		} finally {
+			unlisten?.();
+			this.measuring = false;
+			this.sizeProgress = null;
+		}
 	}
 
 	#inflight: Promise<CleanupScan | null> | null = null;

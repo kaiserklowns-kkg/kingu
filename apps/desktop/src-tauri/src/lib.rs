@@ -1723,6 +1723,7 @@ pub fn run() {
       gitlab::gitlab_issue_open,
       jira::jira_status,
       workspace_cleanup::workspace_cleanup_scan,
+      workspace_cleanup::workspace_cleanup_sizes,
       jira::jira_connect,
       jira::jira_disconnect,
       jira::jira_issues_list,

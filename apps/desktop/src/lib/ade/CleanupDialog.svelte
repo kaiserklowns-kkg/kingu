@@ -16,7 +16,7 @@
 	import { slugsToRemove } from './workspaceCleanupScan';
 	import CleanupFilterBar from './CleanupFilterBar.svelte';
 	import { cleanupBrowse } from './cleanupBrowse.svelte';
-	import { browseCleanupRows, rowFacts } from './workspaceCleanupBrowse';
+	import { browseCleanupRows, formatBytes, reclaimable, rowFacts } from './workspaceCleanupBrowse';
 
 	const ORDER = { done: 0, review: 1, failed: 2, waiting: 3, running: 4 } as const;
 	const only = untrack(() => cleanup.only);
@@ -30,7 +30,8 @@
 			rowFacts(
 				{ slug: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), status: v.status, working: runtime.isWorking(v.meta.slug), createdAt: v.meta.created_at, updatedAt: v.meta.updated_at },
 				candidates.get(v.meta.slug),
-				cleanup.taskContext(v.meta.slug)
+				cleanup.taskContext(v.meta.slug),
+				cleanup.sizes.get(candidates.get(v.meta.slug)?.path ?? '') ?? null
 			)
 		)
 	);
@@ -47,8 +48,10 @@
 	// Until the user ticks something, the rules' pick replaces the default "finished ones" pick.
 	let touched = false;
 	const selectByRules = () => (picked = Object.fromEntries(rows.map((v) => [v.meta.slug, ready.has(v.meta.slug)])));
+	// Git facts first (fast), then the sizes (`du`, slow) while the list is already usable.
+	const refresh = () => void cleanup.rescan().then((scan) => scan && cleanup.measureSizes());
 	$effect(() => {
-		if (!only) void cleanup.rescan();
+		if (!only) untrack(refresh);
 	});
 	$effect(() => {
 		if (!only && !touched && cleanup.scan && cleanup.rulesOn && ready.size) untrack(selectByRules);
@@ -56,6 +59,9 @@
 
 	const busy = (slug: string) => runtime.isWorking(slug);
 	const chosen = $derived(rows.filter((v) => picked[v.meta.slug] && !busy(v.meta.slug)).map((v) => v.meta.slug));
+	const factOf = $derived(new Map(facts.map((r) => [r.slug, r])));
+	// What removing the picked tasks frees (the measured ones; the rest are counted, not guessed).
+	const frees = $derived(reclaimable(chosen.flatMap((slug) => factOf.get(slug) ?? [])));
 
 	async function run() {
 		progress = { done: 0, total: chosen.length };
@@ -110,7 +116,7 @@
 				{#if cleanup.rulesOn && ready.size}
 					<button class="text-(--vscode-textLink-foreground) hover:underline" disabled={!!progress} onclick={() => ((touched = true), selectByRules())}>{t('workspaceCleanup.dialog.selectByRules')}</button>
 				{/if}
-				<button class="text-(--vscode-textLink-foreground) hover:underline" disabled={cleanup.scanning || !!progress} onclick={() => void cleanup.rescan()}>{t('workspaceCleanup.dialog.rescan')}</button>
+				<button class="text-(--vscode-textLink-foreground) hover:underline" disabled={cleanup.scanning || !!progress} onclick={refresh}>{t('workspaceCleanup.dialog.rescan')}</button>
 				<button
 					class="text-(--vscode-textLink-foreground) hover:underline"
 					onclick={() => {
@@ -140,13 +146,27 @@
 								{/if}
 							{/if}
 						</span>
-						<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(v.meta.updated_at, adeTasks.now)}</span>
+						<span class="shrink-0 text-right text-[11px] text-(--vscode-descriptionForeground)">
+							{timeAgo(v.meta.updated_at, adeTasks.now)}
+							{#if factOf.get(slug)?.sizeBytes != null}<span class="block font-mono">{formatBytes(factOf.get(slug)!.sizeBytes!)}</span>{/if}
+						</span>
 					</label>
 				</li>
 			{:else}
 				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{base.length ? t('workspaceCleanup.filter.noMatch') : t('adeAttempts.cleanup.empty')}</li>
 			{/each}
 		</ul>
+		{#if !only && (cleanup.measuring || frees.bytes > 0)}
+			<div class="px-5 pt-2 text-xs text-(--vscode-descriptionForeground)" role="status">
+				{#if cleanup.measuring}
+					{t('workspaceCleanup.measuring', { scanned: cleanup.sizeProgress?.scanned ?? 0, total: cleanup.sizeProgress?.total ?? 0 })}
+				{:else if frees.unmeasured}
+					{t('workspaceCleanup.freesUpPartial', { size: formatBytes(frees.bytes), count: frees.unmeasured })}
+				{:else}
+					{t('workspaceCleanup.freesUp', { size: formatBytes(frees.bytes) })}
+				{/if}
+			</div>
+		{/if}
 		<footer class="flex items-center gap-3 px-5 py-3">
 			<label class="flex flex-1 items-center gap-2 text-[13px]">
 				<input type="checkbox" class="size-4 accent-(--vscode-focusBorder)" bind:checked={deleteBranch} disabled={!!progress} />

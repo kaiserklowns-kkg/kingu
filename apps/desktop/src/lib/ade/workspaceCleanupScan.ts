@@ -36,6 +36,8 @@ export type CleanupCandidate = {
 
 /** Rust `workspace_cleanup::Scan`. */
 export type CleanupScan = { scannedAt: number; candidates: CleanupCandidate[] };
+/** Rust `workspace_cleanup::Size`: `sizeBytes` is null when the folder could not be measured. */
+export type CleanupSize = { path: string; sizeBytes: number | null };
 export type CleanupProgress = { scanned: number; total: number; current: string | null };
 
 /** What only the app knows about a task. */

@@ -227,7 +227,8 @@ External
 | open | ยังไม่ได้ลองกับแอปที่รันจริง: ผ่านเฉพาะ unit test, `bun run check` และ test ใน worktree สะอาด (UI, ตัวตั้งเวลา, `kingu cleanup` ผ่าน socket ยังไม่เคยเห็นของจริง) | — |
 | open | ledger ของ request id อยู่ในหน่วยความจำ (หายเมื่อ restart); มี `agent/op_ledger.rs` ที่ port จาก Orca อยู่แล้ว ควรตัดสินใจว่ารวมเป็นตัวเดียวหรือไม่ | `cli_ledger.rs` vs `agent/op_ledger.rs` |
 | done | `kingu cleanup run` รอได้ 10 นาทีฝั่งแอป (11 นาทีฝั่งคำสั่ง) แทน 30 วินาที | `cli_server.rs` `CLEANUP_RUN_TIMEOUT`, `kingu-cli/src/client.rs` `answer_timeout` |
-| open | facet ที่ยังไม่เปิดใน dialog: ขนาด (ต้องต่อผล Workspace Space), สถานะ PR/review, ticket, host/repo, pinned/archived; ตรรกะ port ไว้แล้วใน `workspaceCleanupFilters.ts` | `ade/workspaceCleanupFilters.ts` |
+| done | facet ขนาดใน dialog: Rust `workspace_cleanup_sizes` วัด `du -sk` ต่อ worktree (ช้า จึงแยกจากการสแกน Git; dialog ใช้งานได้ก่อนแล้วขนาดตามมา), กรองขนาดขั้นต่ำ/สูงสุด + "รวมที่วัดไม่ได้", เรียงตามขนาด, แสดงขนาดบนแถวและยอดที่จะได้คืน | `src-tauri/src/workspace_cleanup.rs`, `ade/cleanup.svelte.ts`, `ade/workspaceCleanupBrowse.ts` |
+| open | facet ที่ยังไม่เปิดใน dialog: สถานะ PR/review, ticket, host/repo, pinned/archived; ตรรกะ port ไว้แล้วใน `workspaceCleanupFilters.ts` | `ade/workspaceCleanupFilters.ts` |
 | open | กฎ `automationRuns` / `orchestrationWorkers` ยังไม่มีข้อมูลป้อน จึงไม่ match; กฎ `inactive` แบบ archive ยังไม่รองรับ (เก็บไว้ ไม่ลบ); squash merge ตรวจจาก Git อย่างเดียวไม่ได้ | `ade/workspaceCleanupScan.ts` |
 | open | Activity อยู่ในหน่วยความจำ (หายเมื่อปิดหน้าต่าง); หลายหน้าต่างบนโฟลเดอร์เดียวกันต่างคนต่างรัน (task ที่ลบแล้วไม่ถูกเห็นอีก จึงไม่ลบซ้ำ) | `ade/cleanup.svelte.ts` |
 | open | idempotency ของ control plane (`cli_server`) นอกเหนือจาก `workspaceCleanup.run` (เช่น `task.create`) ยังไม่มี | `cli_server.rs` |
