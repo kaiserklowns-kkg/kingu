@@ -552,7 +552,14 @@ fn cleanup_run(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
   let id = request_id(params)?;
   folder(app, params)?;
   let server = app.state::<CliServer>();
-  let begin = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner()).begin(&id);
+  let begin = {
+    let mut ledger = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner());
+    // Receipts are kept in the app's config folder, so a retry after a restart still replays.
+    if let Ok(dir) = app.path().app_config_dir() {
+      ledger.open(dir.join("cleanup-runs.json"));
+    }
+    ledger.begin(&id)
+  };
   match begin {
     crate::cli_ledger::Begin::Running => return Err(rpc(ERR_FAILED, tr!(CliMsg::CleanupRunning, id))),
     crate::cli_ledger::Begin::Replay(mut receipt) => {
@@ -613,7 +620,12 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
     protocol::METHOD_CLEANUP_RUN => cleanup_run(app, params),
     protocol::METHOD_CLEANUP_RECEIPT => {
       let id = request_id(params)?;
-      let receipt = app.state::<CliServer>().cleanup_runs.lock().unwrap_or_else(|e| e.into_inner()).receipt(&id);
+      let server = app.state::<CliServer>();
+      let mut ledger = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner());
+      if let Ok(dir) = app.path().app_config_dir() {
+        ledger.open(dir.join("cleanup-runs.json"));
+      }
+      let receipt = ledger.receipt(&id);
       receipt.ok_or_else(|| rpc(ERR_FAILED, tr!(CliMsg::CleanupNoReceipt, id)))
     }
     protocol::METHOD_OPEN => {
