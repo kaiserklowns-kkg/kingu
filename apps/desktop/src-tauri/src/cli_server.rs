@@ -33,6 +33,8 @@ const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_TITLE: usize = 200;
 const MAX_PROMPT: usize = 64 * 1024;
 const MAX_MESSAGE: usize = 1000;
+/// `workspaceCleanup.run` removes worktrees one after another, which can take minutes.
+const CLEANUP_RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The name agents and people type; the bundled binary is `kingu-cli` (see crates/kingu-cli/Cargo.toml).
 pub const COMMAND: &str = "kingu";
 const BUNDLED: &str = if cfg!(windows) { "kingu-cli.exe" } else { "kingu-cli" };
@@ -442,12 +444,18 @@ fn tasks(root: &Path) -> Result<Vec<crate::agent::tasks::TaskMeta>, RpcError> {
 /// Hands a request to the window for `cwd` (brought to the front with `focus`) and waits for its `cli_reply`.
 fn ask_window(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
   let label = window(app, cwd).map(|w| w.label().to_string());
-  ask_label(app, label, false, method, params, focus)
+  ask_label(app, label, false, method, params, focus, None)
+}
+
+/// [`ask_window`] waiting `wait` for the answer instead of the usual 30 seconds.
+fn ask_window_for(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, wait: Duration) -> Result<Value, RpcError> {
+  let label = window(app, cwd).map(|w| w.label().to_string());
+  ask_label(app, label, false, method, params, false, Some(wait))
 }
 
 /// Hands a request to window `label` (none: every window) and waits for its `cli_reply`.
 /// `queued`: the window was just opened, so its page fetches the request once it is up.
-fn ask_label(app: &AppHandle, label: Option<String>, queued: bool, method: &str, params: Value, focus: bool) -> Result<Value, RpcError> {
+fn ask_label(app: &AppHandle, label: Option<String>, queued: bool, method: &str, params: Value, focus: bool, wait: Option<Duration>) -> Result<Value, RpcError> {
   let server = app.state::<CliServer>();
   let id = server.next.fetch_add(1, Ordering::Relaxed) + 1;
   let (tx, rx) = mpsc::channel();
@@ -470,7 +478,7 @@ fn ask_label(app: &AppHandle, label: Option<String>, queued: bool, method: &str,
     (None, _) => app.emit(REQUEST_EVENT, request),
   };
   // A new window's page has to load first.
-  let timeout = if queued { WINDOW_TIMEOUT * 2 } else { WINDOW_TIMEOUT };
+  let timeout = wait.unwrap_or(if queued { WINDOW_TIMEOUT * 2 } else { WINDOW_TIMEOUT });
   let answer = match sent {
     Ok(()) => rx.recv_timeout(timeout).ok(),
     Err(e) => Some(Err(e.to_string())),
@@ -517,7 +525,7 @@ fn open_editors(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
   }
   let server = app.state::<CliServer>();
   let wait_id = req.wait.then(|| server.waits.register(&label));
-  let answer = ask_label(app, Some(label), queued, protocol::METHOD_EDITOR_OPEN, window_payload(&req, folder_mode, wait_id), true);
+  let answer = ask_label(app, Some(label), queued, protocol::METHOD_EDITOR_OPEN, window_payload(&req, folder_mode, wait_id), true, None);
   if let (Err(_), Some(id)) = (&answer, wait_id) {
     server.waits.finish(id);
   }
@@ -553,7 +561,7 @@ fn cleanup_run(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
     }
     crate::cli_ledger::Begin::New => {}
   }
-  let answer = ask_window(app, cwd_of(params).as_deref(), protocol::METHOD_CLEANUP_RUN, json!({ "requestId": id }), false);
+  let answer = ask_window_for(app, cwd_of(params).as_deref(), protocol::METHOD_CLEANUP_RUN, json!({ "requestId": id }), CLEANUP_RUN_TIMEOUT);
   let mut ledger = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner());
   match answer {
     Ok(mut receipt) => {

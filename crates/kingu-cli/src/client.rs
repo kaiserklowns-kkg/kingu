@@ -244,6 +244,13 @@ pub fn render(method: &str, result: &Value) -> String {
 
 /// How long an answer may take: starting a task waits for the window (the app gives it 30 s).
 pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+/// `workspaceCleanup.run` removes worktrees one by one: the app gives it 10 minutes, so the command waits a little longer.
+pub const CLEANUP_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(11 * 60);
+
+/// How long the command waits for `method`'s answer.
+pub fn answer_timeout(method: &str) -> std::time::Duration {
+  if method == protocol::METHOD_CLEANUP_RUN { CLEANUP_RUN_TIMEOUT } else { ANSWER_TIMEOUT }
+}
 
 /// Sends one request over the app's socket and reads its answer.
 pub fn call(socket: &Path, token: &str, method: &str, params: Value) -> Result<Response, (i32, String)> {
@@ -277,6 +284,15 @@ pub fn call_with(_socket: &Path, _token: &str, _method: &str, _params: Value, _t
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_cleanup_run_waits_longer_than_the_app_does_and_other_commands_keep_the_usual_wait() {
+    // The app answers within 10 minutes; the command must not give up before it.
+    assert!(answer_timeout(protocol::METHOD_CLEANUP_RUN) > std::time::Duration::from_secs(10 * 60));
+    for m in [protocol::METHOD_CLEANUP_PREVIEW, protocol::METHOD_TASK_CREATE, protocol::METHOD_STATUS] {
+      assert_eq!(answer_timeout(m), ANSWER_TIMEOUT, "{m}");
+    }
+  }
 
   #[test]
   fn builds_requests_with_absolute_paths_and_stdin_prompts() {
