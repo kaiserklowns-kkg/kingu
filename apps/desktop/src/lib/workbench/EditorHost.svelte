@@ -10,6 +10,7 @@
 	import { installEditorSignals } from './accessibilitySignals.svelte';
 	import { getEntry, modelEntry, saveViewState, viewState } from './editorModels';
 	import { isReadonly } from './readonly';
+	import { isDefaultsKey } from '#lib/settings/defaultsJson.ts';
 	import { isLocalHistoryKey } from '#lib/scm/localHistory.ts';
 	import { isOutputKey } from '#lib/output/output.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -93,6 +94,11 @@
 			ed.onDidChangeModelOptions(reportModel);
 			ed.onDidChangeModelLanguage(reportModel);
 			ed.onDidChangeModelContent((e) => e.eol && reportModel());
+			// Go to Last Edit Location (⌘K ⌘Q): where this editor was last typed in.
+			ed.onDidChangeModelContent(() => {
+				const pos = ed.getPosition();
+				if (!switching && shown && pos && ed.hasTextFocus()) navigation.recordEdit({ path: shown, line: pos.lineNumber, column: pos.column, group });
+			});
 			ed.onDidFocusEditorText(() => editors.activateGroup(group));
 			debugDecorations = attachDebugEditor(m.monaco, ed, () => shown);
 			testingDecorations = attachTestingEditor(m.monaco, ed, () => shown);
@@ -213,7 +219,7 @@
 			getEntry(file)?.stat?.readonly ?? false
 		);
 		// An Output channel in an editor is never edited.
-		editor.updateOptions({ readOnly: readOnly || isOutputKey(file) });
+		editor.updateOptions({ readOnly: readOnly || isOutputKey(file) || isDefaultsKey(file) });
 	});
 
 	// Breakpoints and the stopped line follow the breakpoint store, the session and the shown file.

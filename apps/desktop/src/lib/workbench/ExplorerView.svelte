@@ -24,11 +24,14 @@
 	import { isDiffKey } from './scm';
 	import { isUntitled } from './untitled';
 	import { notifications } from './notifications.svelte';
-	import { autoRevealOf, dropTarget, withPathSeparator } from './explorerModel';
+	import { autoRevealOf, dropTarget, typeNavigate, withPathSeparator } from './explorerModel';
+	import { fuzzyMatch, highlightRuns } from './fuzzy';
+	import Codicon from './Codicon.svelte';
 	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 	import { relativeInFolder } from '#lib/workbench/workspaceFolders.ts';
 	import { indentGuideOffsets, isMultiSelect, isOpenToSide, rowClick, type ClickMode, type MultiSelectModifier } from './workbenchOptions';
 	import { listWheel } from './listWheel';
+	import { commands } from './commands.svelte';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -185,7 +188,10 @@
 		const out: Item[] = [];
 		const input = (depth: number, is_dir: boolean, value: string): Item => ({ type: 'input', depth, is_dir, value, key: `\0input:${edit?.kind === 'rename' ? edit.rel : (edit?.parent ?? '') + edit?.kind}` });
 		if (edit && edit.kind !== 'rename' && edit.parent === '') out.push(input(0, edit.kind === 'folder', ''));
+		const hits = find?.filter ? findMatches : null;
 		for (const row of rows) {
+			// Find in filter mode (VS Code's tree filter): matches and the folders on their way.
+			if (hits && !hits.has(row.rel) && !row.root && !(row.is_dir && [...hits.keys()].some((h) => h.startsWith(`${row.rel}/`)))) continue;
 			if (edit?.kind === 'rename' && edit.rel === row.rel) {
 				out.push(input(row.depth, row.is_dir, row.name));
 				continue;
@@ -342,6 +348,163 @@
 		menu = { x, y, target };
 	}
 
+	// --- Find (⌥⌘F / F3, VS Code's list.find tree FindWidget) and type navigation ------------------
+
+	/** The open find box: its text, filter (else highlight) mode and fuzzy (else contiguous) matching. */
+	let find = $state<{ value: string; filter: boolean; fuzzy: boolean } | null>(null);
+	let findInput: HTMLInputElement | undefined = $state();
+
+	/** Matched characters of `name`, or null when it does not match. */
+	function matchName(query: string, name: string, fuzzy: boolean): number[] | null {
+		if (fuzzy) return fuzzyMatch(query, name)?.positions ?? null;
+		const at = name.toLowerCase().indexOf(query.toLowerCase());
+		return at < 0 ? null : Array.from({ length: query.length }, (_, i) => at + i);
+	}
+
+	/** Rows whose name matches the find box (the loaded, expanded rows), with the matched characters. */
+	const findMatches = $derived.by(() => {
+		if (!find?.value) return null;
+		const out = new Map<string, number[]>();
+		for (const r of explorer.rows()) {
+			const hit = matchName(find.value, r.name, find.fuzzy);
+			if (hit) out.set(r.rel, hit);
+		}
+		return out;
+	});
+
+	function openFind() {
+		// workbench.list.defaultFindMode / workbench.list.defaultFindMatchType.
+		find ??= { value: '', filter: settings.get<string>('workbench.list.defaultFindMode') === 'filter', fuzzy: settings.get<string>('workbench.list.defaultFindMatchType') !== 'contiguous' };
+		queueMicrotask(() => {
+			findInput?.focus();
+			findInput?.select();
+		});
+	}
+
+	function closeFind() {
+		find = null;
+		// Folders the find opened close again (VS Code's Explorer find restores the tree).
+		for (const dir of phantom) explorer.expanded.delete(dir);
+		phantom = [];
+		workspaceFiles = null;
+		focusRow(explorer.selected);
+	}
+
+	/** Every workspace file (`fs_list_files`), fetched once per find, so collapsed folders are searched too. */
+	let workspaceFiles: string[] | null = null;
+	/** Folders the find expanded to show a match, closed again when it closes. */
+	let phantom: string[] = [];
+	const FIND_REVEAL_LIMIT = 100;
+
+	/** The folders between a root folder and `path`, outermost first. */
+	function ancestorsOf(path: string): string[] {
+		const root = explorer.roots().map((r) => r.key).filter((k) => k && (path === k || path.startsWith(`${k}/`))).sort((a, b) => b.length - a.length)[0] ?? '';
+		const rest = root ? path.slice(root.length + 1) : path;
+		const parts = rest.split('/').slice(0, -1);
+		return parts.map((_, i) => (root ? `${root}/` : '') + parts.slice(0, i + 1).join('/'));
+	}
+
+	// Find also matches files in collapsed folders (VS Code's ExplorerFindProvider): the folders on
+	// the way to the first matches open, so the tree shows them.
+	$effect(() => {
+		const f = find;
+		if (!f?.value) return;
+		const { value, fuzzy } = f;
+		let live = true;
+		const timer = setTimeout(async () => {
+			workspaceFiles ??= await invoke<string[]>('fs_list_files').catch(() => []);
+			if (!live) return;
+			const dirs = new Set<string>();
+			for (const file of workspaceFiles) for (const d of ancestorsOf(file)) dirs.add(d);
+			const hits = [...workspaceFiles, ...dirs].filter((p) => matchName(value, baseName(p), fuzzy)).slice(0, FIND_REVEAL_LIMIT);
+			const open = new Set<string>();
+			for (const hit of hits) for (const d of ancestorsOf(hit)) open.add(d);
+			for (const root of explorer.roots()) if (root.key && [...open].some((d) => d.startsWith(`${root.key}/`)) && explorer.collapsedRoots.has(root.key)) await explorer.expand(root.key);
+			for (const dir of [...open].sort((a, b) => a.length - b.length)) {
+				if (!live) return;
+				if (explorer.expanded.has(dir)) continue;
+				explorer.expanded.add(dir);
+				phantom.push(dir);
+				if (!explorer.children.has(dir)) await explorer.load(dir);
+			}
+			if (live) onFindInput();
+		}, 150);
+		return () => {
+			live = false;
+			clearTimeout(timer);
+		};
+	});
+
+	function focusRow(rel: string | null) {
+		if (rel === null) return void tree?.focus();
+		const el = tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(rel)}"]`);
+		el?.focus();
+		el?.scrollIntoView({ block: 'nearest' });
+	}
+
+	/** Typing in the find box focuses the first match (VS Code's FindController). */
+	function onFindInput() {
+		const first = explorer.rows().find((r) => findMatches?.has(r.rel));
+		if (first) {
+			select(first.rel);
+			tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(first.rel)}"]`)?.scrollIntoView({ block: 'nearest' });
+		}
+	}
+
+	function onFindKey(e: KeyboardEvent) {
+		e.stopPropagation();
+		if (e.key === 'Escape') closeFind();
+		else if (e.key === 'ArrowDown' || e.key === 'Enter') {
+			// Into the tree, on the first match (or the selection).
+			const first = explorer.rows().find((r) => findMatches?.has(r.rel))?.rel ?? explorer.selected;
+			if (first) select(first);
+			focusRow(first);
+		} else return;
+		e.preventDefault();
+	}
+
+	/** Type navigation (workbench.list.typeNavigationMode `automatic`): letters typed within 800ms jump to the next row starting with them. */
+	let typed = '';
+	let typedTimer: ReturnType<typeof setTimeout> | undefined;
+	/** workbench.list.typeNavigationMode `trigger`: typing navigates only after list.triggerTypeNavigation, until it pauses. */
+	let typeTriggered = false;
+	const typeNavigationOn = () => settings.get<string>('workbench.list.typeNavigationMode') !== 'trigger' || typeTriggered || typed !== '';
+	onMount(() =>
+		commands.register({
+			id: 'list.triggerTypeNavigation',
+			title: 'Trigger Type Navigation',
+			palette: false,
+			when: () => !!tree && (tree.contains(document.activeElement) || document.activeElement === tree),
+			run: () => {
+				typeTriggered = true;
+				clearTimeout(typedTimer);
+				typedTimer = setTimeout(() => (typeTriggered = false), 800);
+			}
+		})
+	);
+	function typeNavigation(key: string) {
+		const idle = typed === '';
+		typed += key;
+		clearTimeout(typedTimer);
+		typedTimer = setTimeout(() => {
+			typed = '';
+			typeTriggered = false;
+		}, 800);
+		const rows = explorer.rows();
+		const at = typeNavigate(
+			rows.map((r) => r.name),
+			rows.findIndex((r) => r.rel === explorer.selected),
+			typed,
+			idle
+		);
+		if (at < 0) return;
+		select(rows[at].rel);
+		focusRow(rows[at].rel);
+	}
+
+	/** The rows the tree shows (find in filter mode hides the others). */
+	const shownRows = () => items.flatMap((it) => (it.type === 'row' ? [it.row] : []));
+
 	function onTreeKey(e: KeyboardEvent) {
 		const sel = explorer.selected;
 		const mod = isMac ? e.metaKey : e.ctrlKey;
@@ -353,6 +516,35 @@
 			void explorer.paste(sel);
 		} else if (plainMod && e.code === 'KeyA') {
 			for (const r of explorer.rows()) explorer.selection.add(r.rel);
+		} else if (mod && !e.altKey && e.code === 'KeyZ') {
+			// Undo / Redo of file operations (⌘Z / ⇧⌘Z; Ctrl+Y off macOS too).
+			void explorer.undoRedo(e.shiftKey ? 'redo' : 'undo');
+		} else if (!isMac && plainMod && e.code === 'KeyY') {
+			void explorer.undoRedo('redo');
+		} else if ((mod && e.altKey && !e.shiftKey && e.code === 'KeyF') || (e.key === 'F3' && !mod && !e.altKey && !e.shiftKey)) {
+			openFind();
+		} else if (e.key === 'Escape' && find) {
+			closeFind();
+		} else if (sel && !explorer.isDir(sel) && !e.altKey && !e.shiftKey && (isMac ? mod && !e.ctrlKey && e.key === 'ArrowDown' : !mod && e.key === 'Enter')) {
+			// explorer.openAndPassFocus (⌘↓ on macOS, Enter elsewhere): the file pinned, focus in the editor.
+			editors.open(sel, { preview: false });
+			editors.focusRequest = editors.activeGroupId;
+		} else if (sel && !explorer.isDir(sel) && !e.altKey && !e.shiftKey && e.key === 'Enter' && (isMac ? e.ctrlKey && !e.metaKey : e.ctrlKey)) {
+			// explorer.openToSide (⌃↩ on macOS, Ctrl+Enter elsewhere).
+			editors.openToSide(sel);
+		} else if ((e.key === 'Home' || e.key === 'End' || e.key === 'PageUp' || e.key === 'PageDown') && !mod && !e.altKey) {
+			// The list's Home / End / Page Up / Page Down (VS Code's list controller); Shift extends the selection.
+			const rows = explorer.rows();
+			if (!rows.length) return;
+			const i = Math.max(0, rows.findIndex((r) => r.rel === sel));
+			const page = Math.max(1, Math.floor((tree?.clientHeight ?? 0) / 22) - 1);
+			const to = e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : Math.max(0, Math.min(rows.length - 1, i + (e.key === 'PageDown' ? page : -page)));
+			const next = rows[to];
+			if (e.shiftKey) explorer.selectRange(next.rel);
+			else select(next.rel);
+			const el = tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(next.rel)}"]`);
+			el?.focus();
+			el?.scrollIntoView({ block: 'nearest' });
 		} else if (e.key === 'Escape' && (explorer.selection.size > 1 || explorer.clipboard)) {
 			explorer.clipboard = null;
 			if (sel) select(sel);
@@ -367,7 +559,8 @@
 		} else if (mod && e.altKey && e.code === 'KeyR') {
 			reveal(sel);
 		} else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-			const rows = explorer.rows();
+			// Highlight mode: up and down go through the highlighted rows only.
+			const rows = find && !find.filter && findMatches?.size ? explorer.rows().filter((r) => findMatches!.has(r.rel)) : find?.filter && findMatches ? shownRows() : explorer.rows();
 			const i = rows.findIndex((r) => r.rel === sel);
 			const next = rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))];
 			if (next) {
@@ -389,6 +582,8 @@
 					tree?.querySelector<HTMLElement>(`[data-rel="${CSS.escape(up.rel)}"]`)?.focus();
 				}
 			} else return;
+		} else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey && (e.key !== ' ' || typed !== '') && typeNavigationOn()) {
+			typeNavigation(e.key);
 		} else return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -475,6 +670,40 @@
 			</div>
 		</div>
 
+		{#if open && find}
+			<!-- VS Code's tree find widget: the box, Filter and Fuzzy Match toggles, Close. -->
+			<div class="relative z-10 mx-2 mb-1 flex h-[26px] shrink-0 items-center gap-0.5 rounded-sm border border-(--vscode-widget-border,transparent) bg-(--vscode-editorWidget-background) px-1 shadow-[0_0_8px_2px_var(--vscode-widget-shadow,rgba(0,0,0,0.36))]">
+				<input
+					bind:this={findInput}
+					bind:value={find.value}
+					spellcheck="false"
+					aria-label={t('workbench.explorer.find.label')}
+					placeholder={find.filter ? t('workbench.explorer.find.typeToFilter') : t('workbench.explorer.find.typeToSearch')}
+					class={[
+						'h-[20px] min-w-0 flex-1 border bg-(--vscode-input-background) px-1 text-(--vscode-input-foreground) outline-none',
+						find.value && !findMatches?.size ? 'border-[color:var(--vscode-inputValidation-warningBorder,#B89500)]' : 'border-transparent focus:border-(--vscode-focusBorder)'
+					]}
+					oninput={onFindInput}
+					onkeydown={onFindKey}
+				/>
+				{#each [{ on: find.filter, label: t('workbench.explorer.find.filter'), icon: 'list-filter', flip: () => find && (find.filter = !find.filter) }, { on: find.fuzzy, label: t('workbench.explorer.find.fuzzy'), icon: 'search-fuzzy', flip: () => find && (find.fuzzy = !find.fuzzy) }] as toggle (toggle.icon)}
+					<button
+						class={['grid size-[20px] place-items-center rounded-sm border', toggle.on ? 'border-(--vscode-inputOption-activeBorder,#2488DB) bg-(--vscode-inputOption-activeBackground,#2488DB33)' : 'border-transparent hover:bg-(--vscode-toolbar-hoverBackground)']}
+						aria-pressed={toggle.on}
+						aria-label={toggle.label}
+						title={toggle.label}
+						onclick={() => {
+							toggle.flip();
+							findInput?.focus();
+						}}><Codicon id={toggle.icon} size={14} /></button
+					>
+				{/each}
+				<button class="grid size-[20px] place-items-center rounded-sm hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('workbench.explorer.find.close')} title={t('workbench.explorer.find.close')} onclick={closeFind}><Codicon id="close" size={14} /></button>
+				{#if find.value && !findMatches?.size}
+					<p role="alert" class="absolute top-full right-0 left-0 mt-0.5 border border-[color:var(--vscode-inputValidation-warningBorder,#B89500)] bg-[var(--vscode-inputValidation-warningBackground,#352A05)] px-1 py-0.5 text-xs">{t('workbench.explorer.find.noResults')}</p>
+				{/if}
+			</div>
+		{/if}
 		{#if open}
 			<div
 				bind:this={tree}
@@ -564,7 +793,9 @@
 							</span>
 							<FileIcon icon={row.is_dir ? folderIcon(row.rel, row.expanded) : fileIcon(row.name)} />
 							{#each indentGuideOffsets(row.depth, indent) as left (left)}<span class="kg-indent-guide" style:left="{left}px"></span>{/each}
-							<span class={['min-w-0 flex-1', hscroll ? 'whitespace-nowrap' : 'truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}>{row.name}</span>
+							<span class={['min-w-0 flex-1', hscroll ? 'whitespace-nowrap' : 'truncate', row.ignored && 'italic opacity-55', row.root && 'font-semibold']} style:color={decoColors ? nameColor(row.rel) : undefined}
+								>{#if findMatches?.has(row.rel)}{#each highlightRuns(row.name, findMatches.get(row.rel)) as run, ri (ri)}{#if run.hit}<span class="text-(--vscode-list-highlightForeground,#2AAAFF) font-semibold">{run.text}</span>{:else}{run.text}{/if}{/each}{:else}{row.name}{/if}</span
+							>
 							{#if decoBadges && problems?.get(row.rel)?.count}{@const p = problems.get(row.rel)!}<span class="shrink-0 pl-2 text-[11px] font-semibold" style:color={decoColors ? PROBLEM_COLORS[p.severity] : undefined} title={p.count === 1 ? t('problems.decoration.one') : t('problems.decoration.many', { count: p.count! })}>{problemBadge(p.count!)}</span>{/if}
 							{#if coverage}{@const cov = coverageBadge(row.rel)}{#if cov}<span class="shrink-0 pl-2 text-[11px] tabular-nums" style:color={cov.color}>{cov.text}</span>{/if}{/if}
 							{#if row.ignored}<span class="shrink-0 pr-3 pl-2 opacity-55" title={t('legacyWorkbench.explorerView.gitignored')}><Icon name="ignored" size={12} /></span>

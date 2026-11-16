@@ -7,6 +7,8 @@ export const ideTasks = {
 	'ideTasks.closeTerminal': 'กดปุ่มใดก็ได้เพื่อปิด terminal',
 	'ideTasks.openFolder': 'เปิดโฟลเดอร์ก่อนจึงจะรัน task ได้',
 	'ideTasks.loadErrors': 'task มีข้อผิดพลาด ดูรายละเอียดใน Output',
+	'ideTasks.user.file': 'tasks.json ของผู้ใช้',
+	'ideTasks.byName.notFound': 'ไม่มี task ชื่อ "{name}"',
 	'ideTasks.showOutput': 'ดู Output',
 	'ideTasks.alreadyActive': "task '{label}' กำลังทำงานอยู่แล้ว",
 	'ideTasks.terminateTask': 'หยุด Task',

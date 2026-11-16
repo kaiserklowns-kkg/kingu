@@ -95,6 +95,21 @@ export function flattenResults(files: FileMatches[], collapsed: ReadonlySet<stri
 	return rows;
 }
 
+export type MatchRow = Extract<ResultRow, { kind: 'match' }>;
+
+/**
+ * F4 / ⇧F4 (VS Code's Focus Next / Previous Search Result, searchView.selectNextMatch): the match
+ * after (`1`) or before (`-1`) the one whose key is `current`, in display order, wrapping round.
+ * Without a current match, the first (or last) one. `rows` should list every match (nothing collapsed).
+ */
+export function stepMatch(rows: readonly ResultRow[], current: string | null, delta: 1 | -1): MatchRow | null {
+	const matches = rows.filter((r): r is MatchRow => r.kind === 'match');
+	if (!matches.length) return null;
+	const at = current === null ? -1 : matches.findIndex((r) => r.key === current);
+	if (at < 0) return delta > 0 ? matches[0] : matches[matches.length - 1];
+	return matches[(at + delta + matches.length) % matches.length];
+}
+
 export type ResultSortOrder = 'default' | 'fileNames' | 'type' | 'modified' | 'countDescending' | 'countAscending';
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });

@@ -11,7 +11,7 @@ export const legacyWorkbench = {
 	'legacyWorkbench.statusResources.openPortsTitle': 'พอร์ตที่เปิดอยู่ ({ours} จาก Kingu)',
 	'legacyWorkbench.statusResources.refresh': 'รีเฟรช',
 	'legacyWorkbench.statusResources.memoryTooltip':
-		'ผลรวม RSS ของ Kingu และโปรเซสลูก หน่วยความจำที่ใช้ร่วมกันอาจถูกนับซ้ำ (ไม่รวม WebView)',
+		'หน่วยความจำของ Kingu และโปรเซสลูก นับแบบเดียวกับ Activity Monitor (physical footprint หรือ RSS เมื่ออ่านค่านั้นไม่ได้)',
 	'legacyWorkbench.statusResources.memory': 'หน่วยความจำ',
 	'legacyWorkbench.statusResources.cpuTooltip': 'CPU รวม เกิน 100% หมายถึงใช้มากกว่าหนึ่งคอร์',
 	'legacyWorkbench.statusResources.forceCloseTerminalTip':

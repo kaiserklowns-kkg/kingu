@@ -2,18 +2,26 @@
 	// Quick input (VS Code: IQuickInputService + the quick access providers). The typed prefix
 	// picks the provider (quickAccess.ts): '' files with recently opened first, '>' commands,
 	// ':' line, '@' / '@:' symbols in the editor, '#' workspace symbols, 'edt ' open editors,
-	// 'view ' views, '?' help. `quick.pick` shows a custom list instead (createQuickPick).
+	// 'view ' views, '%' text in files, 'task ' tasks, 'debug ' launch configurations, 'term '
+	// terminals, '?' help. `quick.pick` shows a custom list instead (createQuickPick).
 	import { enabledGlobs, hiddenBySibling, isExcluded, siblingClauses } from '#lib/settings/mappings.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { lsp } from '#lib/lsp/lsp.svelte.ts';
-	import { invoke } from '@tauri-apps/api/core';
+	import { Channel, invoke } from '@tauri-apps/api/core';
+	import { searchSettingsFrom } from '#lib/settings/mappings.ts';
+	import type { Task } from '#lib/tasks/taskConfig.ts';
+	import { terminals } from '#lib/terminal/terminals.svelte.ts';
+	import { focusTerminal } from '#lib/terminal/registry.ts';
+	import { terminalEditorKey } from '#lib/terminal/terminalEditor.svelte.ts';
+	import { search } from './search.svelte';
+	import type { FileMatches, SearchEvent } from './searchResults';
 	import { commands, keyOf } from './commands.svelte';
 	import { editors } from './editors.svelte';
 	import FileIcon from './FileIcon.svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { fileIcon, type FileIconSpec } from './fileIcons';
 	import { quick, type PickItem, type Picker } from './quick.svelte';
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { highlightRuns, rank, type Match } from './fuzzy';
 	import { isMac, keyLabel } from './keys';
 	import { flattenSymbols, parseQuickInput, pickSymbols, QUICK_ACCESS_HELP, quickInputTop, rankFiles, SYMBOL_KIND_NAMES, type FlatSymbol } from './quickAccess';
@@ -25,6 +33,7 @@
 	import { editorLabel } from './editorLabel';
 	import { fileOf, isDiffKey } from './scm';
 	import { t } from '#lib/i18n/index.ts';
+	import { taskPickItems } from '#lib/tasks/taskCommands.svelte.ts';
 
 	type Item = {
 		label: string;
@@ -44,12 +53,38 @@
 	};
 
 	let input: HTMLInputElement | undefined = $state();
+
+	// Go Back (VS Code's workbench.action.quickInputBack: ⌃- on macOS, Alt+← elsewhere, over Go Back while the quick input is open).
+	onMount(() =>
+		commands.register({
+			id: 'workbench.action.quickInputBack',
+			title: 'Back',
+			category: 'Quick Input',
+			key: 'alt+left',
+			mac: 'ctrl+-',
+			palette: false,
+			weight: 1,
+			keyWhen: () => quick.visible,
+			run: () => {
+				if (quick.back()) {
+					index = 0;
+					input?.focus();
+				}
+			}
+		})
+	);
 	let files = $state<string[]>([]);
 	let index = $state(0);
 	/** `#` results, fetched as the query changes. */
 	let wsSymbols = $state<{ query: string; list: Awaited<ReturnType<typeof lsp.workspaceSymbols>>; busy: boolean }>({ query: '', list: [], busy: false });
 	/** `@` symbols of the active file. */
 	let docSymbols = $state<{ path: string | null; list: FlatSymbol[] }>({ path: null, list: [] });
+	/** `task `: the tasks to run (VS Code's TasksQuickAccessProvider), loaded when the prefix is typed. */
+	let taskList = $state<{ session: number; busy: boolean; list: Task[]; recent: string[]; run: (task: Task) => void }>({ session: -1, busy: false, list: [], recent: [], run: () => {} });
+	/** `debug `: the launch configurations and compounds (VS Code's StartDebugQuickAccessProvider). */
+	let launchList = $state<{ session: number; busy: boolean; list: { name: string; description: string }[] }>({ session: -1, busy: false, list: [] });
+	/** `%`: text matches in the workspace (VS Code's TextSearchQuickAccess), from Rust's quick search slot. */
+	let textHits = $state<{ query: string; busy: boolean; files: FileMatches[] }>({ query: '', busy: false, files: [] });
 	/** Where the editor was before a symbol preview moved it (restored on cancel). */
 	let previewFrom: { line: number; column: number } | null = null;
 
@@ -114,6 +149,59 @@
 		return () => clearTimeout(timer);
 	});
 
+	// `task `: the task list, once per opening (tasks.json may have changed in between).
+	$effect(() => {
+		if (mode?.kind !== 'task') return;
+		const session = quick.session;
+		if (untrack(() => taskList.session) === session) return;
+		untrack(() => (taskList = { session, busy: true, list: [], recent: [], run: () => {} }));
+		void import('#lib/tasks/tasks.svelte.ts').then(async ({ tasks }) => {
+			const { tasks: list } = await tasks.getTasks({ quiet: true });
+			if (taskList.session === session) taskList = { session, busy: false, list, recent: [...tasks.recent], run: (task) => void tasks.run(task, { attachProblemMatcher: true }) };
+		});
+	});
+
+	// `debug `: the launch configurations, once per opening.
+	$effect(() => {
+		if (mode?.kind !== 'debug') return;
+		const session = quick.session;
+		if (untrack(() => launchList.session) === session) return;
+		untrack(() => (launchList = { session, busy: true, list: [] }));
+		void import('#lib/debug/debug.svelte.ts').then(async ({ debug }) => {
+			const list = await debug.launchItems().catch(() => []);
+			if (launchList.session === session) launchList = { session, busy: false, list };
+		});
+	});
+
+	// `%`: search as you type (debounced), at most 30 files and 10 matches each like VS Code's quick text search.
+	$effect(() => {
+		if (!quick.visible || mode?.kind !== 'text') return;
+		const q = mode.query;
+		untrack(() => (textHits = { query: q, busy: !!q, files: [] }));
+		if (!q) return void invoke('search_quick_cancel').catch(() => {});
+		let live = true;
+		const timer = setTimeout(() => {
+			const found: FileMatches[] = [];
+			const onEvent = new Channel<SearchEvent>();
+			onEvent.onmessage = (ev) => {
+				if (!live) return;
+				if (ev.kind === 'file') {
+					if (found.length < QUICK_TEXT_FILES) found.push({ path: ev.path, matches: ev.matches.slice(0, QUICK_TEXT_PER_FILE) });
+					textHits = { query: q, busy: true, files: [...found] };
+				} else textHits = { query: q, busy: false, files: [...found] };
+			};
+			const options = { query: q, is_regex: false, match_case: false, whole_word: false, include: '', exclude: '', use_ignore_files: settings.get<boolean>('search.useIgnoreFiles'), ...searchSettingsFrom((id) => settings.get(id), true), max_results: QUICK_TEXT_FILES * QUICK_TEXT_PER_FILE * 4 };
+			invoke('search_quick_text', { options, onEvent }).catch(() => {
+				if (live) textHits = { query: q, busy: false, files: [...found] };
+			});
+		}, 200);
+		return () => {
+			live = false;
+			clearTimeout(timer);
+			invoke('search_quick_cancel').catch(() => {});
+		};
+	});
+
 	// ⌃Tab pressed again while the editor switcher is open.
 	$effect(() => {
 		const step = quick.step;
@@ -149,6 +237,34 @@
 		if (pick && onActive) untrack(() => onActive(pick));
 		if (item?.preview) untrack(() => item.preview!());
 	});
+
+	const QUICK_TEXT_FILES = 30;
+	const QUICK_TEXT_PER_FILE = 10;
+
+	/** `term `: the panel's terminals by group (`1`, or `1.2` in a split), then those in the editor area, then Create New Terminal. */
+	function terminalItems(query: string): Item[] {
+		const rows: { label: string; separator?: string; run: () => void }[] = [];
+		const show = (id: number) => {
+			layout.showPanel('terminal');
+			terminals.active = id;
+			focusTerminal(terminals.key(id));
+		};
+		terminals.groups.forEach((g, gi) => {
+			const ids = terminals.ordered().filter((id) => terminals.groupOf(id) === gi);
+			ids.forEach((id, ti) => {
+				const term = terminals.get(id);
+				if (term) rows.push({ label: `${ids.length > 1 ? `${gi + 1}.${ti + 1}` : gi + 1}: ${term.title}`, separator: rows.length ? undefined : 'panel', run: () => show(id) });
+			});
+		});
+		const inEditor = terminals.list.filter((x) => x.inEditor);
+		inEditor.forEach((term, i) => rows.push({ label: `${i + 1}: ${term.title}`, separator: i === 0 ? 'editor' : undefined, run: () => editors.open(terminalEditorKey(term.id), { preview: false }) }));
+		const ranked = query ? rank(query, rows, (r) => r.label, 100).map(({ item, match }) => ({ ...item, separator: undefined, match })) : rows.map((r) => ({ ...r, match: undefined }));
+		return [
+			...ranked.map((r) => ({ label: r.label, separator: r.separator, match: r.match, run: r.run })),
+			{ label: t('workbench.quickAccess.createTerminal'), separator: ranked.length ? ' ' : undefined, run: () => void commands.run('workbench.action.terminal.new') },
+			{ label: t('workbench.quickAccess.createTerminalWithProfile'), run: () => void commands.run('workbench.action.terminal.newWithProfile') }
+		];
+	}
 
 	const VIEWS: [string, string, () => void][] = [
 		['Explorer', 'Side Bar', () => layout.showView('explorer')],
@@ -294,6 +410,69 @@
 					}
 				}));
 			}
+			case 'task': {
+				if (taskList.busy) return [{ label: t('workbench.quickAccess.loading'), run: () => {} }];
+				const list = taskList.list;
+				const byId = new Map(list.map((x) => [x.id, x]));
+				// Recently used, configured, then each provider's tasks (taskCommands.svelte.ts), filtered by label.
+				const picks = taskPickItems(list, taskList.recent, settings.get<boolean>('task.quickOpen.detail'));
+				const shown = m.query ? rank(m.query, picks, (p) => p.label, 200).map(({ item, match }) => ({ pick: { ...item, separator: undefined }, match })) : picks.map((pick) => ({ pick, match: undefined }));
+				if (!shown.length) return [{ label: t('ideTasks.pick.noTasks'), run: () => void commands.run('workbench.action.tasks.configureTaskRunner') }];
+				return shown.map(({ pick, match }) => ({
+					label: pick.label,
+					detail: pick.description,
+					separator: pick.separator,
+					match,
+					run: () => {
+						const task = byId.get(pick.id);
+						if (task) taskList.run(task);
+					}
+				}));
+			}
+			case 'debug': {
+				if (launchList.busy) return [{ label: t('workbench.quickAccess.loading'), run: () => {} }];
+				const ranked = m.query ? rank(m.query, launchList.list, (c) => c.name, 200) : launchList.list.map((item) => ({ item, match: undefined }));
+				const start = (name: string) => void import('#lib/debug/debug.svelte.ts').then(({ debug }) => debug.start({ name }));
+				return [
+					...ranked.map(({ item, match }) => ({ label: item.name, detail: item.description, match, run: () => start(item.name) })),
+					{ label: t('workbench.quickAccess.addConfiguration'), separator: ranked.length ? ' ' : undefined, run: () => void commands.run('debug.addConfiguration') }
+				];
+			}
+			case 'term':
+				return terminalItems(m.query);
+			case 'text': {
+				if (!m.query) return [{ label: t('workbench.quickAccess.textEnterTerm'), run: () => {} }];
+				const rows: Item[] = [];
+				for (const f of textHits.query === m.query ? textHits.files : []) {
+					f.matches.forEach((hit, i) => {
+						const lead = hit.preview.length - hit.preview.trimStart().length;
+						const label = hit.preview.trim();
+						const positions = Array.from({ length: Math.max(0, hit.preview_end - hit.preview_start) }, (_, k) => hit.preview_start - lead + k).filter((p) => p >= 0 && p < label.length);
+						const reveal = { line: hit.line, column: hit.column, endColumn: hit.end_column, focus: true };
+						rows.push({
+							label,
+							detail: String(hit.line),
+							icon: i === 0 ? fileIcon(f.path) : undefined,
+							separator: i === 0 ? fileDetail(f.path, workspace.folders) || f.path : undefined,
+							match: { score: 0, positions },
+							run: () => editors.open(f.path, { preview: settings.get<boolean>('workbench.editor.enablePreviewFromQuickOpen'), reveal }),
+							side: () => editors.openToSide(f.path, reveal)
+						});
+					});
+				}
+				if (!rows.length) return [{ label: textHits.busy ? t('workbench.quickAccess.searching') : t('workbench.quickAccess.textNoResults'), run: () => {} }];
+				// VS Code's "Open in Search View": the same query in Find in Files.
+				rows.push({
+					label: t('workbench.quickAccess.textOpenInSearch'),
+					separator: ' ',
+					run: () => {
+						search.query = m.query;
+						void search.run();
+						void commands.run('workbench.view.search');
+					}
+				});
+				return rows;
+			}
 			case 'files': {
 				// search.quickOpen.includeHistory / search.quickOpen.history.filterSortOrder / search.quickOpen.includeSymbols.
 				const ranked = rankFiles(m.query, files, recentFiles.list.filter((p) => p !== (m.query ? null : editors.active)), 60, {
@@ -319,7 +498,7 @@
 	function accept(i = index, side = false) {
 		const item = items[i];
 		if (item?.fill !== undefined) {
-			quick.value = item.fill;
+			quick.fill(item.fill);
 			index = 0;
 			input?.focus();
 			return;

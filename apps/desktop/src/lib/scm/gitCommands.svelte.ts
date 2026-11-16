@@ -390,6 +390,40 @@ export async function commitInEditor(r: Repository, opts: { amend?: boolean; noV
 // ---------------------------------------------------------------------------------------------
 // Palette commands
 
+/** The active editor's file when git has changes of `side` for it (VS Code's git.stage / git.unstage / git.clean on the active resource). */
+function activeChange(side: 'worktree' | 'index'): { file: string; repo: Repository; untracked: boolean } | null {
+	const a = activeFile();
+	const entry = a ? scm.entry(a.file) : undefined;
+	if (!a || !entry || (entry.conflict && side === 'index') || !entry[side]) return null;
+	return { ...a, untracked: entry.worktree === '?' };
+}
+
+/** VS Code's Discard confirmation: untracked files go to the trash (git.discardUntrackedChangesToTrash) or are deleted. */
+async function confirmDiscard(paths: string[], untracked: boolean): Promise<boolean> {
+	const name = paths.length === 1 ? paths[0].slice(paths[0].lastIndexOf('/') + 1) : t('legacyWorkbench.scmView.nFiles', { count: paths.length });
+	const text = untracked
+		? settings.get<boolean>('git.discardUntrackedChangesToTrash')
+			? t('legacyWorkbench.scmView.discardToTrash', { name })
+			: t('legacyWorkbench.scmView.discardPermanently', { name })
+		: t('legacyWorkbench.scmView.discardChanges', { name });
+	return ask(text, { title: 'Git', kind: 'warning', okLabel: t('scmGit.rowDiscard'), cancelLabel: t('common.cancel') });
+}
+
+/** git.clean on the active file: its working tree changes, after asking. */
+async function discardActive() {
+	const c = activeChange('worktree');
+	if (c && (await confirmDiscard([c.file], c.untracked))) await c.repo.discard([c.file], c.untracked);
+}
+
+/** git.cleanAll (Discard All Changes): every unstaged change of a repository, after asking. */
+async function discardAll(r: Repository) {
+	const resources = [...r.groups.changes, ...r.groups.untracked].filter((x) => !x.entry.conflict);
+	const paths = [...new Set(resources.map((x) => x.entry.path))];
+	if (!paths.length) return;
+	const untracked = resources.some((x) => x.entry.worktree === '?');
+	if (await confirmDiscard(paths, untracked)) await r.discard(paths, untracked);
+}
+
 export function installGitCommands(): () => void {
 	const any = () => scm.repositories.length > 0;
 	const some = (f: (r: Repository) => boolean) => () => scm.repositories.some(f);
@@ -424,6 +458,22 @@ export function installGitCommands(): () => void {
 				const a = activeFile();
 				if (a) return ignore(a.repo, [a.file]);
 			}
+		},
+		// The active editor's file (VS Code's git.stage / git.unstage / git.clean / git.openFile).
+		{ id: 'git.stage', title: 'Git: Stage Changes', when: () => !!activeChange('worktree'), run: () => activeChange('worktree')?.repo.stage([activeFile()!.file]) },
+		{ id: 'git.unstage', title: 'Git: Unstage Changes', when: () => !!activeChange('index'), run: () => activeChange('index')?.repo.unstage([activeFile()!.file]) },
+		{ id: 'git.clean', title: 'Git: Discard Changes', when: () => !!activeChange('worktree') && !scm.entry(activeFile()!.file)?.conflict, run: discardActive },
+		{
+			id: 'git.cleanAll',
+			title: 'Git: Discard All Changes',
+			when: some((r) => r.groups.changes.length + r.groups.untracked.length > 0),
+			run: on(discardAll, (r) => r.groups.changes.length + r.groups.untracked.length > 0)
+		},
+		{
+			id: 'git.openFile',
+			title: 'Git: Open File',
+			when: () => !!editors.active && editors.active !== fileOf(editors.active) && isRepoFile(fileOf(editors.active)),
+			run: () => editors.open(fileOf(editors.active!), { preview: false })
 		},
 		{ id: 'git.compareWithRef', title: 'Git: Compare with Branch or Tag...', when: () => !!activeFile(), run: () => compareWithRef() },
 		{ id: 'git.createWorktree', title: 'Git: Create Worktree...', when: some(hasHead), run: on(createWorktree, hasHead) },

@@ -289,6 +289,35 @@ export const WORKBENCH_SETTINGS: SettingSchema[] = [
 		description: 'ปุ่มที่กดค้างขณะคลิกเพื่อเลือกหลายรายการใน list และ tree ส่วนปุ่มอีกตัวใช้เปิดไฟล์ด้านข้าง (The modifier to be used to add an item in trees and lists to a multi-selection with the mouse (for example in the explorer, open editors and scm view). The \'Open to Side\' mouse gestures - if supported - will adapt such that they do not conflict with the multiselect modifier.)'
 	},
 	{
+		id: 'workbench.list.defaultFindMode',
+		group: 'Workbench',
+		type: 'string',
+		default: 'highlight',
+		enum: ['highlight', 'filter'],
+		enumDescriptions: [
+			'ไฮไลต์รายการที่ตรงกัน และลูกศรขึ้น/ลงจะข้ามไปเฉพาะรายการที่ไฮไลต์ (Highlight elements when searching. Further up and down navigation will traverse only the highlighted elements.)',
+			'ซ่อนรายการที่ไม่ตรงกัน (Filter elements when searching.)'
+		],
+		description: 'โหมดเริ่มต้นของช่องค้นหาใน list และ tree เช่น Explorer (⌥⌘F) (Controls the default find mode for lists and trees in the workbench.)'
+	},
+	{
+		id: 'workbench.list.defaultFindMatchType',
+		group: 'Workbench',
+		type: 'string',
+		default: 'fuzzy',
+		enum: ['fuzzy', 'contiguous'],
+		enumDescriptions: ['จับคู่แบบ fuzzy (Use fuzzy matching when searching.)', 'จับคู่ข้อความที่ติดกัน (Use contiguous matching when searching.)'],
+		description: 'วิธีจับคู่ข้อความเมื่อค้นหาใน list และ tree (Controls the type of matching used when searching lists and trees in the workbench.)'
+	},
+	{
+		id: 'workbench.list.typeNavigationMode',
+		group: 'Workbench',
+		type: 'string',
+		default: 'automatic',
+		enum: ['automatic', 'trigger'],
+		description: 'การพิมพ์เพื่อกระโดดไปยังรายการใน list และ tree: automatic พิมพ์ได้ทันที, trigger ต้องรันคำสั่ง list.triggerTypeNavigation ก่อน (Controls how type navigation works in lists and trees in the workbench. When set to `trigger`, type navigation begins once the `list.triggerTypeNavigation` command is run.)'
+	},
+	{
 		id: 'workbench.list.openMode',
 		group: 'Workbench',
 		type: 'string',

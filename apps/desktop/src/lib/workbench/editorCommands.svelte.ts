@@ -21,13 +21,13 @@ import type { SplitDirection } from './editorGroups';
 import { isNonTextEditor } from '#lib/settings/resources.ts';
 import { t } from '#lib/i18n/index.ts';
 import { panelTerminalFocus } from '#lib/terminal/terminalCommands.svelte.ts';
-import { isMac } from './keys';
 import { isSearchEditorKey } from './searchEditor';
 import { searchEditors } from './searchEditor.svelte.ts';
 import { appMode } from './mode.svelte';
 import { canSplitInGroup } from './editorKind';
 import { setUserSetting } from './layoutControls.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { installEditorNavCommands } from './editorNavCommands.svelte';
 
 
 /** A tab that is a workspace file (or a diff of one), so it has a path to copy or reveal. */
@@ -130,8 +130,9 @@ export function installEditorCommands(): () => void {
 	const hasEditor = () => editors.active !== null;
 	const active = () => editors.active;
 	const group = () => editors.activeGroupId;
-	// ⌥⌘C / ⌥⌘R act on the Explorer's selection there (its own keys) and are Monaco's elsewhere in the editor.
-	const notInExplorerOrEditor = () => !document.activeElement?.closest('[data-context="explorer"], .monaco-editor, [data-search-editor]');
+	// ⌥⌘C / ⌥⌘R act on the Explorer's selection there (its own keys), toggle Match Case / Regex in the
+	// Search view and are Monaco's elsewhere in the editor.
+	const notInExplorerOrEditor = () => !document.activeElement?.closest('[data-context="explorer"], [data-context="search"], .monaco-editor, [data-search-editor]');
 	const unregister = [
 		commands.register({ id: 'workbench.action.closeOtherEditors', title: 'Close Other Editors in Group', category: 'View', mac: 'cmd+alt+t', when: hasEditor, run: () => closeOthers(group(), active()!) }),
 		commands.register({ id: 'workbench.action.closeEditorsToTheRight', title: 'Close Editors to the Right in Group', category: 'View', when: hasEditor, run: () => closeToRight(group(), active()!) }),
@@ -163,8 +164,8 @@ export function installEditorCommands(): () => void {
 				if (!editors.reopenClosed()) status.flash(t('workbench.editorCommands.noClosedEditor'));
 			}
 		}),
-		commands.register({ id: 'workbench.action.nextEditor', title: 'Open Next Editor', category: 'View', key: 'ctrl+pagedown', mac: 'cmd+alt+right', when: hasEditor, keyWhen: () => !isMac || !panelTerminalFocus(), run: () => editors.openNeighbour(1) }),
-		commands.register({ id: 'workbench.action.previousEditor', title: 'Open Previous Editor', category: 'View', key: 'ctrl+pageup', mac: 'cmd+alt+left', when: hasEditor, keyWhen: () => !isMac || !panelTerminalFocus(), run: () => editors.openNeighbour(-1) }),
+		commands.register({ id: 'workbench.action.nextEditor', title: 'Open Next Editor', category: 'View', key: 'ctrl+pagedown', mac: 'cmd+alt+right', when: hasEditor, keyWhen: () => !panelTerminalFocus(), run: () => editors.openNeighbour(1) }),
+		commands.register({ id: 'workbench.action.previousEditor', title: 'Open Previous Editor', category: 'View', key: 'ctrl+pageup', mac: 'cmd+alt+left', when: hasEditor, keyWhen: () => !panelTerminalFocus(), run: () => editors.openNeighbour(-1) }),
 		commands.register({ id: 'workbench.action.nextEditorInGroup', title: 'Open Next Editor in Group', category: 'View', when: hasEditor, run: () => editors.openNeighbour(1, true) }),
 		commands.register({ id: 'workbench.action.previousEditorInGroup', title: 'Open Previous Editor in Group', category: 'View', when: hasEditor, run: () => editors.openNeighbour(-1, true) }),
 		commands.register({
@@ -210,7 +211,8 @@ export function installEditorCommands(): () => void {
 		commands.register({ id: 'copyRelativeFilePath', title: 'Copy Relative Path of Active File', category: 'File', key: 'ctrl+shift+alt+c', mac: 'alt+shift+cmd+c', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => copyRelativePath(active()!) }),
 		commands.register({ id: 'revealFileInOS', title: 'Reveal Active File in Finder', category: 'File', key: 'shift+alt+r', mac: 'alt+cmd+r', keyWhen: notInExplorerOrEditor, when: () => hasEditor() && isFileEditor(active()!), run: () => revealInOS(active()!) }),
 		commands.register({ id: 'workbench.files.action.showActiveFileInExplorer', title: 'Reveal Active File in Explorer View', category: 'File', when: () => hasEditor() && isFileEditor(active()!), run: () => revealInExplorer(active()!) }),
-		...installGroupCommands()
+		...installGroupCommands(),
+		installEditorNavCommands()
 	];
 	return () => unregister.forEach((u) => u());
 }

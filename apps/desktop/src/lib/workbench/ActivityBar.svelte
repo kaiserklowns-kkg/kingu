@@ -69,6 +69,7 @@
 <!-- 48px wide, 48px items, 24px icons, 2px active indicator on the left (VS Code activitybarPart);
      at the top of the side bar: 16px icons, the indicator below. -->
 <nav
+	data-part="activitybar"
 	aria-label="Activity Bar"
 	class={vertical ? RAIL : 'flex h-full items-center'}
 	style:width={vertical ? `${metrics.width}px` : undefined}

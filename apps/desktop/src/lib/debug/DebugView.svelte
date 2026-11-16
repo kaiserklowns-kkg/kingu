@@ -18,6 +18,7 @@
 	import DebugToolbar from './DebugToolbar.svelte';
 	import type { StackFrame, Variable } from './protocol.ts';
 	import { countSources, scriptTree, type ScriptNode } from './loadedScripts.ts';
+	import { debugRowAction, moveRow, type DebugRowAction, type DebugRowKind } from './debugViewKeys.ts';
 
 	type Section = 'variables' | 'watch' | 'stack' | 'scripts' | 'breakpoints';
 	// Loaded Scripts starts collapsed (VS Code hides it until asked for).
@@ -168,8 +169,28 @@
 		});
 	}
 
+	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	/** A focused row's keys (debugViewKeys.ts): arrows move within its list, the rest run `acts`. */
+	function onRowKey(e: KeyboardEvent, kind: DebugRowKind, acts: Partial<Record<DebugRowAction, () => unknown>>) {
+		if (e.target !== e.currentTarget) return;
+		const action = debugRowAction(kind, e, MAC);
+		if (!action) return;
+		const row = e.currentTarget as HTMLElement;
+		if (action === 'next' || action === 'previous' || action === 'first' || action === 'last') {
+			const list = [...(row.closest('section')?.querySelectorAll<HTMLElement>(`[data-debug-row="${row.dataset.debugRow}"]`) ?? [])];
+			list[moveRow(action, list.indexOf(row), list.length)]?.focus();
+		} else {
+			const run = acts[action];
+			if (!run) return;
+			void run();
+		}
+		e.preventDefault();
+		e.stopPropagation();
+	}
+	const copy = (text: string) => void navigator.clipboard.writeText(text);
+
 	const fileName = (rel: string) => rel.slice(rel.lastIndexOf('/') + 1);
-	const ROW = 'flex h-(--kg-row-height) items-center leading-(--kg-row-height) hover:bg-(--vscode-list-hoverBackground)';
+	const ROW = 'flex h-(--kg-row-height) items-center leading-(--kg-row-height) hover:bg-(--vscode-list-hoverBackground) focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-(--vscode-list-focusOutline,var(--vscode-focusBorder)) focus:bg-(--vscode-list-inactiveSelectionBackground)';
 	const ICON_BUTTON = 'grid size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)';
 	const BADGE = 'shrink-0 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] leading-4 text-(--vscode-badge-foreground)';
 	const DIM = 'truncate text-xs text-(--vscode-descriptionForeground)';
@@ -209,7 +230,15 @@
 		{@const lazy = lazyValue(raw, model?.variables[raw.variablesReference])}
 		{@const v = lazy ? { ...lazy, name: raw.name, evaluateName: raw.evaluateName } : raw}
 		{@const children = v.variablesReference > 0 && expanded[key] ? model?.variables[v.variablesReference] : undefined}
-		<div class={ROW} style:padding-left="{depth * 8 + 4}px" title={v.type ? `${v.name}: ${v.type}` : v.name} role="treeitem" aria-selected="false" tabindex="-1" oncontextmenu={(e) => variableMenu(e, v, parentRef)}>
+		<div class={ROW} style:padding-left="{depth * 8 + 4}px" title={v.type ? `${v.name}: ${v.type}` : v.name} role="treeitem" aria-selected="false" tabindex="0" data-debug-row="variables"
+			oncontextmenu={(e) => variableMenu(e, v, parentRef)}
+			onkeydown={(e) =>
+				onRowKey(e, 'variable', {
+					edit: () => caps.supportsSetVariable && debug.stopped && debug.setVariable(parentRef, v.name, v.value),
+					copy: () => copy(v.value),
+					expand: () => v.variablesReference > 0 && lazy !== null && !expanded[key] && toggleVar(key, v.variablesReference),
+					collapse: () => expanded[key] && toggleVar(key, v.variablesReference)
+				})}>
 			{#if v.variablesReference > 0 && lazy !== null}
 				<button aria-label={expanded[key] ? 'Collapse' : 'Expand'} class="grid size-4 shrink-0 place-items-center" onclick={() => toggleVar(key, v.variablesReference)}>
 					<Icon name={expanded[key] ? 'chevronDown' : 'chevronRight'} size={14} />
@@ -289,7 +318,14 @@
 		{#if open.watch}
 			{#each debug.watches as w (w)}
 				{@const r = debug.watchResults[w]}
-				<div class={['group/row', ROW, 'pr-2 pl-5']}>
+				<div
+					class={['group/row', ROW, 'pr-2 pl-5']}
+					role="option"
+					aria-selected="false"
+					tabindex="0"
+					data-debug-row="watch"
+					onkeydown={(e) => onRowKey(e, 'watch', { edit: () => debug.editWatch(w), remove: () => debug.removeWatch(w), copy: () => r && copy(r.value) })}
+				>
 					<span class="shrink-0">{w}</span>
 					<span class="shrink-0 pr-1">:</span>
 					<span class={['min-w-0 flex-1 truncate font-mono text-xs', r?.error ? 'text-(--vscode-errorForeground)' : 'text-(--vscode-descriptionForeground)']}>{r ? r.value : debug.stopped ? '…' : 'not available'}</span>
@@ -402,7 +438,16 @@
 				<div
 					class={['group/row', ROW, 'gap-1.5 pr-2 pl-4', (unsupported || answer === null || answer?.verified === false) && 'opacity-60']}
 					title={unsupported ? t('debugger.bp.functionUnsupported') : (answer?.message ?? (f.condition ? t('debugger.bp.condition', { condition: f.condition }) : t('debugger.bp.function')))}
-					role="listitem"
+					role="option"
+					aria-selected="false"
+					tabindex="0"
+					data-debug-row="breakpoints"
+					onkeydown={(e) =>
+						onRowKey(e, 'functionBreakpoint', {
+							toggle: () => debug.setFunctionBreakpointEnabled(f.name, !f.enabled),
+							edit: () => debug.editFunctionCondition(f.name),
+							remove: () => debug.removeFunctionBreakpoint(f.name)
+						})}
 				>
 					<input type="checkbox" aria-label={t('debugger.bp.function')} checked={f.enabled} onchange={(e) => debug.setFunctionBreakpointEnabled(f.name, e.currentTarget.checked)} />
 					<Icon name="code" size={12} />
@@ -413,7 +458,15 @@
 				</div>
 			{/each}
 			{#each debug.dataBreakpoints as d (d.dataId + d.accessType)}
-				<div class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']} title={t('debugger.bp.data')}>
+				<div
+					class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']}
+					title={t('debugger.bp.data')}
+					role="option"
+					aria-selected="false"
+					tabindex="0"
+					data-debug-row="breakpoints"
+					onkeydown={(e) => onRowKey(e, 'dataBreakpoint', { toggle: () => debug.setDataBreakpointEnabled(d.dataId, !d.enabled), remove: () => debug.removeDataBreakpoint(d.dataId) })}
+				>
 					<input type="checkbox" aria-label={t('debugger.bp.data')} checked={d.enabled} onchange={(e) => debug.setDataBreakpointEnabled(d.dataId, e.currentTarget.checked)} />
 					<Icon name="crosshair" size={12} />
 					<span class="min-w-0 flex-1 truncate">{d.description}</span>
@@ -422,7 +475,20 @@
 				</div>
 			{/each}
 			{#each debug.instructionBreakpoints as b (b.address)}
-				<div class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']} title={t('debugExtras.bp.instruction')}>
+				<div
+					class={['group/row', ROW, 'gap-1.5 pr-2 pl-4']}
+					title={t('debugExtras.bp.instruction')}
+					role="option"
+					aria-selected="false"
+					tabindex="0"
+					data-debug-row="breakpoints"
+					onkeydown={(e) =>
+						onRowKey(e, 'instructionBreakpoint', {
+							toggle: () => debug.setInstructionBreakpointEnabled(b.address, !b.enabled),
+							open: () => debug.openDisassembly(),
+							remove: () => debug.removeInstructionBreakpoint(b.address)
+						})}
+				>
 					<input type="checkbox" aria-label={t('debugExtras.bp.instruction')} checked={b.enabled} onchange={(e) => debug.setInstructionBreakpointEnabled(b.address, e.currentTarget.checked)} />
 					<Icon name="code" size={12} />
 					<button class="min-w-0 flex-1 truncate text-left font-mono text-xs" onclick={() => debug.openDisassembly()}>{b.address}</button>
@@ -443,7 +509,19 @@
 					{@const b = row.item}
 					{@const tree = row.depth > 0}
 					{@const detail = breakpointMessage(b)}
-					<div class={['group/row', ROW, 'gap-1.5 pr-2', tree ? 'pl-8' : 'pl-4', !debug.breakpointsActivated && 'opacity-60']} role="listitem" oncontextmenu={(e) => breakpointMenu(e, rel, b.line)}>
+					<div class={['group/row', ROW, 'gap-1.5 pr-2', tree ? 'pl-8' : 'pl-4', !debug.breakpointsActivated && 'opacity-60']} role="option"
+						aria-selected="false"
+						tabindex="0"
+						data-debug-row="breakpoints"
+						oncontextmenu={(e) => breakpointMenu(e, rel, b.line)}
+						onkeydown={(e) =>
+							onRowKey(e, 'breakpoint', {
+								toggle: () => debug.setBreakpointEnabled(rel, b.line, !b.enabled),
+								open: () => editors.openAt(rel, b.line),
+								openToSide: () => editors.openToSide(rel, { line: b.line, column: 1, focus: true }),
+								edit: () => debug.editBreakpoint(rel, b.line),
+								remove: () => debug.removeBreakpoint(rel, b.line)
+							})}>
 						<input type="checkbox" aria-label="Enable breakpoint" checked={b.enabled} onchange={(e) => debug.setBreakpointEnabled(rel, b.line, e.currentTarget.checked)} />
 						<button class="flex min-w-0 flex-1 items-center gap-1.5 text-left" title={detail ? `${rel}:${b.line}\n${detail}` : `${rel}:${b.line}`} onclick={() => editors.openAt(rel, b.line)}>
 							{#if !tree}

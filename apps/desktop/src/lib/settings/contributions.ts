@@ -10,6 +10,7 @@ import { allThemes, findTheme } from '#lib/theme/themes.ts';
 import { SCHEMA } from './registry';
 import { settings, USER_SETTINGS_KEY, WORKSPACE_SETTINGS_PATH } from './settings.svelte';
 import { systemSettings } from './systemSettings.svelte';
+import { DEFAULT_KEYBINDINGS_KEY, DEFAULT_SETTINGS_KEY } from './defaultsJson.ts';
 import { USER_KEYBINDINGS_KEY } from '#lib/workbench/keybindings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { themeSettingFor } from '#lib/workbench/workbenchOptions.ts';
@@ -80,6 +81,13 @@ async function configureLanguageSettings() {
 	editors.open(USER_SETTINGS_KEY, { preview: false });
 }
 
+/** VS Code's openSettings argument: a query string, or `{ query }`. */
+export function settingsQueryArg(args: unknown): string | undefined {
+	if (typeof args === 'string') return args;
+	if (args && typeof args === 'object' && typeof (args as { query?: unknown }).query === 'string') return (args as { query: string }).query;
+	return undefined;
+}
+
 export function registerSettingsCommands(): () => void {
 	const all = [
 		commands.register({
@@ -88,7 +96,26 @@ export function registerSettingsCommands(): () => void {
 			category: 'Preferences',
 			key: 'cmd+,',
 			// workbench.settings.editor: the settings page, or settings.json like VS Code's JSON editor.
-			run: () => (settings.get('workbench.settings.editor') === 'json' ? commands.run('workbench.action.openSettingsJson') : systemSettings.show())
+			// A keybindings.json `args` (a string, or `{ "query": … }`) opens the page with that search.
+			run: (args?: unknown) => {
+				if (settings.get('workbench.settings.editor') === 'json') return commands.run('workbench.action.openSettingsJson');
+				const query = settingsQueryArg(args);
+				if (query === undefined) systemSettings.show();
+				else systemSettings.open({ query });
+			}
+		}),
+		commands.register({
+			id: 'workbench.action.openGlobalSettings',
+			title: 'Open User Settings',
+			category: 'Preferences',
+			run: () => systemSettings.open({ scope: 'user' })
+		}),
+		commands.register({
+			id: 'workbench.action.openWorkspaceSettings',
+			title: 'Open Workspace Settings',
+			category: 'Preferences',
+			when: () => workspace.root !== null,
+			run: () => systemSettings.open({ scope: 'workspace' })
 		}),
 		commands.register({
 			id: 'workbench.action.openSettingsJson',
@@ -120,10 +147,22 @@ export function registerSettingsCommands(): () => void {
 			category: 'Preferences',
 			run: () => (systemSettings.close(), editors.open(USER_KEYBINDINGS_KEY, { preview: false }))
 		}),
+		commands.register({
+			id: 'workbench.action.openRawDefaultSettings',
+			title: 'Open Default Settings (JSON)',
+			category: 'Preferences',
+			run: () => (systemSettings.close(), editors.open(DEFAULT_SETTINGS_KEY, { preview: false }))
+		}),
+		commands.register({
+			id: 'workbench.action.openDefaultKeybindingsFile',
+			title: 'Open Default Keyboard Shortcuts (JSON)',
+			category: 'Preferences',
+			run: () => (systemSettings.close(), editors.open(DEFAULT_KEYBINDINGS_KEY, { preview: false }))
+		}),
 		commands.register({ id: 'workbench.action.selectTheme', title: 'Color Theme', category: 'Preferences', key: 'cmd+k cmd+t', run: pickColorTheme }),
 		commands.register({ id: 'workbench.action.zoomIn', title: 'Zoom In', category: 'View', key: 'cmd+=', run: () => zoom(1) }),
 		commands.register({ id: 'workbench.action.zoomOut', title: 'Zoom Out', category: 'View', key: 'cmd+-', run: () => zoom(-1) }),
-		commands.register({ id: 'workbench.action.zoomReset', title: 'Reset Zoom', category: 'View', key: 'cmd+0', run: () => zoom(null) })
+		commands.register({ id: 'workbench.action.zoomReset', title: 'Reset Zoom', category: 'View', key: 'cmd+numpad0', run: () => zoom(null) })
 	];
 	return () => all.forEach((u) => u());
 }

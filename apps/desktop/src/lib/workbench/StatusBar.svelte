@@ -14,6 +14,7 @@
 	import { statusEntries } from './statusEntries.svelte';
 	import { workspaceTrust } from './workspaceTrust.svelte';
 	import { commands } from './commands.svelte';
+	import { focusStatusBarItem } from './layoutControls.svelte';
 	import { syncItem } from './scmRemote';
 	import { textFiles } from './textFileService.svelte';
 	import { statusItemShown } from '#lib/debug/debugSettings.ts';
@@ -166,8 +167,16 @@
 </script>
 
 <!-- 22px, items 22px line-height (VS Code statusbarPart). -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions (↑ / ↓ move between its buttons) -->
 <footer
+	data-part="statusbar"
 	bind:this={footer}
+	onkeydown={(e) => {
+		// VS Code's secondary keys of Focus Previous / Next Status Bar Item (← / → are commands).
+		if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+		e.preventDefault();
+		focusStatusBarItem(e.key === 'ArrowUp' ? 'previous' : 'next');
+	}}
 	oncontextmenu={(e) => (e.preventDefault(), (menu = { x: e.clientX, y: Math.max(4, e.clientY - 4 - MENU_HEIGHT) }))}
 	class={[
 		'flex h-(--kg-statusbar-height) shrink-0 items-center overflow-hidden whitespace-nowrap text-xs leading-(--kg-statusbar-height)',

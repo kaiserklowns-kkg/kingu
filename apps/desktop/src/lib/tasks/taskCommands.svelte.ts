@@ -16,6 +16,8 @@ import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { taskFolderLabel } from './folders.ts';
 import { groupTasks, type Task } from './taskConfig.ts';
+import { taskArg, USER_TASKS_KEY } from './userTasks.ts';
+import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { tasks } from './tasks.svelte.ts';
 
 const CONFIGURE = '\0configure';
@@ -58,7 +60,13 @@ async function pickTask(placeholder: string, list: Task[], opts: { recent?: bool
 }
 
 /** Run Task. */
-async function runTaskCommand() {
+async function runTaskCommand(args?: unknown) {
+	const ref = taskArg(args);
+	if (ref !== undefined) {
+		const { task } = await tasks.find(ref);
+		if (task) return void (await tasks.run(task, { attachProblemMatcher: true }));
+		notifications.warn(t('ideTasks.byName.notFound', { name: typeof ref === 'string' ? ref : JSON.stringify(ref) }));
+	}
 	const { tasks: list } = await tasks.getTasks();
 	const picked = await pickTask(t('ideTasks.pick.task'), list, { recent: true, configure: t('ideTasks.pick.noTasks') });
 	if (picked === 'configure') return configureTask();
@@ -178,6 +186,7 @@ export function installTaskCommands(): () => void {
 		commands.register({ id: 'workbench.action.tasks.configureTaskRunner', title: 'Configure Task', category: 'Tasks', when: ide, run: configureTask }),
 		commands.register({ id: 'workbench.action.tasks.configureDefaultBuildTask', title: 'Configure Default Build Task', category: 'Tasks', when: ide, run: () => configureDefault('build') }),
 		commands.register({ id: 'workbench.action.tasks.configureDefaultTestTask', title: 'Configure Default Test Task', category: 'Tasks', when: ide, run: () => configureDefault('test') }),
+		commands.register({ id: 'workbench.action.tasks.openUserTasks', title: 'Open User Tasks', category: 'Tasks', when: ide, run: () => editors.open(USER_TASKS_KEY, { preview: false }) }),
 		commands.register({ id: 'workbench.action.tasks.openWorkspaceFileTasks', title: 'Open Workspace Tasks', category: 'Tasks', when: ide, run: () => tasks.openTasksFile() }),
 		commands.register({ id: 'workbench.action.tasks.showLog', title: 'Show Task Log', category: 'Tasks', run: () => tasks.showLog() }),
 		commands.register({ id: 'workbench.action.tasks.manageAutomaticRunning', title: 'Disallow Automatic Tasks', category: 'Tasks', when: ide, run: () => tasks.disallowAutomatic().then(() => status.flash(t('ideTasks.auto.disallowed'))) })

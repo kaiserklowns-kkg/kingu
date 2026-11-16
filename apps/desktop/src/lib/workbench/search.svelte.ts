@@ -12,12 +12,17 @@ import { editors } from './editors.svelte';
 import { status } from './status.svelte';
 import {
 	folderKey,
+	flattenResults,
 	rebaseMatches,
 	seedFromSelection,
+	sortResults,
+	stepMatch,
+	type ResultSortOrder,
 	startsCollapsed,
 	type FileMatches,
 	type ReplaceEdit,
 	type ReplaceResult,
+	type ResultRow,
 	type SearchEvent,
 	type SearchOptions,
 	type TextMatch,
@@ -85,6 +90,8 @@ class Search {
 	error = $state('');
 	/** The view focuses (and selects) its input when this is set, then clears it. */
 	focusRequested = $state(false);
+	/** The match row F4 / ⇧F4 last went to (its ResultRow key); the view selects it. */
+	activeMatch = $state<string | null>(null);
 
 	/** The options the current results came from (the query box may have changed since). */
 	searched = $state.raw<SearchOptions | null>(null);
@@ -170,6 +177,7 @@ class Search {
 		const generation = ++this.#generation;
 		this.files = [];
 		this.collapsed.clear();
+		this.activeMatch = null;
 		this.done = null;
 		this.error = '';
 		this.searched = this.query ? this.options() : null;
@@ -300,6 +308,33 @@ class Search {
 		clientLog('info', `${summary}${problems.length ? ` (skipped: ${problems.join('; ')})` : ''}`);
 	}
 
+	/** The row with keyboard focus in the results tree (set by the view; null when none). */
+	focusedRow: () => ResultRow | null = () => null;
+
+	/** The results a row stands for: one match, a file's matches, or every file under a folder. */
+	scopeOf(row: ResultRow): FileMatches[] {
+		if (row.kind === 'match') return [{ ...row.file, matches: [row.match] }];
+		if (row.kind === 'file') return [row.file];
+		return this.files.filter((f) => f.path.startsWith(`${row.path}/`));
+	}
+
+	/** Dismiss (VS Code's search.action.remove, ⌘⌫): drops the row's results from the view; the files are untouched. */
+	dismiss(row: ResultRow) {
+		const gone = new Map(this.scopeOf(row).map((f) => [f.path, new Set<TextMatch>(f.matches)]));
+		this.files = this.files.flatMap((f) => {
+			const drop = gone.get(f.path);
+			if (!drop) return [f];
+			const rest = f.matches.filter((m) => !drop.has(m));
+			return rest.length ? [{ ...f, matches: rest }] : [];
+		});
+		if (this.done) this.done = { ...this.done, files: this.files.length, matches: this.files.reduce((n, f) => n + f.matches.length, 0) };
+	}
+
+	/** Replace (⇧⌘1): the focused match, or every match of the focused file or folder (VS Code's Replace All in File / Folder). */
+	replaceRow(row: ResultRow) {
+		return this.replace(this.scopeOf(row));
+	}
+
 	clear() {
 		this.query = '';
 		void this.run();
@@ -313,6 +348,28 @@ class Search {
 			void this.run();
 		}
 		this.focusRequested = true;
+	}
+
+	/**
+	 * F4 / ⇧F4 (VS Code's Focus Next / Previous Search Result): the next or previous match in the
+	 * view's order, wrapping round, expanded and shown in a preview editor (focus stays put).
+	 */
+	stepMatch(delta: 1 | -1): boolean {
+		const sorted = sortResults(this.files, settings.get<ResultSortOrder>('search.sortOrder'));
+		const row = stepMatch(flattenResults(sorted, new Set(), this.viewMode), this.activeMatch, delta);
+		if (!row) return false;
+		this.collapsed.delete(row.file.path);
+		for (let dir = row.file.path; dir.includes('/'); ) this.collapsed.delete(folderKey((dir = dir.slice(0, dir.lastIndexOf('/')))));
+		this.activeMatch = row.key;
+		const { line, column, end_column } = row.match;
+		editors.open(row.file.path, { preview: true, reveal: { line, column, endColumn: end_column, focus: false } });
+		return true;
+	}
+
+	/** Flips a query option from its key (⌥⌘C / ⌥⌘W / ⌥⌘R) and searches again; Preserve Case only affects Replace. */
+	toggleOption(option: 'matchCase' | 'wholeWord' | 'isRegex' | 'preserveCase') {
+		this[option] = !this[option];
+		if (option !== 'preserveCase') void this.run();
 	}
 
 	toggleCollapsed(path: string) {

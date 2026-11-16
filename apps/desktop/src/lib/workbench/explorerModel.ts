@@ -102,3 +102,29 @@ export function autoRevealOf(setting: unknown, excluded: boolean): { reveal: boo
 	if (excluded || (setting !== true && setting !== 'focusNoScroll')) return { reveal: false, scroll: false };
 	return { reveal: true, scroll: setting === true };
 }
+
+/** What an Explorer undo step undoes, for explorer.confirmUndo (VS Code's confirmBeforeUndo per operation). */
+export type UndoKind = 'create' | 'copy' | 'other';
+
+/**
+ * explorer.confirmUndo: VS Code always asks before undoing a New File / Folder, asks before
+ * undoing a paste or copy unless `light`, and asks before anything else only when `verbose`.
+ */
+export function undoNeedsConfirm(level: unknown, kind: UndoKind): boolean {
+	if (kind === 'create') return true;
+	if (level === 'verbose') return true;
+	return kind === 'copy' && level !== 'light';
+}
+
+/** VS Code's type navigation (listWidget TypeNavigationController): the first label from `start`
+ *  (after it when `skipStart`) that starts with `typed`, ignoring case, wrapping round. -1 when none. */
+export function typeNavigate(labels: readonly string[], start: number, typed: string, skipStart: boolean): number {
+	const word = typed.toLowerCase();
+	if (!word || !labels.length) return -1;
+	const from = Math.max(0, start);
+	for (let i = 0; i < labels.length; i++) {
+		const index = (from + i + (skipStart ? 1 : 0)) % labels.length;
+		if (labels[index].toLowerCase().startsWith(word)) return index;
+	}
+	return -1;
+}

@@ -30,7 +30,7 @@
 	const titles = $derived<Record<string, string>>({ explorer: 'Explorer', search: 'Search', scm: 'Source Control', debug: 'Run and Debug', testing: 'Testing', snaps: 'Snaps', agents: 'Agents', vault: t('vault.title'), artifacts: t('artifacts.title'), [layout.sideView]: snapView?.view.name ?? '' });
 </script>
 
-<aside aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
+<aside data-part="sidebar" aria-label={titles[layout.sideView]} class="flex h-full flex-col bg-(--vscode-sideBar-background) text-(--vscode-sideBar-foreground)">
 	{#if location === 'top'}
 		<!-- `workbench.activityBar.location: top`: the view switcher is the side bar's header. -->
 		<div class="flex h-(--kg-part-title-height) shrink-0 items-center px-1.5 text-(--vscode-sideBarTitle-foreground)">

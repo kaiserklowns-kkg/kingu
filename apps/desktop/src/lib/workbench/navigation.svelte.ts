@@ -15,6 +15,20 @@ class Navigation {
 		this.#sync();
 	}
 
+	/** The last place text was edited (VS Code's EditorNavigationStack for edits, Go to Last Edit Location). */
+	#lastEdit: Location | null = null;
+	canGoToLastEdit = $state(false);
+
+	recordEdit(loc: Location) {
+		this.#lastEdit = loc;
+		this.canGoToLastEdit = true;
+	}
+
+	/** workbench.action.navigateToLastEditLocation (⌘K ⌘Q). */
+	toLastEdit() {
+		this.#show(this.#lastEdit);
+	}
+
 	back() {
 		this.#show(this.#history.back(this.#inScope()));
 	}
@@ -35,6 +49,10 @@ class Navigation {
 
 	/** Forgets the locations of files that cannot be shown any more. */
 	remove(match: (path: string) => boolean) {
+		if (this.#lastEdit && match(this.#lastEdit.path)) {
+			this.#lastEdit = null;
+			this.canGoToLastEdit = false;
+		}
 		this.#history.remove(match);
 		this.#sync();
 	}

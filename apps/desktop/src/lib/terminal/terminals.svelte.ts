@@ -10,7 +10,7 @@ import { quick } from '#lib/workbench/quick.svelte.ts';
 import { layout } from '#lib/workbench/layout.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { confirmKill } from './confirmKill.ts';
-import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PaneNode, type PanePath, type SplitDirection } from './paneLayout.ts';
+import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, resizePaneBy, setRatio, splitPane, type PaneNode, type PanePath, type ResizeDirection, type SplitDirection } from './paneLayout.ts';
 import { killPty } from './pty.ts';
 import { focusTerminal, type TaskSpawn } from './registry.ts';
 import { hideOnStartup, panelKey, parsePanelTerminals, persist, restore, storeName, withoutRun } from './sessions.ts';
@@ -54,9 +54,15 @@ class Terminals {
 	tag = $state<string | null>(null);
 	#seq = $state(0);
 	#started = false;
+	/** Terminal ids, most recently active first: Focus Next / Previous lands on a group's last focused terminal (VS Code's group activeInstance). */
+	#recent: number[] = [];
 
 	constructor() {
 		$effect.root(() => {
+			$effect(() => {
+				const id = this.active;
+				this.#recent = [id, ...this.#recent.filter((x) => x !== id)].slice(0, 100);
+			});
 			// Showing the terminal view with no terminal (the last one closed) starts one, like VS Code.
 			$effect(() => {
 				const shown = this.tag !== null && layout.panelVisible && layout.panelTab === 'terminal';
@@ -246,6 +252,45 @@ class Terminals {
 		if (order.length < 2) return;
 		this.active = Number(cyclePane(order, String(this.active), step));
 		focusTerminal(this.key(this.active));
+	}
+
+	/** Focus Next / Previous Terminal (⇧⌘] / ⇧⌘[): the next or previous terminal group, wrapping; its last focused terminal gets focus. */
+	focusGroup(step: 1 | -1) {
+		const g = this.groupOf(this.active);
+		if (!this.groups.length) return;
+		const next = this.groups[(((g < 0 ? 0 : g + step) % this.groups.length) + this.groups.length) % this.groups.length];
+		const ids = leaves(next).map(Number);
+		const rank = (id: number) => {
+			const i = this.#recent.indexOf(id);
+			return i < 0 ? Infinity : i;
+		};
+		this.active = ids.reduce((best, id) => (rank(id) < rank(best) ? id : best), ids[0]);
+		focusTerminal(this.key(this.active));
+	}
+
+	/**
+	 * Resize Pane Left / Right / Up / Down (⌃⌘← → ↑ ↓; VS Code's terminalGroup.resizePane): four
+	 * cells at a time. The divider beside the active terminal moves on the arrow's axis; without one
+	 * there the panel itself grows or shrinks (bottom panel: up grows it; side panel: towards the editor grows it).
+	 */
+	resizePane(direction: ResizeDirection) {
+		const g = this.groupOf(this.active);
+		if (g < 0) return;
+		const font = settings.get<number>('terminal.integrated.fontSize') || 12;
+		const lineHeight = settings.get<number>('terminal.integrated.lineHeight') || 1;
+		const horizontal = direction === 'left' || direction === 'right';
+		const px = 4 * (horizontal ? Math.round(font * 0.6) : Math.ceil(font * lineHeight * 1.2));
+		const at = settings.get<string>('workbench.panel.defaultLocation');
+		const beside = at === 'left' || at === 'right';
+		const width = beside ? layout.panelWidth : Math.max(1, window.innerWidth - (layout.sidebarVisible ? layout.sidebarWidth : 0) - (layout.auxVisible ? layout.auxWidth : 0));
+		const height = beside ? Math.max(1, window.innerHeight - 100) : Math.max(1, layout.panelHeight - 35);
+		const tree = resizePaneBy(this.groups[g], String(this.active), direction, px, { w: width, h: height });
+		if (tree) {
+			this.groups = this.groups.map((t, i) => (i === g ? tree : t));
+			return;
+		}
+		if (beside && horizontal) layout.panelWidth = Math.max(160, layout.panelWidth + ((at === 'right') === (direction === 'left') ? px : -px));
+		else if (!beside && !horizontal) layout.panelHeight = Math.max(80, layout.panelHeight + ((at === 'top') !== (direction === 'up') ? px : -px));
 	}
 
 	/** The active terminal's group has more than one terminal. */

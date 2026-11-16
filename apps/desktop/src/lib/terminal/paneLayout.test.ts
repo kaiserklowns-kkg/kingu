@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cyclePane, dividers, equalize, hasLeaf, leaf, leaves, paneRects, parsePaneNode, removePane, setRatio, splitPane, type PaneNode } from './paneLayout.ts';
+import { cyclePane, dividers, equalize, hasLeaf, leaf, leaves, paneRects, parsePaneNode, removePane, resizePaneBy, setRatio, splitPane, type PaneNode } from './paneLayout.ts';
 
 const valid = (id: string) => /^t\d+$/.test(id);
 
@@ -63,4 +63,29 @@ test('persisted trees are vetted', () => {
 	expect(parsePaneNode({ type: 'split', direction: 'vertical', first: leaf('t1'), second: leaf('t1') }, valid)).toBeNull();
 	expect(parsePaneNode({ type: 'split', direction: 'vertical', first: leaf('t1'), second: leaf('t2'), ratio: 7 }, valid)).toEqual(splitPane(leaf('t1'), 't1', 't2', 'vertical'));
 	expect(parsePaneNode(null, valid)).toBeNull();
+});
+
+describe('Resize Pane Left / Right / Up / Down (⌃⌘← → ↑ ↓)', () => {
+	const size = { w: 1000, h: 400 };
+	test('moves the divider next to the pane on the arrow\'s axis', () => {
+		const tree = splitPane(leaf('1'), '1', '2', 'vertical');
+		const right = resizePaneBy(tree, '1', 'right', 100, size)!;
+		expect(right.type === 'split' && right.ratio).toBeCloseTo(0.6);
+		// The last pane moves the same divider: left grows it.
+		const left = resizePaneBy(tree, '2', 'left', 100, size)!;
+		expect(left.type === 'split' && left.ratio).toBeCloseTo(0.4);
+	});
+
+	test('the nearest split on that axis, skipping one across it', () => {
+		const tree: PaneNode = { type: 'split', direction: 'vertical', ratio: 0.5, first: leaf('1'), second: { type: 'split', direction: 'horizontal', ratio: 0.5, first: leaf('2'), second: leaf('3') } };
+		const down = resizePaneBy(tree, '2', 'down', 40, size)!;
+		expect(down.type === 'split' && down.second.type === 'split' && down.second.ratio).toBeCloseTo(0.6);
+		const left = resizePaneBy(tree, '3', 'left', 50, size)!;
+		expect(left.type === 'split' && left.ratio).toBeCloseTo(0.45);
+	});
+
+	test('null without a split on that axis (the panel resizes instead)', () => {
+		expect(resizePaneBy(leaf('1'), '1', 'left', 10, size)).toBeNull();
+		expect(resizePaneBy(splitPane(leaf('1'), '1', '2', 'vertical'), '1', 'up', 10, size)).toBeNull();
+	});
 });

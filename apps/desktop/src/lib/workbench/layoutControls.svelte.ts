@@ -7,9 +7,12 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { commands } from './commands.svelte';
 import { EDITOR_LAYOUTS } from './editorGroups';
 import { editors } from './editors.svelte';
+import { editorKeyFor } from './externalFiles';
+import { workspace } from './workspace.svelte';
 import { isMac } from './keys';
 import { menuBarToggled } from './workbenchOptions';
 import { layout } from './layout.svelte';
+import { panelSize } from './panelSize.svelte';
 import { appMode } from './mode.svelte';
 import { quick, type PickItem } from './quick.svelte';
 import { status } from './status.svelte';
@@ -103,6 +106,59 @@ export function customizeLayout(activeId?: string) {
 
 const ide = () => !appMode.isAgents;
 
+type Part = 'editor' | 'panel' | 'auxiliarybar' | 'statusbar' | 'activitybar' | 'sidebar';
+/** VS Code's Focus Next Part order (navigationActions.ts findVisibleNeighbour). */
+const PART_ORDER: Part[] = ['editor', 'panel', 'auxiliarybar', 'statusbar', 'activitybar', 'sidebar'];
+const partRoot = (part: Part) => document.querySelector<HTMLElement>(`[data-part="${part}"], .part.${part}`);
+const partShown = (part: Part) => {
+	const el = partRoot(part);
+	return !!el && el.offsetParent !== null && el.getClientRects().length > 0;
+};
+
+/** Focus Next / Previous Part (F6 / ⇧F6): the next visible part after the focused one, the editor when none has focus. */
+function focusNeighbourPart(step: 1 | -1) {
+	const active = document.activeElement;
+	const current = PART_ORDER.find((p) => partRoot(p)?.contains(active)) ?? null;
+	let next: Part = 'editor';
+	if (current) {
+		let i = PART_ORDER.indexOf(current);
+		for (let n = 0; n < PART_ORDER.length; n++) {
+			i = (i + step + PART_ORDER.length) % PART_ORDER.length;
+			if (PART_ORDER[i] === 'editor' || partShown(PART_ORDER[i])) {
+				next = PART_ORDER[i];
+				break;
+			}
+		}
+	}
+	if (next === 'editor') editors.focusGroup(editors.activeGroupId);
+	else focusPart(next, () => {});
+}
+
+/** VS Code's `statusBarFocused`: keyboard focus is on a status bar item. */
+const statusBarFocused = () => !!document.activeElement?.closest('[data-part="statusbar"]');
+
+/** Status bar keyboard navigation (statusbarActions.ts): previous / next item (wrapping), first, last. */
+export function focusStatusBarItem(to: 'previous' | 'next' | 'first' | 'last') {
+	const items = [...(partRoot('statusbar')?.querySelectorAll<HTMLElement>('button, a[href], [tabindex="0"]') ?? [])].filter((el) => el.offsetParent !== null && !(el as HTMLButtonElement).disabled);
+	if (!items.length) return;
+	const at = items.findIndex((el) => el === document.activeElement || el.contains(document.activeElement));
+	const n = items.length;
+	const i = to === 'first' ? 0 : to === 'last' ? n - 1 : at < 0 ? 0 : (at + (to === 'next' ? 1 : -1) + n) % n;
+	items[i].focus();
+}
+
+/** Shows a part (`data-part` or VS Code's `.part.<name>` on its root) and moves focus into it: its tree or list, else its first input or button. */
+function focusPart(part: Exclude<Part, 'editor'>, show: () => void) {
+	show();
+	const tryFocus = (tries: number) => {
+		const root = document.querySelector<HTMLElement>(`[data-part="${part}"], .part.${part}`);
+		const target = ['[role="tree"]', '[role="list"]', '[role="listbox"]', '.xterm-helper-textarea', 'input, textarea', 'button'].map((q) => root?.querySelector<HTMLElement>(q)).find(Boolean);
+		if (target) target.focus();
+		else if (tries > 0) setTimeout(() => tryFocus(tries - 1), 30);
+	};
+	queueMicrotask(() => tryFocus(10));
+}
+
 export function installLayoutCommands(): () => void {
 	const unregister = [
 		commands.register({ id: 'workbench.action.customizeLayout', title: 'Customize Layout...', category: 'View', run: () => customizeLayout() }),
@@ -125,6 +181,44 @@ export function installLayoutCommands(): () => void {
 		commands.register({ id: 'workbench.action.zenShowSingleEditorTab', title: 'Show Single Editor Tab in Zen Mode', category: 'View', when: () => layout.zen, run: () => setUserSetting('zenMode.showTabs', 'single') }),
 		commands.register({ id: 'workbench.action.alignQuickInputTop', title: 'Align Quick Input Top', palette: false, run: () => quick.setAlignment('top') }),
 		commands.register({ id: 'workbench.action.alignQuickInputCenter', title: 'Align Quick Input Center', palette: false, run: () => quick.setAlignment('center') }),
+		// Close / focus the parts (VS Code's layoutActions.ts, sidebarActions.ts, panelActions.ts).
+		commands.register({ id: 'workbench.action.closeSidebar', title: 'Close Primary Side Bar', category: 'View', when: () => ide() && layout.sidebarVisible, run: () => (layout.sidebarVisible = false) }),
+		commands.register({ id: 'workbench.action.closePanel', title: 'Hide Panel', category: 'View', when: () => ide() && layout.panelVisible, run: () => (layout.panelVisible = false) }),
+		commands.register({ id: 'workbench.action.closeAuxiliaryBar', title: 'Hide Secondary Side Bar', category: 'View', when: () => ide() && layout.auxVisible, run: () => (layout.auxVisible = false) }),
+		// ⌘0 (VS Code's key; Reset Zoom is ⌘Numpad0).
+		commands.register({ id: 'workbench.action.focusSideBar', title: 'Focus into Primary Side Bar', category: 'View', key: 'cmd+0', when: ide, run: () => focusPart('sidebar', () => (layout.sidebarVisible = true)) }),
+		commands.register({ id: 'workbench.action.focusPanel', title: 'Focus into Panel', category: 'View', when: ide, run: () => focusPart('panel', () => (layout.panelVisible = true)) }),
+		commands.register({ id: 'workbench.action.focusAuxiliaryBar', title: 'Focus into Secondary Side Bar', category: 'View', when: ide, run: () => focusPart('auxiliarybar', () => (layout.auxVisible = true)) }),
+		commands.register({ id: 'workbench.action.moveSideBarLeft', title: 'Move Primary Side Bar Left', category: 'View', when: () => settings.get('workbench.sideBar.location') === 'right', run: () => setUserSetting('workbench.sideBar.location', 'left') }),
+		commands.register({ id: 'workbench.action.moveSideBarRight', title: 'Move Primary Side Bar Right', category: 'View', when: () => settings.get('workbench.sideBar.location') !== 'right', run: () => setUserSetting('workbench.sideBar.location', 'right') }),
+		commands.register({ id: 'workbench.files.action.focusFilesExplorer', title: 'Focus on Files Explorer', category: 'File', when: ide, run: () => focusPart('sidebar', () => ((layout.sideView = 'explorer'), (layout.sidebarVisible = true))) }),
+		commands.register({
+			id: 'workbench.action.openWorkspaceConfigFile',
+			title: 'Open Workspace Configuration File',
+			category: 'Workspaces',
+			when: () => ide() && workspace.workspaceFile !== null,
+			run: () => workspace.workspaceFile && editors.open(editorKeyFor(workspace.workspaceFile, workspace.root), { preview: false })
+		}),
+		// VS Code runs Toggle Maximized Panel for this: the panel takes the editor area, again restores it.
+		commands.register({ id: 'workbench.action.toggleEditorVisibility', title: 'Toggle Editor Area Visibility', category: 'View', when: ide, run: () => panelSize.toggle() }),
+		commands.register({ id: 'workbench.action.focusStatusBar', title: 'Focus Status Bar', category: 'View', when: () => settings.get<boolean>('workbench.statusBar.visible') !== false, run: () => focusPart('statusbar', () => {}) }),
+		// ← / → (↑ / ↓ too, in StatusBar.svelte), Home / End and Escape while a status bar item has focus.
+		commands.register({ id: 'workbench.statusBar.focusPrevious', title: 'Focus Previous Status Bar Item', category: 'View', key: 'left', palette: false, keyWhen: statusBarFocused, run: () => focusStatusBarItem('previous') }),
+		commands.register({ id: 'workbench.statusBar.focusNext', title: 'Focus Next Status Bar Item', category: 'View', key: 'right', palette: false, keyWhen: statusBarFocused, run: () => focusStatusBarItem('next') }),
+		commands.register({ id: 'workbench.statusBar.focusFirst', title: 'Focus First Status Bar Item', category: 'View', key: 'home', palette: false, keyWhen: statusBarFocused, run: () => focusStatusBarItem('first') }),
+		commands.register({ id: 'workbench.statusBar.focusLast', title: 'Focus Last Status Bar Item', category: 'View', key: 'end', palette: false, keyWhen: statusBarFocused, run: () => focusStatusBarItem('last') }),
+		commands.register({ id: 'workbench.statusBar.clearFocus', title: 'Clear Status Bar Focus', category: 'View', key: 'escape', palette: false, weight: 1, keyWhen: statusBarFocused, run: () => editors.focusGroup(editors.activeGroupId) }),
+		// F6 / ⇧F6 (F6 pauses a running debug session first: workbench.action.debug.pause has the higher weight).
+		commands.register({ id: 'workbench.action.focusNextPart', title: 'Focus Next Part', category: 'View', key: 'f6', when: ide, weight: -1, run: () => focusNeighbourPart(1) }),
+		commands.register({ id: 'workbench.action.focusPreviousPart', title: 'Focus Previous Part', category: 'View', key: 'shift+f6', when: ide, run: () => focusNeighbourPart(-1) }),
+		commands.register({
+			id: 'workbench.action.toggleActivityBarVisibility',
+			title: 'Toggle Activity Bar Visibility',
+			category: 'View',
+			when: ide,
+			// VS Code: hidden ↔ the default position.
+			run: () => setUserSetting('workbench.activityBar.location', settings.get('workbench.activityBar.location') === 'hidden' ? 'default' : 'hidden')
+		}),
 		commands.register({ id: 'workbench.action.toggleCenteredLayout', title: 'Toggle Centered Layout', category: 'View', when: ide, run: () => (layout.centered = !layout.centered) }),
 		// F11 off macOS, like VS Code; Step Into shares it and wins while the debugger is stopped (weight).
 		commands.register({ id: 'workbench.action.toggleFullScreen', title: 'Toggle Full Screen', category: 'View', key: 'f11', mac: 'ctrl+cmd+f', weight: -1, run: () => layout.setFullScreen(!layout.fullscreen) }),

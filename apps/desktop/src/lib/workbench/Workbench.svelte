@@ -81,14 +81,14 @@
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
 	import { installAttempts } from '#lib/ade/attempts.svelte.ts';
-	import MobilePairDialog from '#lib/ade/MobilePairDialog.svelte';
-	import { installMobile, mobilePairing } from '#lib/ade/mobile.svelte.ts';
+	import { installBitbucketCommands } from '#lib/ade/bitbucket.svelte.ts';
+	import LinkPreview from '#lib/workbench/LinkPreview.svelte';
 	import SshHostsDialog from '#lib/ade/SshHostsDialog.svelte';
 	import { installSshCommands, sshHosts } from '#lib/ade/sshHosts.svelte.ts';
 	import SshRemoteFolder from '#lib/ade/SshRemoteFolder.svelte';
 	import { sshWorkspace } from '#lib/ade/sshWorkspace.svelte.ts';
-	import LinkPreview from '#lib/workbench/LinkPreview.svelte';
-	import { installBitbucketCommands } from '#lib/ade/bitbucket.svelte.ts';
+	import MobilePairDialog from '#lib/ade/MobilePairDialog.svelte';
+	import { installMobile, mobilePairing } from '#lib/ade/mobile.svelte.ts';
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAdeAttention } from '#lib/ade/adeAttention.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
@@ -219,7 +219,7 @@
 			commands.register({ id: 'workbench.action.navigateBack', title: 'Go Back', key: 'alt+left', mac: 'ctrl+-', when: () => navigation.canGoBack, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.back() }),
 			commands.register({ id: 'workbench.action.navigateForward', title: 'Go Forward', key: 'alt+right', mac: 'ctrl+shift+-', when: () => navigation.canGoForward, keyWhen: () => isMac || !panelTerminalFocus(), run: () => navigation.forward() }),
 			commands.register({ id: 'workbench.action.openView', title: 'Open View...', run: openView }),
-			commands.register({ id: 'workbench.action.openGlobalKeybindings', title: 'Open Keyboard Shortcuts', category: 'Preferences', run: showKeybindings }),
+			commands.register({ id: 'workbench.action.openGlobalKeybindings', title: 'Open Keyboard Shortcuts', category: 'Preferences', key: 'cmd+k cmd+s', run: showKeybindings }),
 			commands.register({ id: 'workbench.action.showAboutDialog', title: 'About', category: 'Help', run: showAbout }),
 			commands.register({
 				id: 'workbench.action.quit',
@@ -382,7 +382,12 @@
 				id: 'workbench.action.moveEditorToNextGroup',
 				title: 'Move Editor into Next Group',
 				category: 'View',
-				when: () => editors.active !== null,
+				// VS Code's keys (editorActions.ts MoveEditorToNextGroupAction).
+				key: 'cmd+alt+right',
+				mac: 'cmd+ctrl+right',
+				when: () => editors.active !== null && !appMode.isAgents,
+				// ⌃⌘→ resizes a focused terminal instead (VS Code's terminalFocus binding).
+				keyWhen: () => !panelTerminalFocus(),
 				run: () => editors.moveActiveEditorToNextGroup()
 			}),
 			commands.register({ id: 'workbench.action.keepEditor', title: 'Keep Editor', category: 'View', key: 'cmd+k enter', when: () => editors.active !== null, run: () => editors.active && editors.pin(editors.active) })
@@ -404,14 +409,14 @@
 		const uninstallAgentsMode = installAgentsMode();
 		const uninstallWorktreeCommands = installWorktreeCommands();
 		const uninstallAttempts = installAttempts();
+		const uninstallBitbucket = installBitbucketCommands();
+		const uninstallSsh = installSshCommands();
+		const uninstallMobile = installMobile();
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAdeAttention = installAdeAttention();
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
 		const uninstallLinear = installLinear();
-		const uninstallMobile = installMobile();
-		const uninstallSsh = installSshCommands();
-		const uninstallBitbucket = installBitbucketCommands();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
 		const uninstallWorkspaceTrust = workspaceTrust.install();
@@ -491,14 +496,14 @@
 			uninstallAgentsMode();
 			uninstallWorktreeCommands();
 			uninstallAttempts();
+			uninstallBitbucket();
+			uninstallSsh();
+			uninstallMobile();
 			uninstallIssues();
 			uninstallLinear();
 			uninstallTaskSources();
 			uninstallCliBridge();
 			uninstallWorkspaceTrust();
-			uninstallMobile();
-			uninstallSsh();
-			uninstallBitbucket();
 			uninstallTrustedDomains();
 			uninstallVoice();
 			uninstallAutomations();
@@ -685,17 +690,17 @@
 	{#if welcome.open}<Welcome />{/if}
 	{#if chatTools.picking}{#key chatTools.picking}<ChatToolPicker id={chatTools.picking} />{/key}{/if}
 	{#if cleanup.open}<CleanupDialog />{/if}
+	{#if workspaceSpace.open}<WorkspaceSpaceDialog />{/if}
+	{#if sshWorkspace.current}<SshRemoteFolder />{/if}
+	{#if sshHosts.open}<SshHostsDialog />{/if}
+	{#if mobilePairing.open}<MobilePairDialog />{/if}
 	<Tooltips />
+	<LinkPreview />
 	<QuickInput />
 	<AccessibleViewWidget />
 	<LinearConnect />
 	<TrackerConnect />
-	{#if mobilePairing.open}<MobilePairDialog />{/if}
-	{#if sshWorkspace.current}<SshRemoteFolder />{/if}
-	{#if sshHosts.open}<SshHostsDialog />{/if}
-	{#if workspaceSpace.open}<WorkspaceSpaceDialog />{/if}
 	<AdeDialogs />
-	<LinkPreview />
 	<RepoDialog />
 	<NotificationToasts />
 </div>
