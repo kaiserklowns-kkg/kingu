@@ -11,7 +11,7 @@ export const legacyWorkbench = {
 	'legacyWorkbench.statusResources.openPortsTitle': 'Open ports ({ours} from Kingu)',
 	'legacyWorkbench.statusResources.refresh': 'Refresh',
 	'legacyWorkbench.statusResources.memoryTooltip':
-		'Total RSS of Kingu and its child processes; shared memory may be counted twice (WebView excluded)',
+		'Memory of Kingu and its child processes, as Activity Monitor counts it (physical footprint; RSS where that is unavailable)',
 	'legacyWorkbench.statusResources.memory': 'Memory',
 	'legacyWorkbench.statusResources.cpuTooltip': 'Total CPU; over 100% means more than one core is in use',
 	'legacyWorkbench.statusResources.forceCloseTerminalTip':

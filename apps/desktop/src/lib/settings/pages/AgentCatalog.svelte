@@ -4,6 +4,9 @@
 	// and the rest ("Available to install") — each with Enabled / Disabled (kingu.agent.disabled),
 	// Set default (kingu.agent.cli), its docs, and a panel for the program
 	// (kingu.agent.cmdOverrides), arguments (kingu.agent.args.<id>) and env (kingu.agent.env.<id>).
+	// A profile that the agent chat also runs (the shared catalog, agent/agentCatalog.ts, docs/AI-SURFACES.md
+	// §8.1) carries an "IDE chat" badge: the same agent in the IDE's chat and the ADE's terminal.
+	// Chat-only entries (Arkai, custom ACP agents) are listed under "Chat" with no ADE controls.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -12,6 +15,8 @@
 	import { openUrl } from '#lib/terminal/pty.ts';
 	import { KNOWN_BINS, PROFILES, profileOf, type AgentProfile } from '#lib/ade/agentProfiles.ts';
 	import { agentArgsSetting, agentEnvSetting, cmdOverride, parseCliCommand, YOLO_ARGS } from '#lib/ade/agentCli.ts';
+	import { agentCatalog } from '#lib/agent/agentCatalog.ts';
+	import { agentRuntimes } from '#lib/agent/runtimes.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from '../settings.svelte';
 	import { SCHEMA } from '../registry';
@@ -48,7 +53,15 @@
 			refreshing = false;
 		}
 	}
-	onMount(() => void detect());
+	onMount(() => {
+		void detect();
+		void agentRuntimes.load();
+	});
+
+	// CLI profile id → the chat runtime of the same id (Claude always; the others once found on PATH).
+	const catalog = $derived(agentCatalog(agentRuntimes.list));
+	const chatRuntimes = $derived(new Map(catalog.flatMap((e) => (e.cliProfile && e.chatRuntime ? [[e.id, e.chatRuntime] as const] : []))));
+	const chatOnly = $derived(catalog.filter((e) => e.chatRuntime && !e.cliProfile));
 
 	async function save(id: string, value: unknown) {
 		try {
@@ -116,12 +129,14 @@
 	{@const enabled = isEnabled(p)}
 	{@const override = program(p)}
 	{@const expanded = open === p.id}
+	{@const chat = chatRuntimes.get(p.id)}
 	<div class={['py-3', !isDetected && 'opacity-70']}>
 		<div class="flex flex-wrap items-start gap-3">
 			{@render agentIcon(p)}
 			<div class="min-w-48 flex-1">
 				<div class="flex items-center gap-2">
 					<span class="text-sm leading-none font-medium">{p.title}</span>
+					{#if chat}<span class={COUNT} title={chat.name}>IDE chat</span>{/if}
 					{#if !enabled}<span class={COUNT}>{t('settings.agents.disabled')}</span>{/if}
 				</div>
 				<div class="mt-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">
@@ -254,6 +269,24 @@
 				<h3 class={[SUBHEAD, 'text-(--vscode-descriptionForeground)']}>{t('settings.agents.available')}<span class={COUNT}>{t('settings.agents.agentsCount', { count: available.length })}</span></h3>
 				<div class="divide-y divide-(--vscode-widget-border)/40">
 					{#each available as p (p.id)}{@render row(p, false)}{/each}
+				</div>
+			</section>
+		{/if}
+		{#if chatOnly.length}
+			<section class="space-y-3">
+				<h3 class={[SUBHEAD, 'text-(--vscode-descriptionForeground)']}>{t('panes.chat.title')}<span class={COUNT}>{t('settings.agents.agentsCount', { count: chatOnly.length })}</span></h3>
+				<div class="divide-y divide-(--vscode-widget-border)/40">
+					{#each chatOnly as e (e.id)}
+						<div class="flex items-center gap-3 py-3">
+							<div class="grid size-7 shrink-0 place-items-center rounded-md border border-(--vscode-widget-border)/50 bg-(--vscode-editor-background)/50">
+								<AgentIcon agent={e.id} size={16} />
+							</div>
+							<div class="flex min-w-48 flex-1 items-center gap-2">
+								<span class="text-sm leading-none font-medium">{e.title}</span>
+								<span class={COUNT}>IDE chat</span>
+							</div>
+						</div>
+					{/each}
 				</div>
 			</section>
 		{/if}

@@ -17,6 +17,11 @@ crate::i18n::messages! {
       en: "git {op} waited {secs} seconds for another git operation in this repository ({running}) and gave up; try again when it finishes",
       th: "git {op} รอ git อีกงานใน repository นี้ ({running}) นาน {secs} วินาทีแล้วจึงยกเลิก ลองใหม่เมื่องานนั้นเสร็จ",
     },
+    /// git_admission: no slot freed up in time (too many git commands running at once).
+    AdmissionTimeout {
+      en: "git {op} waited {secs} seconds for a free slot (too many git commands are running at once) and gave up; try again in a moment",
+      th: "git {op} รอคิวว่างนาน {secs} วินาทีแล้วจึงยกเลิก (มีคำสั่ง git ทำงานพร้อมกันมากเกินไป) ลองใหม่อีกครู่",
+    },
     Cancelled {
       en: "git {op} was cancelled",
       th: "ยกเลิก git {op} แล้ว",

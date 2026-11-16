@@ -1,7 +1,8 @@
 // One catalog of the agents Kingu knows (docs/AI-SURFACES.md §8.1): the ADE's CLI profiles
 // (ade/agentProfiles.ts, run in a task terminal) joined with the chat's runtimes (runtimes.ts,
-// run through the agent host) by id — `codex`, `gemini`, `qwen`, … are both. Read-only: nothing
-// in the UI or a launch reads it yet (Phase 2). Pure, so `bun test` covers it.
+// run through the agent host) by id — `codex`, `gemini`, `qwen`, … are both. Read-only: the
+// Settings agent page (settings/pages/AgentCatalog.svelte, its "IDE chat" badge) and the ADE → chat
+// handoff (sessionHandoff.ts) read it; no launch does. Pure, so `bun test` covers it.
 
 import { CUSTOM, PROFILES, type AgentProfile } from '#lib/ade/agentProfiles.ts';
 import { CLAUDE, type RuntimeInfo } from './runtimes.ts';

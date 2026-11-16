@@ -40,8 +40,9 @@
 		if (!form) return;
 		error = '';
 		try {
-			const d = await generatePrDetails(slug, form.base, template);
-			if (form) form = { ...form, title: d.title, body: adeTasks.prBodyFrom(slug, d.body) };
+			const d = await generatePrDetails(slug, form.base, template, { title: form.title, body: form.body, draft: form.draft, issue: adeTasks.find(slug)?.meta.issue });
+			// Orca: the agent keeps the base unless the diff clearly targets another, and may mark a WIP as draft.
+			if (form) form = { ...form, title: d.title, body: d.body, base: d.base || form.base, draft: form.draft || d.draft };
 		} catch (e) {
 			error = ft('forge.create.generateFailed', forge, { error: e instanceof Error ? e.message : String(e) });
 		}

@@ -7,7 +7,7 @@ import { appMode } from '#lib/workbench/mode.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
-import { focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
+import { focusTerminal, focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
 import { codeTerminalFolder, createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
 import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
@@ -28,6 +28,10 @@ async function runQuickCommand() {
 
 /** A panel terminal has focus (VS Code's `terminalFocus`). */
 export const panelTerminalFocus = () => !appMode.isAgents && focusedTerminal('ide') !== null;
+
+const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+/** Resize Pane Left / Right: VS Code's keys exist on macOS and Linux only. */
+const resizeKeys = () => !isWindows && panelTerminalFocus();
 
 export function installTerminalCommands(): () => void {
 	// Terminals opened by code start in the active editor's folder (VS Code's last active workspace root).
@@ -98,6 +102,44 @@ export function installTerminalCommands(): () => void {
 			keyWhen: panelTerminalFocus,
 			run: () => terminals.focusPane(1)
 		}),
+		// Between terminal groups (VS Code: ⇧⌘] / ⇧⌘[ on macOS, Ctrl+PageDown / PageUp elsewhere), wrapping.
+		commands.register({
+			id: 'workbench.action.terminal.focusNext',
+			title: 'Focus Next Terminal Group',
+			category: 'Terminal',
+			key: 'ctrl+pagedown',
+			mac: 'cmd+shift+]',
+			when: panelShown,
+			keyWhen: panelTerminalFocus,
+			run: () => (layout.showPanel('terminal'), terminals.focusGroup(1))
+		}),
+		commands.register({
+			id: 'workbench.action.terminal.focusPrevious',
+			title: 'Focus Previous Terminal Group',
+			category: 'Terminal',
+			key: 'ctrl+pageup',
+			mac: 'cmd+shift+[',
+			when: panelShown,
+			keyWhen: panelTerminalFocus,
+			run: () => (layout.showPanel('terminal'), terminals.focusGroup(-1))
+		}),
+		// ⌃⌘← → ↑ ↓ on macOS; Ctrl+Shift+← / → on Linux (VS Code binds no key on Windows, where the keys stay with the shell).
+		commands.register({ id: 'workbench.action.terminal.resizePaneLeft', title: 'Resize Terminal Left', category: 'Terminal', key: 'ctrl+shift+left', mac: 'cmd+ctrl+left', when: panelShown, keyWhen: resizeKeys, run: () => terminals.resizePane('left') }),
+		commands.register({ id: 'workbench.action.terminal.resizePaneRight', title: 'Resize Terminal Right', category: 'Terminal', key: 'ctrl+shift+right', mac: 'cmd+ctrl+right', when: panelShown, keyWhen: resizeKeys, run: () => terminals.resizePane('right') }),
+		commands.register({ id: 'workbench.action.terminal.resizePaneUp', title: 'Resize Terminal Up', category: 'Terminal', mac: 'cmd+ctrl+up', when: panelShown, keyWhen: panelTerminalFocus, run: () => terminals.resizePane('up') }),
+		commands.register({ id: 'workbench.action.terminal.resizePaneDown', title: 'Resize Terminal Down', category: 'Terminal', mac: 'cmd+ctrl+down', when: panelShown, keyWhen: panelTerminalFocus, run: () => terminals.resizePane('down') }),
+		commands.register({
+			id: 'workbench.action.terminal.focus',
+			title: 'Focus Terminal',
+			category: 'Terminal',
+			when: () => !appMode.isAgents && terminals.tag !== null,
+			run: () => {
+				// Showing an empty terminal view starts a terminal (terminals.svelte.ts).
+				layout.showPanel('terminal');
+				queueMicrotask(() => focusTerminal(terminals.key(terminals.active)));
+			}
+		}),
+		commands.register({ id: 'workbench.action.quickOpenTerm', title: 'Switch Active Terminal', category: 'Terminal', when: () => !appMode.isAgents, run: () => quick.show('term ') }),
 		commands.register({ id: 'workbench.action.terminal.rename', title: 'Rename...', category: 'Terminal', when: panelShown, run: () => terminals.rename() }),
 		commands.register({ id: 'workbench.action.terminal.kill', title: 'Kill the Active Terminal Instance', category: 'Terminal', when: panelShown, run: () => terminals.kill(terminals.active) }),
 		commands.register({ id: 'kingu.terminal.runQuickCommand', title: 'Run Quick Command…', category: 'Terminal', run: () => void runQuickCommand() }),

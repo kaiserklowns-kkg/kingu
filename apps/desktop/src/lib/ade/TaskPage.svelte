@@ -255,7 +255,7 @@
 								Merge commit
 							</button>
 						</div>
-						{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
+						{#if (adeTasks.gh?.provider === 'gitlab' || adeTasks.gh?.provider === 'bitbucket') && !adeTasks.gh.authenticated}
 							<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
 						{:else if adeTasks.gh && !adeTasks.gh.installed}
 							<p class="text-(--vscode-descriptionForeground)">{tr('forge.status.ghMissingCreate')}</p>

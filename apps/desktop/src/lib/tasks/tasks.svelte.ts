@@ -29,6 +29,7 @@ import { isUntitled } from '#lib/workbench/untitled.ts';
 import { externalKey } from '#lib/workbench/externalFiles.ts';
 import { keyForPath, type WorkspaceFolder } from '#lib/workbench/workspaceFolders.ts';
 import { workspaceName } from '#lib/workbench/workspaceFile.ts';
+import { scopeUserTasks } from './userTasks.ts';
 import { workspaceTrust } from '#lib/workbench/workspaceTrust.svelte.ts';
 import { taskLaunch } from './commandLine.ts';
 import { runTask, type Execution, type GraphHost, type Summary } from './dependencies.ts';
@@ -262,6 +263,15 @@ class Tasks {
 			const parsed = this.#workspaceTasks(section);
 			errors.push(...parsed.errors);
 			out.push(...parsed.tasks);
+			addInputs(parsed.inputs);
+		}
+		// User tasks (the profile's tasks.json), offered in every folder.
+		const user = await invoke<{ content: string | null }>('settings_read', { scope: 'tasks' }).catch(() => ({ content: null }));
+		if (user.content) {
+			const parsed = parseTasksJson(user.content, platformOf(shellPlatform()), t('ideTasks.user.file'));
+			const merged = mergeTasks(parsed, [], () => null);
+			errors.push(...merged.errors);
+			out.push(...scopeUserTasks(merged.tasks));
 			addInputs(parsed.inputs);
 		}
 		if (errors.length && !opts.quiet) {

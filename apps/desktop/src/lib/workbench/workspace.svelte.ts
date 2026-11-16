@@ -46,7 +46,15 @@ type WorkspaceState = {
 	/** An empty window's id (an older Rust side sends none). */
 	empty?: string | null;
 	open_files?: string[];
+	/** A worktree on an SSH host is the workspace (its one folder is `ssh://<host><path>`). */
+	remote?: RemoteWorkspace | null;
 };
+
+/** windows.rs `RemoteInfo`. */
+export type RemoteWorkspace = { host: string; host_label: string; root: string; path: string; uri: string };
+
+/** How often a remote workspace is checked for changes made on the host (no watcher there; **estimated**). */
+const REMOTE_POLL_MS = 5000;
 
 class Workspace {
 	/** Absolute path of the first root folder; null shows the Explorer's welcome view. */
@@ -68,6 +76,8 @@ class Workspace {
 	empty = $state<string | null>(null);
 	/** This window's label (`main`, `window-1`, …). */
 	window = $state('main');
+	/** The workspace is a worktree on an SSH host (Rust remote_ws.rs); `root` is then its `ssh://` name. */
+	remote = $state<RemoteWorkspace | null>(null);
 	name = $derived(this.root ? this.root.split('/').pop() || this.root : '');
 	/** Several root folders: the Explorer shows each as a root, Search groups by folder. */
 	isMultiRoot = $derived(this.folders.length > 1);
@@ -129,6 +139,8 @@ class Workspace {
 		this.untitled = info.untitled;
 		this.identity = info.identity;
 		this.empty = info.empty ?? null;
+		this.remote = info.remote ?? null;
+		lsp.remote = this.remote !== null;
 		// Language servers know every root folder (didChangeWorkspaceFolders when one is added or removed).
 		lsp.setFolders(this.folders);
 		// Each other root folder's own settings, for its files (language servers ask by resource).
@@ -391,6 +403,19 @@ class Workspace {
 		return true;
 	}
 
+	/** Opens a worktree of an SSH project as this window's workspace (Rust `workspace_open_remote`). */
+	async openRemote(host: string, root: string, path: string): Promise<boolean> {
+		if (this.remote?.host === host && this.remote.path === path) return true;
+		if (!(await confirmDiscard())) return false;
+		try {
+			this.#switched(await invoke<WorkspaceState>('workspace_open_remote', { host, root, path }));
+		} catch (e) {
+			notifications.error(t('workbench.workspace.openFailed', { error: String(e) }));
+			return false;
+		}
+		return true;
+	}
+
 	/** Close Folder / Close Workspace: the window stays, empty. */
 	async closeFolder() {
 		if (this.root === null || !(await confirmDiscard())) return;
@@ -523,10 +548,44 @@ class Workspace {
 			const keys = qualify(files);
 			for (const fn of this.#listeners) fn(keys);
 		}).then((u) => (gone ? u() : (unlisten = u)));
+		const timer = setInterval(() => void this.#pollRemote(), REMOTE_POLL_MS);
 		return () => {
 			gone = true;
 			unlisten?.();
+			clearInterval(timer);
 		};
+	}
+
+	#remoteSeen: { key: string; paths: Map<string, string> } | null = null;
+	#remotePolling = false;
+
+	/**
+	 * A remote workspace has no file watcher: every 5 s (window shown) one ssh call reads git status;
+	 * the files whose status changed are given to the Explorer, Source Control and the editors as a
+	 * watcher batch would be (an agent's edit on the host shows up). Changes to ignored files are not seen.
+	 */
+	async #pollRemote() {
+		const r = this.remote;
+		if (!r || this.#remotePolling || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+		this.#remotePolling = true;
+		try {
+			const res = await invoke<{ status: { changes: { path: string; x: string; y: string }[] } }>('ssh_remote_poll', { host: r.host, root: r.root, path: r.path, rel: null });
+			if (this.remote !== r) return;
+			const paths = new Map(res.status.changes.map((c) => [c.path, c.x + c.y]));
+			const key = JSON.stringify([...paths]);
+			const before = this.#remoteSeen;
+			this.#remoteSeen = { key, paths };
+			if (!before || before.key === key) return;
+			const changed = [...new Set([...paths.keys(), ...before.paths.keys()])].filter((p) => paths.get(p) !== before.paths.get(p) || !paths.has(p) || !before.paths.has(p));
+			if (!changed.length) return;
+			void scm.refresh();
+			void explorer.refresh(changed);
+			for (const fn of this.#listeners) fn(changed);
+		} catch {
+			// The host is unreachable for now.
+		} finally {
+			this.#remotePolling = false;
+		}
 	}
 }
 

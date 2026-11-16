@@ -91,6 +91,10 @@ crate::i18n::messages! {
       en: "{name}: title must be 1-{max} characters",
       th: "{name}: ชื่อต้องยาว 1-{max} ตัวอักษร",
     },
+    CommentLength {
+      en: "{name}: the comment can be at most {max} characters",
+      th: "{name}: หมายเหตุยาวได้ไม่เกิน {max} ตัวอักษร",
+    },
     TaskPromptTooLarge {
       en: "{slug}: prompt larger than {max} bytes",
       th: "{slug}: prompt ใหญ่เกิน {max} ไบต์",

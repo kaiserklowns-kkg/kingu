@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { listWheel } from '#lib/workbench/listWheel.ts';
 	// VS Code's Search view (searchView.ts / searchWidget.ts): query box with Match Case,
 	// Whole Word and Regex toggles, the Replace box behind the chevron (Preserve Case, Replace
@@ -10,6 +11,7 @@
 	import { fileIcon, folderIcon } from './fileIcons';
 	import { editors } from './editors.svelte';
 	import { search } from './search.svelte';
+	import { isMac } from './keys';
 	import type { HistoryField } from './searchHistory';
 	import {
 		basename,
@@ -20,7 +22,6 @@
 		sortResults,
 		splitPreview,
 		summarize,
-		type FileMatches,
 		type ResultRow,
 		type ResultSortOrder
 	} from './searchResults';
@@ -69,10 +70,10 @@
 		void search.replace(search.files);
 	}
 
-	function replaceRow(row: Exclude<ResultRow, { kind: 'folder' }>, e: MouseEvent) {
+	/** Replace on a row: its match, or all in its file or folder (VS Code's Replace / Replace All in File / Folder). */
+	function replaceRow(row: ResultRow, e: MouseEvent) {
 		e.stopPropagation();
-		const scope: FileMatches[] = row.kind === 'file' ? [row.file] : [{ ...row.file, matches: [row.match] }];
-		void search.replace(scope);
+		void search.replaceRow(row);
 	}
 
 	function onReplaceKey(e: KeyboardEvent) {
@@ -95,11 +96,32 @@
 		}
 	});
 
-	// A new result set resets the selection.
+	// F4 / ⇧F4 went to a match: select its row.
+	$effect(() => {
+		const key = search.activeMatch;
+		if (key === null) return;
+		untrack(() => {
+			const i = rows.findIndex((r) => r.key === key);
+			if (i >= 0 && i !== selected) select(i);
+		});
+	});
+
+	// Fewer rows (a new result set, a dismissed or replaced result): the selection stays in range.
 	$effect(() => {
 		void search.files;
-		if (selected >= rows.length) selected = -1;
+		if (selected >= rows.length) selected = rows.length - 1;
 	});
+
+	// The focused row, for Dismiss (⌘⌫) and Replace (⇧⌘1) (searchViewCommands.svelte.ts).
+	$effect(() => {
+		search.focusedRow = () => rows[selected] ?? null;
+		return () => (search.focusedRow = () => null);
+	});
+
+	function dismissRow(row: ResultRow, e: MouseEvent) {
+		e.stopPropagation();
+		search.dismiss(row);
+	}
 
 	function open(row: ResultRow, pin: boolean) {
 		if (row.kind === 'folder') {
@@ -110,6 +132,7 @@
 			search.toggleCollapsed(row.file.path);
 			return;
 		}
+		search.activeMatch = row.key;
 		const { line, column, end_column } = row.match;
 		editors.open(row.file.path, { preview: !pin, reveal: { line, column, endColumn: end_column, focus: pin } });
 	}
@@ -128,6 +151,12 @@
 
 	function onTreeKey(e: KeyboardEvent) {
 		const row = rows[selected];
+		// ⇧⌘↩: Replace All in File / Folder (VS Code's secondary key for them; ⇧⌘1 is a command).
+		if (e.key === 'Enter' && e.shiftKey && (isMac ? e.metaKey : e.ctrlKey) && !e.altKey) {
+			if (row && row.kind !== 'match' && canReplace) void search.replaceRow(row);
+			e.preventDefault();
+			return;
+		}
 		if (e.key === 'ArrowDown') select(selected + 1);
 		else if (e.key === 'ArrowUp') {
 			if (selected <= 0) input?.focus();
@@ -184,7 +213,7 @@
 	const inputField = 'h-full min-w-0 flex-1 bg-transparent px-1.5 outline-none placeholder:text-(--vscode-input-placeholderForeground)';
 </script>
 
-<section aria-label="Search" class="flex min-h-0 flex-1 flex-col" bind:clientWidth={viewWidth}>
+<section aria-label="Search" data-context="search" class="flex min-h-0 flex-1 flex-col" bind:clientWidth={viewWidth}>
 	<div class="flex shrink-0 flex-col gap-1 pr-3 pl-0.5">
 		<div class="flex gap-0.5">
 			<button
@@ -374,6 +403,7 @@
 		role="tree"
 		use:listWheel
 		aria-label="Search results"
+		data-search-results
 		tabindex="0"
 		class="relative mt-1 min-h-0 flex-1 overflow-y-auto outline-none"
 		style:scroll-behavior="var(--kg-list-scroll-behavior, auto)"
@@ -409,6 +439,12 @@
 						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name={row.collapsed ? 'chevronRight' : 'chevronDown'} size={16} /></span>
 						<span class="flex w-4 shrink-0 justify-center"><FileIcon icon={folderIcon(row.path, !row.collapsed)} /></span>
 						<span class="min-w-0 truncate" title={row.path}>{basename(row.path)}</span>
+						<span class={['hidden shrink-0 items-center group-hover/row:flex', 'ml-auto']}>
+							{#if canReplace}
+								<button class="grid size-5 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" title={t('workbench.search.replaceAllInFolder')} aria-label={t('workbench.search.replaceAllInFolder')} onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button>
+							{/if}
+							<button class="grid size-5 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" title={t('workbench.search.dismiss')} aria-label={t('workbench.search.dismiss')} onclick={(e) => dismissRow(row, e)}><Icon name="close" size={14} /></button>
+						</span>
 					{:else if row.kind === 'file'}
 						{@const deco = decorations.get(row.file.path)}
 						<span class="flex w-4 shrink-0 justify-center text-(--vscode-icon-foreground)"><Icon name={row.collapsed ? 'chevronRight' : 'chevronDown'} size={16} /></span>
@@ -425,6 +461,12 @@
 								onclick={(e) => replaceRow(row, e)}><Icon name="replaceAll" size={14} /></button
 							>
 						{/if}
+						<button
+							class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', !canReplace && (actionsRight ? 'ml-auto' : 'ml-2.5')]}
+							title={t('workbench.search.dismiss')}
+							aria-label={t('workbench.search.dismiss')}
+							onclick={(e) => dismissRow(row, e)}><Icon name="close" size={14} /></button
+						>
 						<span
 							class={[
 								'flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-[11px] bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)',
@@ -448,12 +490,24 @@
 									onclick={(e) => replaceRow(row, e)}><Icon name="replace" size={14} /></button
 								>
 							{/if}
+							<button
+								class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', !canReplace && (actionsRight ? 'ml-auto' : 'ml-1')]}
+								title={t('workbench.search.dismiss')}
+								aria-label={t('workbench.search.dismiss')}
+								onclick={(e) => dismissRow(row, e)}><Icon name="close" size={14} /></button
+							>
 						{:else}
 							<span class="min-w-0 truncate" title="{row.match.line}: {row.match.preview}"
 								>{p.before}<span
 									class="rounded-[2px] bg-[var(--vscode-editor-findMatchHighlightBackground,#EA5C0055)]"
 									>{p.match}</span
 								>{p.after}</span
+							>
+							<button
+								class={['hidden size-5 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) group-hover/row:grid hover:bg-(--vscode-toolbar-hoverBackground)', actionsRight ? 'ml-auto' : 'ml-1']}
+								title={t('workbench.search.dismiss')}
+								aria-label={t('workbench.search.dismiss')}
+								onclick={(e) => dismissRow(row, e)}><Icon name="close" size={14} /></button
 							>
 						{/if}
 					{/if}

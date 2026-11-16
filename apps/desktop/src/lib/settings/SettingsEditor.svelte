@@ -17,7 +17,8 @@
 	import ListSetting from './ListSetting.svelte';
 	import SettingDescription from './SettingDescription.svelte';
 	import Toggle from './Toggle.svelte';
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
+	import { systemSettings } from './systemSettings.svelte';
 	import { locale, t } from '#lib/i18n/index.ts';
 	import { paneLabel, paneText } from './panes';
 
@@ -55,6 +56,15 @@
 	} = $props();
 	const excluded = (id: string) => pane?.exclude?.some((x) => (x.endsWith('.*') ? id.startsWith(x.slice(0, -1)) : id === x)) ?? false;
 	let picked = $state<SettingScope>('user');
+	// Open User / Workspace Settings pick that tab (the scope-less editor only; a pane keeps its own).
+	$effect(() => {
+		const asked = systemSettings.request?.scope;
+		if (!asked || pane) return;
+		untrack(() => {
+			picked = asked === 'workspace' && !workspace.root ? 'user' : asked;
+			systemSettings.request = { ...systemSettings.request, scope: undefined };
+		});
+	});
 	$effect(() => {
 		if (picked === 'repo' && !workspace.root) picked = 'user';
 	});

@@ -6,6 +6,7 @@ import { commands } from './commands.svelte';
 import { appMode } from './mode.svelte';
 import { editors } from './editors.svelte';
 import { search } from './search.svelte';
+import { installSearchViewCommands } from './searchViewCommands.svelte';
 import { searchEditors } from './searchEditor.svelte.ts';
 import { deleteFileResults, isSearchEditorKey, modifyContextLines, type SearchConfig } from './searchEditor';
 import { seedFromSelection } from './searchResults';
@@ -124,7 +125,9 @@ export function installSearchEditorCommands(): () => void {
 		commands.register({ id: 'increaseSearchEditorContextLines', title: 'Increase Context Lines', category: 'Search Editor', key: 'alt+=', weight: 1, when: () => activeKey() !== null, keyWhen: inSearchEditor, run: () => editConfig((c) => (c.contextLines = modifyContextLines(c.contextLines, true))) }),
 		commands.register({ id: 'decreaseSearchEditorContextLines', title: 'Decrease Context Lines', category: 'Search Editor', key: 'alt+-', weight: 1, when: () => activeKey() !== null, keyWhen: inSearchEditor, run: () => editConfig((c) => (c.contextLines = modifyContextLines(c.contextLines, false))) }),
 		commands.register({ id: 'selectAllSearchEditorMatches', title: 'Select All Matches', category: 'Search Editor', key: 'cmd+shift+l', weight: 1, when: () => activeKey() !== null, keyWhen: inSearchEditor, run: selectAllMatches }),
-		commands.register({ id: 'search.action.focusQueryEditorWidget', title: 'Focus Search Editor Input', category: 'Search Editor', when: () => activeKey() !== null, keyWhen: inResults, run: () => searchEditors.get(activeKey()!).focusInput++ })
+		commands.register({ id: 'search.action.focusQueryEditorWidget', title: 'Focus Search Editor Input', category: 'Search Editor', when: () => activeKey() !== null, keyWhen: inResults, run: () => searchEditors.get(activeKey()!).focusInput++ }),
+		// The Search view's own commands (⇧⌘H, ⇧⌘J, ⌥⌘C/W/R/P, F4).
+		installSearchViewCommands()
 	];
 	return () => unregister.forEach((u) => u());
 }

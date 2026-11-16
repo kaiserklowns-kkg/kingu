@@ -413,14 +413,20 @@ function replaceNode(m: GroupsModel, at: Located, next: GridNode) {
 /** Adds an empty group beside `reference`. Returns its id, or null at MAX_GROUPS. */
 export function addGroup(m: GroupsModel, reference: number, direction: SplitDirection): number | null {
 	if (m.groups.length >= MAX_GROUPS) return null;
-	const at = locate(m, (n) => n.type === 'group' && n.id === reference);
-	if (!at) return null;
+	if (!locate(m, (n) => n.type === 'group' && n.id === reference)) return null;
 	const id = m.nextId++;
 	m.groups.push({ id, tabs: [], active: null, mru: [] });
-	const leaf: GroupLeaf = { type: 'group', id };
+	m.maximized = null;
+	insertLeaf(m, reference, { type: 'group', id }, direction);
+	return id;
+}
+
+/** Puts `leaf` into the grid beside group `reference`, on its `direction` side (VS Code's gridview addView). */
+function insertLeaf(m: GroupsModel, reference: number, leaf: GroupLeaf, direction: SplitDirection) {
+	const at = locate(m, (n) => n.type === 'group' && n.id === reference);
+	if (!at) return;
 	const orientation = direction === 'right' || direction === 'left' ? 'row' : 'column';
 	const before = direction === 'left' || direction === 'up';
-	m.maximized = null;
 	if (at.parent && at.parent.direction === orientation) {
 		const sizes = at.parent.sizes;
 		// workbench.editor.splitSizing: `split` halves the group, `distribute` evens the row, and
@@ -438,6 +444,37 @@ export function addGroup(m: GroupsModel, reference: number, direction: SplitDire
 		const split: GroupSplit = { type: 'split', id: m.nextId++, direction: orientation, children: before ? [leaf, ref] : [ref, leaf], sizes: [0.5, 0.5] };
 		replaceNode(m, at, split);
 	}
+}
+
+/** Takes group `id`'s cell out of the grid (the group itself stays); its space goes to the cell before it. */
+function detachLeaf(m: GroupsModel, id: number): boolean {
+	const at = locate(m, (n) => n.type === 'group' && n.id === id);
+	if (!at?.parent) return false;
+	const parent = at.parent;
+	const freed = parent.sizes[at.index];
+	parent.children.splice(at.index, 1);
+	parent.sizes.splice(at.index, 1);
+	parent.sizes[Math.max(0, at.index - 1)] += freed;
+	if (parent.children.length === 1) collapse(m, parent);
+	return true;
+}
+
+/**
+ * VS Code's Move Editor Group Left / Right / Up / Down (⌘K ← → ↑ ↓, editorActions.ts
+ * MoveGroupAction): the whole group goes to the far side of its neighbour in `direction`, or of a
+ * neighbour across (up or down for left / right) when there is none in that direction. No wrap.
+ * Returns the moved group, or null when nothing moved.
+ */
+export function moveGroup(m: GroupsModel, id: number, direction: SplitDirection): number | null {
+	if (m.groups.length < 2 || !getGroup(m, id)) return null;
+	const across: SplitDirection[] = direction === 'left' || direction === 'right' ? ['up', 'down'] : ['left', 'right'];
+	let target: number | null = null;
+	for (const d of [direction, ...across]) if ((target = neighbourGroup(m, id, d)) !== null) break;
+	if (target === null || !detachLeaf(m, id)) return null;
+	m.maximized = null;
+	m.expanded = null;
+	insertLeaf(m, target, { type: 'group', id }, direction);
+	m.activeGroup = id;
 	return id;
 }
 
@@ -446,14 +483,7 @@ export function removeGroup(m: GroupsModel, id: number) {
 	if (m.maximized === id) m.maximized = null;
 	if (m.expanded === id) m.expanded = null;
 	const order = groupOrder(m);
-	const at = locate(m, (n) => n.type === 'group' && n.id === id);
-	if (!at?.parent) return;
-	const parent = at.parent;
-	const freed = parent.sizes[at.index];
-	parent.children.splice(at.index, 1);
-	parent.sizes.splice(at.index, 1);
-	parent.sizes[Math.max(0, at.index - 1)] += freed;
-	if (parent.children.length === 1) collapse(m, parent);
+	if (!detachLeaf(m, id)) return;
 	m.groups = m.groups.filter((g) => g.id !== id);
 	if (m.activeGroup === id) {
 		const pos = order.indexOf(id);
@@ -809,4 +839,71 @@ export function hasColumns(m: GroupsModel): boolean {
 	if (root.type !== 'split') return false;
 	if (root.direction === 'row') return root.children.length > 1;
 	return root.children.some((c) => c.type === 'split' && c.direction === 'row' && c.children.length > 1);
+}
+
+/**
+ * VS Code's Move Editor Left / Right in Group (moveActiveEditor by tab, editorCommands.ts): the
+ * tab one place over, or to the `first` / `last` place. A sticky tab stays among the sticky ones
+ * and an unpinned one after them. False when it is already there.
+ */
+export function moveEditorInGroup(m: GroupsModel, group: number, path: string, to: 'left' | 'right' | 'first' | 'last'): boolean {
+	const g = getGroup(m, group);
+	const i = g?.tabs.findIndex((t) => t.path === path) ?? -1;
+	if (!g || i < 0) return false;
+	const sticky = stickyCount(g);
+	const [lo, hi] = g.tabs[i].sticky ? [0, sticky - 1] : [sticky, g.tabs.length - 1];
+	const wanted = to === 'left' ? i - 1 : to === 'right' ? i + 1 : to === 'first' ? lo : hi;
+	const target = Math.max(lo, Math.min(hi, wanted));
+	if (target === i) return false;
+	const [tab] = g.tabs.splice(i, 1);
+	g.tabs.splice(target, 0, tab);
+	g.active = path;
+	touch(g, path);
+	m.activeGroup = g.id;
+	return true;
+}
+
+/**
+ * VS Code's Move Editor into Previous / Next / First / Last Group (editorCommands.ts
+ * moveCopyEditorsToGroup): `previous` and `next` add a group on the far side when there is none
+ * (`side` is workbench.editor.openSideBySideDirection), unless the editor is the group's only
+ * one, which would just recreate the same layout. Returns the target group, or null.
+ */
+export function moveActiveEditorToGroup(m: GroupsModel, to: 'previous' | 'next' | 'first' | 'last', side: 'right' | 'down' = 'right'): number | null {
+	const src = activeGroupOf(m);
+	if (!src.active) return null;
+	const order = groupOrder(m);
+	const at = order.indexOf(src.id);
+	let target: number | null | undefined =
+		to === 'first' ? order[0] : to === 'last' ? order[order.length - 1] : order[at + (to === 'next' ? 1 : -1)];
+	if (target === undefined) {
+		if (src.tabs.length === 1) return null;
+		const direction: SplitDirection = to === 'next' ? side : side === 'right' ? 'left' : 'up';
+		target = addGroup(m, src.id, direction);
+	}
+	if (target === null || target === src.id) return null;
+	moveEditor(m, src.id, src.active, target);
+	return target;
+}
+
+/**
+ * VS Code's Focus Left / Right / Above / Below Editor Group (⌘K ⌘← …): the neighbouring group,
+ * wrapping to the far end of the row or column when there is none.
+ */
+export function groupInDirection(m: GroupsModel, from: number, direction: SplitDirection): number | null {
+	const next = neighbourGroup(m, from, direction);
+	if (next !== null) return next;
+	const back: SplitDirection = direction === 'left' ? 'right' : direction === 'right' ? 'left' : direction === 'up' ? 'down' : 'up';
+	let far = from;
+	for (let step = neighbourGroup(m, far, back); step !== null && step !== from; step = neighbourGroup(m, far, back)) far = step;
+	return far === from ? null : far;
+}
+
+/** VS Code's Focus Next / Previous / Last Editor Group: grid order, next and previous wrapping. */
+export function groupAtLocation(m: GroupsModel, from: number, location: 'next' | 'previous' | 'last'): number | null {
+	const order = groupOrder(m);
+	if (order.length < 2 && location !== 'last') return null;
+	if (location === 'last') return order[order.length - 1];
+	const at = order.indexOf(from);
+	return order[(at + (location === 'next' ? 1 : -1) + order.length) % order.length];
 }

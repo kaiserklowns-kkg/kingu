@@ -2,6 +2,10 @@
 
 crate::i18n::messages! {
   pub enum WorkspaceMsg {
+    NotOnRemote {
+      en: "Not available yet for a folder on an SSH host (use the Remote Folder page)",
+      th: "ยังใช้ไม่ได้กับโฟลเดอร์บนเครื่อง SSH (ใช้หน้า Remote Folder)",
+    },
     IdentityHint {
       en: "Git has no author name yet: run git config --global user.name \"Your Name\" and git config --global user.email \"you@example.com\", then try again",
       th: "ยังไม่ได้ตั้งชื่อผู้เขียนของ git ให้รัน git config --global user.name \"ชื่อคุณ\" และ git config --global user.email \"you@example.com\" แล้วลองใหม่",

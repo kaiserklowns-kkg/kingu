@@ -68,6 +68,7 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
+import { isNameConflict, nextCandidate } from './createRetry';
 import { commentOnLink } from './trackerApi.ts';
 import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
@@ -116,6 +117,42 @@ const scriptTitle = (kind: ScriptKind): string =>
 		issue: t('adeTasks.tasks.scriptTitle.issue')
 	})[kind];
 
+/** What `adeTasks.create` takes. */
+export type CreateInput = {
+	title: string;
+	prompt: string;
+	base: string;
+	mode?: RunMode;
+	open?: boolean;
+	slugHint?: string;
+	slug?: string;
+	issue?: IssueLink;
+	/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
+	origin?: 'automation';
+	/** Composer attachments: path references appended to the CLI's prompt. */
+	attachments?: Attachment[];
+	/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
+	source?: TaskSource;
+	/** Best-of-N (attempts.svelte.ts): the attempts' group and this one's model. */
+	group?: string;
+	model?: string;
+	/** Sparse checkout (Orca): only these folders are checked out; empty or absent: everything. */
+	sparse?: string[];
+	/** Stacked worktrees: the task whose branch `base` is. */
+	parent?: string;
+	/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
+	dispatchedBy?: string;
+	/** The agent picked in the create form (a `kingu.agent.cli` value); absent: the setting. */
+	agent?: string;
+};
+
+/** Where a background create is (Orca's in-tab setup status): refreshing the base, adding the worktree. */
+export type CreateStep = 'base' | 'worktree';
+/** A task being created in the background (`adeTasks.startCreate`). */
+export type PendingCreate = { id: number; title: string; root: string | null; failed: boolean; input: CreateInput; step?: CreateStep; cancelling?: boolean };
+/** Hooks of one `create`: the task was saved (its card takes over), the step it is on, whether it was cancelled. */
+export type CreateHooks = { saved?: (slug: string) => void; step?: (s: CreateStep) => void; cancelled?: () => boolean };
+
 class AdeTasks {
 	list = $state<TaskMeta[]>([]);
 	worktrees = $state<WorktreeInfo[]>([]);
@@ -137,6 +174,16 @@ class AdeTasks {
 	now = $state(Date.now());
 	/** The New Task form is open (side bar or board). */
 	composing = $state(false);
+	/**
+	 * Tasks being created in the background (Orca: "Creation runs in the background" — the dialog
+	 * closes at once, the sidebar shows a progress row, a failure offers Retry). Memory only.
+	 */
+	creating = $state<PendingCreate[]>([]);
+	/** Text for the empty composer to take (the jump palette's "Create worktree" row). */
+	prefill = $state<string | null>(null);
+	/** Slugs of creates in flight, so two at once never pick the same branch. */
+	#reserved = new Set<string>();
+	#createSeq = 0;
 
 	views: TaskView[] = $derived(
 		this.list.map((meta) => {
@@ -340,39 +387,71 @@ class AdeTasks {
 	 */
 	/** `slugHint`: the branch name to start from when the title has no Latin letters (e.g. an automation id).
 	 *  `slug`: the whole branch name base instead (made unique). `issue`: the GitHub issue it comes from. */
-	async create(input: {
-		title: string;
-		prompt: string;
-		base: string;
-		mode?: RunMode;
-		open?: boolean;
-		slugHint?: string;
-		slug?: string;
-		issue?: IssueLink;
-		/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
-		origin?: 'automation';
-		/** Composer attachments: path references appended to the CLI's prompt. */
-		attachments?: Attachment[];
-		/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
-		source?: TaskSource;
-		/** Best-of-N (attempts.svelte.ts): the attempts' group and this one's model. */
-		group?: string;
-		model?: string;
-		/** Stacked worktrees: the task whose branch `base` is. */
-		parent?: string;
-		/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
-		dispatchedBy?: string;
-	}): Promise<string | undefined> {
+	async create(input: CreateInput, hooks: CreateHooks = {}): Promise<string | undefined> {
 		const title = input.title.trim();
 		if (!title || !workspace.root) return;
 		const source = input.source ?? { kind: 'new' };
-		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? '')]);
+		const taken = new Set([...this.list.map((t) => t.slug), ...this.worktrees.map((w) => w.slug ?? ''), ...this.#reserved]);
 		const slug = uniqueSlug(input.slug ?? (input.slugHint ? `${input.slugHint} ${title}` : title), taken);
+		const mine = new Set([slug]);
+		this.#reserved.add(slug);
+		try {
+			return await this.#create(input, title, source, slug, hooks, mine, taken);
+		} finally {
+			for (const s of mine) this.#reserved.delete(s);
+		}
+	}
+
+	/**
+	 * `create` without waiting: the form clears at once and a progress row stands for the task until
+	 * its worktree exists (then the task's own card takes over); a failure stays with Retry.
+	 */
+	startCreate(input: CreateInput) {
+		const id = ++this.#createSeq;
+		this.creating = [...this.creating, { id, title: input.title.trim(), root: workspace.root, failed: false, input }];
+		void this.#runPending(id);
+	}
+
+	async #runPending(id: number) {
+		const p = this.creating.find((c) => c.id === id);
+		if (!p) return;
+		const done = () => (this.creating = this.creating.filter((c) => c.id !== id));
+		const hooks: CreateHooks = {
+			saved: done,
+			step: (step) => (this.creating = this.creating.map((c) => (c.id === id ? { ...c, step } : c))),
+			cancelled: () => !!this.creating.find((c) => c.id === id)?.cancelling
+		};
+		const slug = await this.create(p.input, hooks).catch((e) => {
+			notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
+			return undefined;
+		});
+		if (slug || hooks.cancelled?.()) done();
+		else if (this.creating.some((c) => c.id === id)) this.creating = this.creating.map((c) => (c.id === id ? { ...c, failed: true, step: undefined } : c));
+	}
+
+	retryCreate(id: number) {
+		this.creating = this.creating.map((c) => (c.id === id ? { ...c, failed: false } : c));
+		void this.#runPending(id);
+	}
+
+	/**
+	 * Orca's Cancel on a create in flight: git finishes the step it is on, then the half-made
+	 * worktree and its new branch are removed and nothing is saved.
+	 */
+	cancelCreate(id: number) {
+		this.creating = this.creating.map((c) => (c.id === id ? { ...c, cancelling: true } : c));
+	}
+
+	dismissCreate(id: number) {
+		this.creating = this.creating.filter((c) => c.id !== id);
+	}
+
+	async #create(input: CreateInput, title: string, source: TaskSource, slug: string, hooks: CreateHooks, mine: Set<string>, taken: Set<string>): Promise<string | undefined> {
 		// A branch or PR you start from may need no instructions yet: its agent then starts without a prompt.
 		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
-		const configured = adeCommand(null, (k) => settings.get(k));
+		const configured = adeCommand(input.agent, (k) => settings.get(k));
 		// An attempt's model goes into its command, so a resume keeps it.
 		const cli = configured && input.model ? withModel(configured, input.model) : configured;
 		if (!cli) {
@@ -386,17 +465,42 @@ class AdeTasks {
 		}
 		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
 		const refresh = source.kind === 'new' && !input.parent && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		if (refresh) hooks.step?.('base');
 		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
 			if (note) status.flash(note, 8000);
 		}
 		let pr: PrHead | null = null;
+		if (hooks.cancelled?.()) return;
+		hooks.step?.('worktree');
 		try {
 			if (source.kind === 'branch') await invoke<WorktreeInfo>('worktree_create_from_branch', { slug, branch: source.branch });
 			else if (source.kind === 'pr') pr = (await invoke<{ worktree: WorktreeInfo; pr: PrHead }>('worktree_create_from_pr', { slug, pr: source.pr })).pr;
-			else await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue) });
+			else {
+				// Orca's retry on a name conflict: the branch or folder exists already (made outside
+				// Kingu, or left by an earlier task), so try `name-2`, `name-3`… up to 25 tries.
+				const first = slug;
+				for (let attempt = 0; ; ) {
+					try {
+						await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue), sparse: input.sparse?.length ? input.sparse : undefined });
+						break;
+					} catch (e) {
+						const next = isNameConflict(String(e)) && !hooks.cancelled?.() ? nextCandidate(first, attempt, new Set([...taken, ...this.#reserved])) : null;
+						if (!next) throw e;
+						({ slug, attempt } = next);
+						mine.add(slug);
+						this.#reserved.add(slug);
+					}
+				}
+			}
 		} catch (e) {
-			notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
+			if (!hooks.cancelled?.()) notifications.error(t('adeTasks.tasks.createWorktreeFailed', { error: String(e) }));
+			return;
+		}
+		// Cancelled while git worked: the new worktree goes again (a branch it reused stays).
+		if (hooks.cancelled?.()) {
+			await invoke('worktree_remove', { slug, force: true, deleteBranch: source.kind === 'new' ? 'force' : 'keep' }).catch((e) => clientLog('info', `cancel create ${slug}: ${e}`));
+			status.flash(t('ade.creating.cancelled', { title }));
 			return;
 		}
 		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's or one you picked).
@@ -422,13 +526,18 @@ class AdeTasks {
 			Date.now()
 		);
 		await this.#save([...this.list, task]);
+		hooks.saved?.(slug);
 		const listed = await invoke<WorktreeInfo[]>('worktree_list').catch(() => this.listed);
 		this.listed = listed;
 		this.worktrees = listed.filter((w) => w.slug);
 		if (input.open !== false) this.openTask(slug);
 		const yaml = await this.#kinguYaml();
 		// kingu.yaml worktree.sharedDirectories and kingu.repo.symlinkPaths (Orca): linked from the main checkout.
-		await invoke<string[]>('worktree_link_shared', { slug }).catch((e) => clientLog('info', `link shared ${slug}: ${e}`));
+		// The card shows each later step (Orca's in-tab setup status); .worktreeinclude copies can take a while.
+		this.busy[slug] = t('ade.creating.stepShared');
+		await invoke<string[]>('worktree_link_shared', { slug })
+			.catch((e) => clientLog('info', `link shared ${slug}: ${e}`))
+			.finally(() => delete this.busy[slug]);
 		const marker = await this.#runSetup(slug, input.open !== false, yaml);
 		await this.#openDefaultTabs(slug, input.open !== false, yaml);
 		if (input.issue && isFolderGithub(input.issue)) await this.#runIssueCommand(slug, input.issue, input.open !== false);
@@ -806,7 +915,7 @@ class AdeTasks {
 		const token = crypto.randomUUID();
 		const hookSettings =
 			profile.status === 'hooks'
-				? await invoke<string>('agent_hook_settings', { token }).catch((e) => {
+				? await invoke<string>('agent_hook_settings', { token, program: programOf(cli) }).catch((e) => {
 						clientLog('error', `agent hooks for ${slug}: ${e}`);
 						return null;
 					})
@@ -972,7 +1081,7 @@ class AdeTasks {
 	 * saw the uncommitted changes in the dialog and removes them too; without it a dirty worktree
 	 * still asks. False when nothing was removed.
 	 */
-	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean }): Promise<boolean> {
+	async removeConfirmed(slug: string, opts: { deleteBranch: BranchRemoval; force: boolean; onKept?: (branch: string) => void }): Promise<boolean> {
 		if (this.#removing.has(slug)) {
 			status.flash(t('adeWorkflow.alreadyRemoving', { slug }));
 			return false;
@@ -1059,8 +1168,38 @@ class AdeTasks {
 		delete this.statErrors[slug];
 		await this.#save(removeTask(this.list, slug));
 		appMode.forget(slug);
-		status.flash(kept ? t('adeTasks.tasks.removedKeptBranch', { slug, branch: kept }) : t('adeTasks.tasks.removed', { slug }), kept ? 10000 : undefined);
+		if (kept && opts.onKept) opts.onKept(kept);
+		else status.flash(kept ? t('adeTasks.tasks.removedKeptBranch', { slug, branch: kept }) : t('adeTasks.tasks.removed', { slug }), kept ? 10000 : undefined);
 		return true;
+	}
+
+	/**
+	 * Orca's bulk delete (sidebar multi-select, Delete with Descendants): each worktree goes, and the
+	 * branches git kept because of unmerged commits are offered for review afterwards ("Review N
+	 * Branches") instead of one toast each.
+	 */
+	async removeMany(slugs: string[]): Promise<number> {
+		const kept: string[] = [];
+		let removed = 0;
+		for (const s of slugs) if (await this.removeConfirmed(s, { deleteBranch: this.defaultBranchRemoval(s), force: false, onKept: (b) => kept.push(b) })) removed++;
+		if (kept.length) this.reviewKeptBranches(kept);
+		else if (removed) status.flash(t('ade.branches.removedMany', { count: removed }));
+		return removed;
+	}
+
+	/** The "Review N Branches" notice after a bulk delete (Orca's preserved branches). */
+	reviewKeptBranches(branches: string[]) {
+		notifications.info(t('ade.branches.kept', { count: branches.length }), {
+			actions: [{ label: t('ade.branches.review', { count: branches.length }), run: () => adeDialogs.open({ kind: 'branches', branches }) }]
+		});
+	}
+
+	/** Orca's Archive: off the side bar (the worktree, branch and session stay); its panels close. */
+	async archive(slug: string, on = true) {
+		if (!this.list.some((t) => t.slug === slug)) return;
+		if (on) adeLayout.drop(slug);
+		await this.#patch(slug, { archived_at: on ? Date.now() : null });
+		status.flash(on ? t('ade.archive.done', { title: this.find(slug)?.meta.title ?? slug }) : t('ade.archive.restored', { title: this.find(slug)?.meta.title ?? slug }));
 	}
 
 	// -------------------------------------------------------------------------------------------
@@ -1165,9 +1304,14 @@ class AdeTasks {
 	async createPr(slug: string) {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
-		const gh = await this.checkGh();
+		let gh = await this.checkGh();
 		const title = ft('forge.create.title', forgeOf(gh));
-		if (gh?.provider === 'gitlab' && !gh.authenticated) {
+		if (gh?.provider === 'bitbucket' && !gh.authenticated) {
+			// Orca's Bitbucket provider: offer to connect right away.
+			const { connectBitbucket } = await import('./bitbucket.svelte');
+			if (!(await connectBitbucket())) return;
+			gh = await this.checkGh();
+		} else if (gh?.provider === 'gitlab' && !gh.authenticated) {
 			await message(gh.detail, { title, kind: 'info' });
 			return;
 		}
@@ -1241,6 +1385,19 @@ class AdeTasks {
 		const meta = this.list.find((t) => t.slug === slug);
 		const next = meta ? renamedTitle(meta.title, title) : null;
 		if (next !== null) await this.#patch(slug, { title: next });
+	}
+
+	/** The card's note alone (`kingu task set --comment`); empty clears it. */
+	async setComment(slug: string, comment: string) {
+		if (!this.list.some((t) => t.slug === slug)) return;
+		await this.#patch(slug, { comment: comment.trim() || null });
+	}
+
+	/** Orca's Edit Worktree Details: name, comment and linked issue in one save. */
+	async updateDetails(slug: string, d: { title: string; comment: string | null; issue: IssueLink | null }) {
+		const meta = this.list.find((t) => t.slug === slug);
+		if (!meta) return;
+		await this.#patch(slug, { title: renamedTitle(meta.title, d.title) ?? meta.title, comment: d.comment, issue: d.issue });
 	}
 
 	/** The task whose side bar card shows the inline rename box (⌥⌘R, the card menu). */

@@ -15,7 +15,7 @@ export type WorktreeAction =
 	| 'copyBranch'
 	| 'rename'
 	| 'copyPath'
-	| 'rename'
+	| 'editDetails'
 	| 'markDone'
 	| 'reopen'
 	| 'moveStatus'
@@ -63,7 +63,7 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 		{ id: 'openInChat', label: t('adeTasks.worktree.openInChat'), enabled: w.hasWorktree !== false },
 		{ id: 'continueInChat', label: t('adeTasks.worktree.continueInChat'), enabled: (w.chatSessions ?? 0) > 0 && !w.running && w.hasWorktree !== false }
 	);
-	rows.push({ id: 'copyBranch', label: t('adeTasks.worktree.copyBranch') }, { id: 'rename', label: t('adeTasks.worktree.rename') }, 'separator');
+	rows.push({ id: 'copyBranch', label: t('adeTasks.worktree.copyBranch') }, { id: 'rename', label: t('adeTasks.worktree.rename') }, { id: 'editDetails', label: t('adeTasks.details.menu') }, 'separator');
 	rows.push(w.status === 'done' ? { id: 'reopen', label: t('adeTasks.worktree.reopen') } : { id: 'markDone', label: t('adeTasks.worktree.markDone'), enabled: !w.running });
 	// Orca's Move to Status and agent session continuation.
 	const sessions = (w.sessions ?? 0) > 0 && !w.running && w.hasWorktree !== false;
@@ -81,14 +81,56 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 	return rows;
 }
 
-export type JumpRow = { key: string; label: string; description: string; group: string };
+/** A task as the jump palette ranks it. `seen`: when the user last opened it (appMode.viewedAt). */
+export type JumpTask = { slug: string; title: string; status: TaskStatus; statusLabel: string; branch: string; pr?: number; updated: number; seen?: number };
+export type JumpItem = { id: string; label: string; description: string; separator?: string; positions?: number[] };
+/** Orca's jump palette shows this many recent rows before any typing (`worktree-jump` recents). */
+export const JUMP_RECENT = 9;
+export const JUMP_CREATE = 'create:';
+export const JUMP_FOLDER = '__folder';
 
-/** Worktree Jump palette rows: the folder first, then tasks needing you, in progress, done. */
-export function jumpRows(
+const NEEDS_YOU: readonly TaskStatus[] = ['waiting'];
+
+/**
+ * Orca's Worktree Jump (⌘J, `components/worktree-jump`, docs model/quick-open.mdx). With nothing
+ * typed: the worktrees that need you, then the most recently used (opened or active), then the
+ * folder's own checkout. Typed text: `#123` / `123` finds the worktree of that PR, else a fuzzy
+ * match on the title, then the branch; a last row creates a worktree named after the text.
+ */
+export function jumpItems(
+	query: string,
 	folder: { name: string; branch: string },
-	groups: { label: string; tasks: { slug: string; title: string; status: string; branch?: string }[] }[]
-): JumpRow[] {
-	const rows: JumpRow[] = [{ key: '', label: folder.name, description: `primary · ${folder.branch || 'HEAD'}`, group: t('adeTasks.worktree.folderGroup') }];
-	for (const g of groups) for (const t of g.tasks) rows.push({ key: t.slug, label: t.title, description: `${t.status} · ${t.branch ?? `kingu/${t.slug}`}`, group: g.label });
-	return rows;
+	tasks: JumpTask[],
+	match: (q: string, target: string) => { score: number; positions: number[] } | null,
+	labels: { needsYou: string; recent: string; folder: string; matches: string; create: (q: string) => string; createHint: string }
+): JumpItem[] {
+	const q = query.trim();
+	const describe = (x: JumpTask) => [x.statusLabel, x.branch, x.pr ? `#${x.pr}` : ''].filter(Boolean).join(' · ');
+	const folderItem: JumpItem = { id: JUMP_FOLDER, label: folder.name, description: `primary · ${folder.branch || 'HEAD'}` };
+	if (!q) {
+		const recency = (x: JumpTask) => Math.max(x.seen ?? 0, x.updated);
+		const needs = tasks.filter((x) => NEEDS_YOU.includes(x.status)).sort((a, b) => recency(b) - recency(a));
+		const rest = tasks.filter((x) => !NEEDS_YOU.includes(x.status)).sort((a, b) => recency(b) - recency(a)).slice(0, Math.max(0, JUMP_RECENT - needs.length));
+		return [
+			...needs.map((x, i) => ({ id: x.slug, label: x.title, description: describe(x), separator: i === 0 ? labels.needsYou : undefined })),
+			...rest.map((x, i) => ({ id: x.slug, label: x.title, description: describe(x), separator: i === 0 ? labels.recent : undefined })),
+			{ ...folderItem, separator: labels.folder }
+		];
+	}
+	const pr = /^#?(\d+)$/.exec(q)?.[1];
+	const scored: { item: JumpItem; score: number }[] = [];
+	for (const x of tasks) {
+		if (pr && x.pr === Number(pr)) {
+			scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: Infinity });
+			continue;
+		}
+		const m = match(q, x.title);
+		const b = m ? null : match(q, x.branch);
+		if (m) scored.push({ item: { id: x.slug, label: x.title, description: describe(x), positions: m.positions }, score: m.score + 1000 });
+		else if (b) scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: b.score });
+	}
+	const f = match(q, folder.name);
+	if (f) scored.push({ item: { ...folderItem, positions: f.positions }, score: f.score });
+	const found = scored.sort((a, b) => b.score - a.score).map((s, i) => ({ ...s.item, separator: i === 0 ? labels.matches : undefined }));
+	return [...found, { id: JUMP_CREATE + q, label: labels.create(q), description: labels.createHint }];
 }

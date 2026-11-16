@@ -17,6 +17,8 @@ const VERSION: u32 = 1;
 pub const STATUSES: &[&str] = &["running", "waiting", "review", "done", "failed"];
 const MAX_TASKS: usize = 500;
 const MAX_TITLE: usize = 200;
+/// Orca's worktree comment (Edit Worktree Details, `orca worktree set --comment`).
+const MAX_COMMENT: usize = 2000;
 const MAX_PROMPT: usize = 64 * 1024;
 /// Agent host run statuses (`RunStatus` in the webview's agent/events.ts).
 pub const RUN_STATUSES: &[&str] = &["starting", "running", "waiting", "idle", "stopped", "failed", "done"];
@@ -141,6 +143,12 @@ pub struct TaskMeta {
   /// (agent/orchestration.rs); absent for a task you started.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub dispatched_by: Option<String>,
+  /// A note on the worktree card (Orca's Edit Worktree Details comment); absent when empty.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub comment: Option<String>,
+  /// Unix ms it was archived (Orca's `isArchived`: off the side bar, worktree kept); absent otherwise.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub archived_at: Option<u64>,
 }
 
 /// One agent session a task ran, so it can be continued later (or handed to another agent).
@@ -195,6 +203,9 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
     }
     if t.title.trim().is_empty() || t.title.chars().count() > MAX_TITLE {
       return Err(tr!(TasksMsg::TitleLength, name = t.slug, max = MAX_TITLE));
+    }
+    if t.comment.as_ref().is_some_and(|c| c.chars().count() > MAX_COMMENT) {
+      return Err(tr!(TasksMsg::CommentLength, name = t.slug, max = MAX_COMMENT));
     }
     if t.prompt.len() > MAX_PROMPT {
       return Err(tr!(TasksMsg::TaskPromptTooLarge, slug = t.slug, max = MAX_PROMPT));
@@ -411,6 +422,8 @@ mod tests {
       parent: Some("base-task".into()),
       hibernated_at: Some(4),
       dispatched_by: Some("coordinator".into()),
+      comment: None,
+      archived_at: None,
     }
   }
 
@@ -439,6 +452,12 @@ mod tests {
     assert_eq!(after[1], task("b"));
     list[0].title = "ก".repeat(MAX_TITLE + 1);
     assert!(save(tmp.path(), &list).is_err(), "longer than {MAX_TITLE} characters");
+    list[0].title = "ok".into();
+    list[0].comment = Some("x".repeat(MAX_COMMENT + 1));
+    assert!(save(tmp.path(), &list).is_err(), "comment longer than {MAX_COMMENT} characters");
+    list[0].comment = Some("waiting on design".into());
+    save(tmp.path(), &list).unwrap();
+    assert_eq!(load(tmp.path()).unwrap()[0].comment.as_deref(), Some("waiting on design"));
     list[0].title = "ก".repeat(MAX_TITLE);
     assert!(save(tmp.path(), &list).is_ok(), "the limit counts characters, not bytes");
   }

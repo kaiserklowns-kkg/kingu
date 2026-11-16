@@ -4,12 +4,18 @@
 	import AttemptsCompare from './AttemptsCompare.svelte';
 	import PrCreateDialog from './PrCreateDialog.svelte';
 	import RemoveTaskDialog from './RemoveTaskDialog.svelte';
+	import EditDetailsDialog from './EditDetailsDialog.svelte';
+	import BranchReviewDialog from './BranchReviewDialog.svelte';
 </script>
 
 {#if adeDialogs.current?.kind === 'pr'}
 	{#key adeDialogs.current.slug}<PrCreateDialog slug={adeDialogs.current.slug} onClose={() => adeDialogs.close()} />{/key}
 {:else if adeDialogs.current?.kind === 'remove'}
 	{#key adeDialogs.current.slug}<RemoveTaskDialog slug={adeDialogs.current.slug} onClose={() => adeDialogs.close()} />{/key}
+{:else if adeDialogs.current?.kind === 'details'}
+	{#key adeDialogs.current.slug}<EditDetailsDialog slug={adeDialogs.current.slug} onClose={() => adeDialogs.close()} />{/key}
+{:else if adeDialogs.current?.kind === 'branches'}
+	<BranchReviewDialog branches={adeDialogs.current.branches} onClose={() => adeDialogs.close()} />
 {:else if adeDialogs.current?.kind === 'compare'}
 	{#key adeDialogs.current.group}<AttemptsCompare group={adeDialogs.current.group} onClose={() => adeDialogs.close()} />{/key}
 {/if}

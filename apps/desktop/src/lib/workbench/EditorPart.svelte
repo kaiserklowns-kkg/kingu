@@ -135,7 +135,7 @@
 
 <!-- View: Toggle Centered Layout (VS Code's CenteredViewLayout): empty margins with sashes. The
      grid stays in the same element either way, so toggling never re-creates the editors. -->
-<div class="flex h-full min-w-0 bg-(--vscode-editor-background)" bind:clientWidth={width}>
+<div data-part="editor" class="flex h-full min-w-0 bg-(--vscode-editor-background)" bind:clientWidth={width}>
 	{#if centered}
 		<div class="h-full shrink-0" style:width="{sizes[0]}px"></div>
 		<Sash orientation="vertical" onDrag={(d) => drag('left', d)} onReset={resetCentered} />

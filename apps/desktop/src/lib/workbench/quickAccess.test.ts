@@ -19,6 +19,13 @@ describe('quick access prefixes', () => {
 		expect(parseQuickInput('src/main')).toEqual({ kind: 'files', query: 'src/main' });
 		// `viewer` is a file name, not the `view ` prefix.
 		expect(parseQuickInput('viewer.ts').kind).toBe('files');
+		expect(parseQuickInput('task build')).toEqual({ kind: 'task', query: 'build' });
+		expect(parseQuickInput('debug ')).toEqual({ kind: 'debug', query: '' });
+		expect(parseQuickInput('term zsh')).toEqual({ kind: 'term', query: 'zsh' });
+		expect(parseQuickInput('%hello world')).toEqual({ kind: 'text', query: 'hello world' });
+		// Without the space they are file names (`tasks.json`, `terminal.ts`).
+		expect(parseQuickInput('tasks.json').kind).toBe('files');
+		expect(parseQuickInput('terminal.ts').kind).toBe('files');
 	});
 
 	test('file:line[:col] like VS Code extractRangeFromFilter', () => {

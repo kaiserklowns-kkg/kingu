@@ -14,6 +14,7 @@ export const cli = {
 	'cli.outsideFolder': '{path} ไม่ได้อยู่ในโฟลเดอร์ที่เปิดใน Kingu ให้เปิดโฟลเดอร์ของมันก่อน (kingu open <โฟลเดอร์>)',
 	'cli.folderNotOpened': 'Kingu ไม่ได้เปิด {path}',
 	'cli.taskNotCreated': 'ไม่ได้สร้างงาน (ดูการแจ้งเตือนใน Kingu)',
+	'cli.taskNotFound': 'ไม่มีงาน {slug} ในโฟลเดอร์ของหน้าต่างนี้',
 	'cli.unknownRequest': 'ไม่รู้จักคำขอ: {method}',
 	'cli.noProfile': 'ไม่มีโปรไฟล์ชื่อ {name} (ดูรายชื่อได้ที่ Profiles: Switch Profile…)'
 } satisfies Record<keyof typeof en, string>;

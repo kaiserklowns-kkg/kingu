@@ -27,6 +27,9 @@
 //! through [`set_notifier`] (the status bar's "waiting for git"). After [`WAIT_TIMEOUT`] it gives
 //! up with a message naming the operation it waited for. Read-only commands do not queue; they
 //! run with `--no-optional-locks` (see `git::run`) so they never take the index lock themselves.
+//!
+//! Every git child process, read or write, also needs a slot from `git_admission` (Orca's
+//! admission budgets); an operation holding lanes here runs its git at `Interactive` tier.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -145,6 +148,9 @@ pub fn repo_keys(dir: &Path) -> (PathBuf, PathBuf) {
 /// Lanes held for one operation; dropping it lets the next one in.
 pub struct QueueGuard {
   held: Vec<(Key, Arc<Lane>)>,
+  /// A write somebody waits for: its git runs at `Interactive` admission (git_admission) unless
+  /// the thread already chose a tier (auto-fetch stays `Background`).
+  _tier: crate::git_admission::TierGuard,
 }
 
 impl Drop for QueueGuard {
@@ -227,7 +233,7 @@ pub fn lock_for(dir: &Path, scope: Scope, label: &str, timeout: Duration) -> Res
   if scope != Scope::Refs {
     keys.push(tree_key);
   }
-  let mut guard = QueueGuard { held: Vec::new() };
+  let mut guard = QueueGuard { held: Vec::new(), _tier: crate::git_admission::scoped_default(crate::git_admission::Tier::Interactive) };
   for key in keys {
     // On a timeout the guard drops what was already taken.
     let lane = acquire(&key, label, &common, deadline, timeout)?;

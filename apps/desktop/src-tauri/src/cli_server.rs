@@ -27,14 +27,17 @@ use crate::agent::orchestration;
 use crate::i18n::msg::CliMsg;
 use crate::tr;
 
+/// A task comment, as `agent/tasks.rs` allows it (Orca's worktree comment).
+const MAX_COMMENT: usize = 2000;
+
 /// Sent to the window: `{ id, method, params }`; answered with `cli_reply`.
 pub const REQUEST_EVENT: &str = "kingu-cli:request";
 const WINDOW_TIMEOUT: Duration = Duration::from_secs(30);
+/// `workspaceCleanup.run` removes worktrees one after another, which can take minutes.
+const CLEANUP_RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const MAX_TITLE: usize = 200;
 const MAX_PROMPT: usize = 64 * 1024;
 const MAX_MESSAGE: usize = 1000;
-/// `workspaceCleanup.run` removes worktrees one after another, which can take minutes.
-const CLEANUP_RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// The name agents and people type; the bundled binary is `kingu-cli` (see crates/kingu-cli/Cargo.toml).
 pub const COMMAND: &str = "kingu";
 const BUNDLED: &str = if cfg!(windows) { "kingu-cli.exe" } else { "kingu-cli" };
@@ -612,6 +615,24 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
         return Err(rpc(ERR_FAILED, tr!(CliMsg::UnknownTask, slug)));
       }
       ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug }), true)
+    }
+    protocol::METHOD_TASK_SET => {
+      let root = folder(app, params)?;
+      let list = tasks(&root)?;
+      // No slug: the task whose worktree the command runs in (an agent noting its own card).
+      let slug = match str_param(params, "slug").filter(|s| !s.is_empty()) {
+        Some(s) => s.to_owned(),
+        None => cwd_of(params).as_deref().and_then(|c| orchestration::caller_task(&root, c)).ok_or_else(|| rpc(ERR_BAD_REQUEST, tr!(CliMsg::NoTaskHere)))?,
+      };
+      crate::agent::worktree::validate_slug(&slug).map_err(|e| rpc(ERR_BAD_REQUEST, e))?;
+      if !list.iter().any(|t| t.slug == slug) {
+        return Err(rpc(ERR_FAILED, tr!(CliMsg::UnknownTask, slug)));
+      }
+      let comment = str_param(params, "comment").unwrap_or_default().trim().to_owned();
+      if comment.chars().count() > MAX_COMMENT {
+        return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::CommentTooLong, max = MAX_COMMENT)));
+      }
+      ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug, "comment": comment }), false)
     }
     protocol::METHOD_CLEANUP_PREVIEW => {
       folder(app, params)?;

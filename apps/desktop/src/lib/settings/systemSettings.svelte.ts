@@ -14,6 +14,16 @@ class SystemSettings {
 	/** A dedicated page instead of the settings editor (Orca's settings panes; `accounts` is Manage Accounts). */
 	page = $state<SettingsPageId | null>(null);
 
+	/** A search and scope a command asked for (VS Code's `workbench.action.openSettings` query
+	 * argument, Open User / Workspace Settings); the settings page and editor take each part once. */
+	request = $state<{ query?: string; scope?: 'user' | 'workspace' } | null>(null);
+
+	/** Opens every setting with `query` in the search box and `scope`'s tab picked. */
+	open(request: { query?: string; scope?: 'user' | 'workspace' }) {
+		this.show(null);
+		this.request = request;
+	}
+
 	/** Opens on `group`; with none, on the Agent pane, Orca's first (its Agents pane), not every setting. */
 	show(group: string | null = 'Agent') {
 		this.group = group;

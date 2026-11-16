@@ -15,7 +15,7 @@ import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { confirmKill } from '#lib/terminal/confirmKill.ts';
-import { cyclePane, equalize, leaf, removePane, setRatio, splitPane, type PanePath, type SplitDirection } from '#lib/terminal/paneLayout.ts';
+import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PanePath, type SplitDirection } from '#lib/terminal/paneLayout.ts';
 import { killPty } from '#lib/terminal/pty.ts';
 import { focusTerminal } from '#lib/terminal/registry.ts';
 import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } from '#lib/terminal/sessions.ts';
@@ -43,13 +43,18 @@ import {
 	type TerminalTab
 } from './adeTabs.ts';
 import { switcherOrder } from './sidebarView.ts';
+import { closeRegion, liveTree, parseSavedTabs, showIn, splitTab, splittable, type SplitDir, type TabTree } from './adeSplit.ts';
 import { browserTitle } from '#lib/workbench/floating.ts';
 import { t } from '#lib/i18n/index.ts';
 
 export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
+/** The native view label of a worktree's browser tab (AdeBrowser.svelte, browser commands). */
+export const browserLabel = (key: string, id: string) => `ade-browser-${key || 'primary'}-${id}`;
 const STORE = 'kingu.adeTerminals';
+/** Browser and file tabs, tab order, pins, colours and splits (Orca restores every tab). */
+const TABS_STORE = 'kingu.adeTabs';
 
 class AdeLayout {
 	/** The center shows a page from the side bar's top (Tasks = the board, Automations or Issues) instead of a worktree. */
@@ -69,6 +74,10 @@ class AdeLayout {
 	pinned = $state<Record<string, string[]>>({});
 	/** A tab's color dot (`#rrggbb`), keyed by worktree and tab id. */
 	colors = $state<Record<string, string>>({});
+	/** Each worktree's regions (Orca's tab groups, drag-to-edge splits): a tree of tab ids. */
+	layouts = $state<Record<string, TabTree>>({});
+	/** The tab being dragged from the tab strip (the center shows its split drop zones). */
+	draggingTab = $state<string | null>(null);
 	#seq = $state(0);
 	/** Root tag of the folder whose terminal tabs these are; null until loaded. */
 	#tag = $state<string | null>(null);
@@ -79,20 +88,38 @@ class AdeLayout {
 				const state = { terminals: $state.snapshot(this.terminals), active: $state.snapshot(this.active), seq: this.#seq };
 				if (this.#tag) persist(storeName(STORE, this.#tag), state);
 			});
+			$effect(() => {
+				const tabs = {
+					browsers: $state.snapshot(this.browsers),
+					files: $state.snapshot(this.files),
+					order: $state.snapshot(this.order),
+					pinned: $state.snapshot(this.pinned),
+					colors: $state.snapshot(this.colors),
+					layouts: $state.snapshot(this.layouts)
+				};
+				if (this.#tag) persist(storeName(TABS_STORE, this.#tag), tabs);
+			});
 		});
 	}
 
 	/** Terminal tabs of folder `tag` come back (their PTYs outlive reloads, folder switches and
-	 *  restarts); file tabs start over. A restored tab never re-runs its command. */
+	 *  restarts), and so do its browser and file tabs, order, pins, colours and splits (Orca
+	 *  restores every tab; untitled buffers and previews start over). A restored tab never re-runs
+	 *  its command; a browser page loads when its tab is first shown. */
 	loadTerminals(tag: string) {
 		const saved = restore(storeName(STORE, tag), parseAdeTerminals);
+		const tabs = restore(storeName(TABS_STORE, tag), (raw) => parseSavedTabs(raw)) ?? parseSavedTabs(null);
 		this.terminals = saved ? Object.fromEntries(Object.entries(saved.terminals).map(([k, list]) => [k, list.map(withoutRun)])) : {};
-		this.browsers = {};
-		this.order = {};
-		this.pinned = {};
-		this.colors = {};
+		this.browsers = tabs.browsers;
+		this.files = tabs.files;
+		this.order = tabs.order;
+		this.pinned = tabs.pinned;
+		this.colors = tabs.colors;
+		this.layouts = tabs.layouts;
 		this.active = saved?.active ?? {};
-		this.#seq = saved?.seq ?? 0;
+		// New tab ids stay above every restored one (`b<n>` as well as `t<n>`).
+		const top = Object.values(tabs.browsers).flat().reduce((m, b) => Math.max(m, Number(b.id.slice(1)) || 0), 0);
+		this.#seq = Math.max(saved?.seq ?? 0, top);
 		this.mru = {};
 		this.closed = {};
 		this.switcher = null;
@@ -103,6 +130,8 @@ class AdeLayout {
 	unloadTerminals() {
 		this.#tag = null;
 		this.terminals = {};
+		this.layouts = {};
+		this.files = {};
 		this.browsers = {};
 		this.order = {};
 		this.pinned = {};
@@ -356,6 +385,13 @@ class AdeLayout {
 		this.browsers[key] = list.map((b) => (b.id === id ? { ...b, title: title.trim() } : b));
 	}
 
+	/** Where the page went (saved, so a restored tab reopens there). */
+	setBrowserUrl(key: string, id: string, url: string) {
+		const list = this.browsers[key];
+		if (!list?.some((b) => b.id === id && b.url !== url)) return;
+		this.browsers[key] = list.map((b) => (b.id === id ? { ...b, url } : b));
+	}
+
 	closeBrowser(key: string, id: string) {
 		const list = this.browsers[key] ?? [];
 		const tab = list.find((b) => b.id === id);
@@ -469,8 +505,58 @@ class AdeLayout {
 		else void this.closeTerminal(key, id);
 	}
 
+	/** The worktree's regions, without closed tabs; null when it shows one tab. */
+	treeOf(key: string): TabTree | null {
+		const tree = this.layouts[key];
+		return tree ? liveTree(tree, new Set(this.tabs(key).map((t) => t.id)), this.activeTab(key)) : null;
+	}
+
+	/** Orca's drop on a region's edge: tab `id` gets the right or bottom part of region `target` (the active one by default). */
+	splitTab(key: string, id: string, dir: SplitDir, target = this.activeTab(key)) {
+		if (!this.tabs(key).some((t) => t.id === id)) return;
+		// The active tab moving out of its own region: another tab takes that region first.
+		if (id === target) {
+			const other = (this.mru[key] ?? []).find((t) => t !== id && this.tabs(key).some((x) => x.id === t) && !(this.treeOf(key) && hasLeaf(this.treeOf(key)!, t))) ?? this.tabs(key).find((t) => t.id !== id && splittable(t.id))?.id;
+			if (!other) return;
+			this.layouts[key] = showIn(this.treeOf(key) ?? leaf(id), id, other) ?? leaf(other);
+			target = other;
+			this.active[key] = other;
+		}
+		const next = splitTab(this.treeOf(key), target, id, dir);
+		if (next) this.layouts[key] = next;
+	}
+
+	/** Closes region `id` (its tab stays open in the strip). */
+	closeRegion(key: string, id: string) {
+		const next = closeRegion(this.treeOf(key), id);
+		if (next) this.layouts[key] = next;
+		else delete this.layouts[key];
+		if (this.activeTab(key) === id && next) this.active[key] = leaves(next)[0];
+	}
+
+	unsplit(key: string) {
+		delete this.layouts[key];
+	}
+
+	setSplitRatio(key: string, path: PanePath, ratio: number) {
+		const tree = this.treeOf(key);
+		if (tree) this.layouts[key] = setRatio(tree, path, ratio);
+	}
+
+	/** A click in a region: its tab becomes the active one (the regions stay). */
+	focusRegion(key: string, id: string) {
+		if (this.activeTab(key) !== id) this.select(key, id);
+	}
+
 	/** Shows a tab; `focus` also puts the keyboard in it when it is a terminal (a shortcut, not a click). */
 	select(key: string, tab: string, focus = false) {
+		// A tab not in a region shows in the active region (a tab in one just takes focus).
+		const tree = this.treeOf(key);
+		if (tree) {
+			const next = showIn(tree, this.activeTab(key), tab);
+			if (next) this.layouts[key] = next;
+			else delete this.layouts[key];
+		}
 		this.active[key] = tab;
 		this.mru[key] = touchMru(this.mru[key] ?? [], tab);
 		const t = focus ? this.terminalTab(key, tab) : undefined;
@@ -529,6 +615,7 @@ class AdeLayout {
 		delete this.terminals[key];
 		delete this.files[key];
 		delete this.browsers[key];
+		delete this.layouts[key];
 		delete this.active[key];
 		delete this.mru[key];
 		delete this.closed[key];

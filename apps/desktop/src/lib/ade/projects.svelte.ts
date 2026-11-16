@@ -30,7 +30,8 @@ import { checkLiveness, paneRow, type Liveness, type PtyListing } from './agentP
 import { CLI_SESSIONS_STORE } from './cliSessions.svelte';
 import { cliTaskRuntime } from './cliRuntime';
 import { toTaskRuntime, type TaskMeta, type TaskRuntime, type TaskView } from './model';
-import { pendingDue, projectName, projectView, rootPanes, sidebarProjects, type Project, type SidebarProject, type TaskEvidence } from './projects';
+import { groupSections, pendingDue, projectName, projectView, rootPanes, sidebarProjects, type GroupSection, type Project, type ProjectGroup, type SidebarProject, type TaskEvidence } from './projects';
+import { quick } from '#lib/workbench/quick.svelte.ts';
 import { adeLayout } from './adeLayout.svelte';
 import { adeTasks } from './tasks.svelte';
 
@@ -46,8 +47,13 @@ type Pane = { hook?: HookState; hookAgent?: string; offset: number };
 /** One other project's polling state (not reactive: `evidence` is what views read). */
 type Tracker = { tag: string; cli: CliSessionsState; hooks: Record<string, HookState>; offsets: Record<string, number>; live: Record<string, Liveness>; panes: Record<string, Pane> };
 
+type NestedScan = { kind: 'git_repo' | 'non_git_folder'; repos: { path: string; name: string; depth: number }[]; truncated: boolean; timed_out: boolean };
+type ImportResult = { group: ProjectGroup | null; imported: number; already_known: number; failed: [string, string][] };
+
 class Projects {
 	list = $state<Project[]>([]);
+	/** Orca's project groups (projects.rs). */
+	groups = $state<ProjectGroup[]>([]);
 	loaded = $state(false);
 	/** Tasks and worktrees of each other project. */
 	listings = $state<Record<string, Listing>>({});
@@ -63,6 +69,8 @@ class Projects {
 			lastActive: (path) => this.lastActive(path)
 		})
 	);
+	/** The side bar's group sections (the open folder keeps its own place). */
+	sections: GroupSection[] = $derived(groupSections(this.items, this.list, this.groups));
 	/** Added projects other than the open folder. */
 	others: string[] = $derived(this.items.filter((p) => !p.open).map((p) => p.path));
 	added: Set<string> = $derived(new Set(this.list.map((p) => p.path)));
@@ -83,10 +91,96 @@ class Projects {
 	async load() {
 		try {
 			this.list = await invoke<Project[]>('projects_list');
+			this.groups = await invoke<ProjectGroup[]>('project_groups_list');
 		} catch (e) {
 			clientLog('error', `projects_list: ${e}`);
 		}
 		this.loaded = true;
+	}
+
+	async #reload() {
+		this.list = await invoke<Project[]>('projects_list');
+		this.groups = await invoke<ProjectGroup[]>('project_groups_list');
+	}
+
+	/** New Project Group…: asks for a name; `move`: a project to put in it straight away. */
+	async newGroup(move?: string) {
+		const name = await quick.input({ placeholder: t('adeProjects.groupNamePlaceholder'), hint: (v) => (v.trim() ? t('adeProjects.groupCreate', { name: v.trim() }) : t('adeProjects.groupNameHint')) });
+		if (name === undefined) return;
+		try {
+			const g = await invoke<ProjectGroup>('project_groups_create', { name });
+			if (move) await invoke('project_groups_move_project', { path: move, group: g.id });
+			await this.#reload();
+		} catch (e) {
+			notifications.error(t('adeProjects.groupFailed', { error: String(e) }));
+		}
+	}
+
+	async renameGroup(id: string) {
+		const g = this.groups.find((x) => x.id === id);
+		if (!g) return;
+		const name = await quick.input({ placeholder: t('adeProjects.groupNamePlaceholder'), value: g.name, hint: (v) => (v.trim() ? t('adeProjects.groupRenameTo', { name: v.trim() }) : t('adeProjects.groupNameHint')) });
+		if (name === undefined) return;
+		await this.#updateGroup(id, { name });
+	}
+
+	async toggleGroup(id: string) {
+		const g = this.groups.find((x) => x.id === id);
+		if (g) await this.#updateGroup(id, { collapsed: !g.is_collapsed });
+	}
+
+	async #updateGroup(id: string, changes: { name?: string; collapsed?: boolean }) {
+		try {
+			await invoke('project_groups_update', { id, ...changes });
+			await this.#reload();
+		} catch (e) {
+			notifications.error(t('adeProjects.groupFailed', { error: String(e) }));
+		}
+	}
+
+	/** Deletes a group (and its sub-groups); its projects stay, ungrouped (Orca's rule). */
+	async deleteGroup(id: string) {
+		try {
+			await invoke('project_groups_delete', { id });
+			await this.#reload();
+		} catch (e) {
+			notifications.error(t('adeProjects.groupFailed', { error: String(e) }));
+		}
+	}
+
+	/** Puts `path` in `group` (last), or takes it out (`null`). */
+	async moveToGroup(path: string, group: string | null) {
+		try {
+			await invoke('project_groups_move_project', { path, group });
+			await this.#reload();
+		} catch (e) {
+			notifications.error(t('adeProjects.groupFailed', { error: String(e) }));
+		}
+	}
+
+	/** Add Folder of Projects… (Orca's nested import): every repository found inside a folder
+	 * becomes a project, in one group named after the folder. A folder that is itself a
+	 * repository is simply added. */
+	async addFolderOfProjects() {
+		const dir = await open({ directory: true, multiple: false, title: t('adeProjects.folderOfProjects'), defaultPath: workspace.root ?? undefined });
+		if (typeof dir !== 'string') return;
+		try {
+			const scan = await invoke<NestedScan>('project_groups_scan_nested', { path: dir });
+			if (scan.kind === 'git_repo') {
+				await this.add(dir);
+				return;
+			}
+			if (!scan.repos.length) {
+				status.flash(t('adeProjects.folderNoRepos', { name: projectName(dir) }), 6000);
+				return;
+			}
+			const r = await invoke<ImportResult>('project_groups_import_nested', { parent: dir, name: '', paths: scan.repos.map((x) => x.path) });
+			await this.#reload();
+			status.flash(t('adeProjects.folderImported', { added: r.imported, known: r.already_known, failed: r.failed.length, group: r.group?.name ?? projectName(dir) }), 8000);
+			if (scan.truncated) status.flash(t('adeProjects.folderTruncated', { count: scan.repos.length }), 8000);
+		} catch (e) {
+			notifications.error(t('adeProjects.groupFailed', { error: String(e) }));
+		}
 	}
 
 	/** Adds `path`; `quiet`: no status message (a folder that was just opened). */

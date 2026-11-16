@@ -103,6 +103,7 @@ const ALIASES: Readonly<Record<string, AgentIconKey>> = {
 	auggie: 'aug',
 	augment: 'aug',
 	'autohand-code': 'autohand',
+	cbc: 'codebuddy',
 	cn: 'continue',
 	charm: 'crush',
 	'cursor-agent': 'cursor',
@@ -110,19 +111,24 @@ const ALIASES: Readonly<Record<string, AgentIconKey>> = {
 	'deepseek-harness': 'dsh',
 	'dsh-tui': 'dsh',
 	dsb: 'dsh',
+	dst: 'dsh',
 	'gemini-cli': 'gemini',
 	'kimi-cli': 'kimi',
+	'kimi-code': 'kimi',
 	moonshot: 'kimi',
 	'kiro-cli': 'kiro',
 	mimo: 'mimo-code',
 	vibe: 'mistral-vibe',
 	qodercli: 'qoder',
 	qoderclicn: 'qoder-cn',
+	qodercn: 'qoder-cn',
+	'qoder-cli-china': 'qoder-cn',
 	qwen: 'qwen-code',
 	acli: 'rovo',
 	rovodev: 'rovo',
 	'rovo-dev': 'rovo',
-	traecli: 'trae'
+	traecli: 'trae',
+	'zcode-cli': 'zcode'
 };
 
 const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-');

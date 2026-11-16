@@ -522,12 +522,28 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.browser.profile',
+		group: 'Agent',
+		type: 'string',
+		default: '',
+		description:
+			'โปรไฟล์ของเบราว์เซอร์ในแอป (แบบ Orca): แต่ละชื่อมี cookie และ storage ของตัวเอง (macOS 14 ขึ้นไป) ว่างไว้ = ใช้ร่วมกัน มีผลกับแท็บที่เปิดใหม่ (In-app browser profile, like Orca: each name has its own cookies and storage, macOS 14+; empty shares one store. Applies to tabs opened afterwards.)'
+	},
+	{
+		id: 'kingu.browser.openLinksInApp',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ลิงก์เว็บที่ตามจาก terminal ใน Agents layout เปิดเป็นแท็บเบราว์เซอร์ใน worktree นั้น (แบบ Orca) กด Shift ค้างไว้ตอนคลิกเพื่อเปิดในเบราว์เซอร์ของระบบแทน (Web links followed in an Agents-layout terminal open as a browser tab of that worktree, like Orca; hold Shift too for the system browser.)'
+	},
+	{
 		id: 'kingu.agent.statusHooks',
 		group: 'Agent',
 		type: 'boolean',
 		default: true,
 		description:
-			'ให้ agent CLI อื่นนอกจาก claude รายงานสถานะ (กำลังทำ รออนุญาต ถามคำถาม เสร็จรอบ) ผ่าน hooks แบบ Orca: Kingu เพิ่ม hook ของตัวเองใน ~/.gemini/settings.json, ~/.cursor/hooks.json, ~/.copilot/hooks/kingu-desktop.json, ~/.factory/settings.json และ $CODEX_HOME/hooks.json (+ [hooks.state] ใน config.toml) ก่อนเริ่ม CLI นั้นครั้งแรก hook ทำงานเฉพาะใน terminal ที่ Kingu เปิด และเก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak ส่วน opencode ใช้ plugin ต่อ session ไม่แก้ config ปิดเพื่อเอา hook ของ Kingu ออกจากไฟล์เหล่านั้น (Status hooks for non-Claude agent CLIs, like Orca: Kingu adds its own hook entries to those CLI configs; they only report inside Kingu terminals. Turning this off removes them.)',
+			'ให้ agent CLI รายงานสถานะ (กำลังทำ รออนุญาต ถามคำถาม เสร็จรอบ) ผ่าน hooks แบบ Orca: Kingu เพิ่ม hook ของตัวเองใน ~/.claude/settings.json (สำหรับ claude ที่พิมพ์เองใน pane ของงาน, claude 2.0.45 ขึ้นไป), ~/.gemini/settings.json, ~/.cursor/hooks.json, ~/.copilot/hooks/kingu-desktop.json, ~/.factory/settings.json และ $CODEX_HOME/hooks.json (+ [hooks.state] ใน config.toml) ก่อนเริ่ม CLI นั้นครั้งแรก hook ทำงานเฉพาะใน terminal ที่ Kingu เปิด และเก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak ส่วน opencode ใช้ plugin ต่อ session ไม่แก้ config ปิดเพื่อเอา hook ของ Kingu ออกจากไฟล์เหล่านั้น (Status hooks for agent CLIs, like Orca, including a claude typed by hand in a task pane: Kingu adds its own hook entries to those CLI configs; they only report inside Kingu terminals. Turning this off removes them.)',
 		// User-only: it edits the user's own CLI config files.
 		scope: 'application'
 	},

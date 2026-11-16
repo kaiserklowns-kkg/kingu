@@ -235,5 +235,8 @@ export const settings = {
 	'settings.pane.adeTerminal': 'Look and behaviour of terminals in the ADE.',
 	'settings.pane.sourceControlAi': 'Commit messages, pull request text and branch names written by AI.',
 	'settings.pane.pullRequests': 'Creating pull requests and the bots to ignore in reviews.',
+	'settings.defaults.settingsHeader': 'Default Settings: read-only. Copy a setting into your settings.json to change it.',
+	'settings.defaults.keybindingsHeader': 'Default Keyboard Shortcuts: read-only. Override them in your keybindings.json.',
+	'settings.defaults.layout': '{layout} layout only',
 	'settings.pane.project': 'Settings for {name} only, kept by Kingu on this computer. They override your user settings.'
 } as const;

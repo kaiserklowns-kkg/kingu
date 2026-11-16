@@ -223,5 +223,21 @@ export const adeTasks = {
 	'adeTasks.worktree.copiedBranch': 'Copied the branch name',
 	'adeTasks.worktree.copyBranchFailed': 'Could not copy the branch name',
 	'adeTasks.worktree.openFolderFirst': 'Open a folder first',
-	'adeTasks.worktree.jumpPlaceholder': 'Go to worktree'
+	'adeTasks.worktree.jumpPlaceholder': 'Go to worktree',
+	'adeTasks.jump.needsYou': 'Needs you',
+	'adeTasks.jump.recent': 'Recent',
+	'adeTasks.jump.matches': 'Worktrees',
+	'adeTasks.jump.create': 'Create worktree "{name}"',
+	'adeTasks.jump.createHint': 'Opens the composer with this name',
+	'adeTasks.details.menu': 'Edit Details…',
+	'adeTasks.details.title': 'Edit Worktree Details',
+	'adeTasks.details.name': 'Name',
+	'adeTasks.details.comment': 'Comment',
+	'adeTasks.details.commentPlaceholder': 'A note shown on the card',
+	'adeTasks.details.issue': 'Linked issue',
+	'adeTasks.details.issuePlaceholder': 'Paste a GitHub or Linear issue URL',
+	'adeTasks.details.badIssue': 'Not a GitHub or Linear issue URL',
+	'adeTasks.details.longComment': 'The comment can be at most {max} characters',
+	'adeTasks.details.save': 'Save',
+	'adeTasks.details.saveFailed': 'Could not save: {error}'
 } as const;

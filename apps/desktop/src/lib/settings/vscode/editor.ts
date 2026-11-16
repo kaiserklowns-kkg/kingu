@@ -633,6 +633,19 @@ export const EDITOR_SETTINGS: SettingSchema[] = [
 		description: 'จัดรูปแบบข้อความที่วาง ต้องมี language server ที่จัดรูปแบบช่วงได้ (Controls whether the editor should automatically format the pasted content. A formatter must be available and the formatter should be able to format a range in a document.)'
 	},
 	{
+		id: 'editor.formatOnSaveMode',
+		group: 'Text Editor',
+		type: 'string',
+		default: 'file',
+		enum: ['file', 'modifications', 'modificationsIfAvailable'],
+		enumDescriptions: [
+			'จัดรูปแบบทั้งไฟล์ (Format the whole file.)',
+			'จัดรูปแบบเฉพาะบรรทัดที่แก้ไข ต้องอยู่ใน git (Format modifications. Requires source control and a range formatter.)',
+			'จัดรูปแบบเฉพาะบรรทัดที่แก้ไขถ้าทำได้ ถ้าไม่มี git จะจัดทั้งไฟล์ (Will attempt to format modifications only (requires source control and a range formatter). If source control can\'t be used, then the whole file will be formatted.)'
+		],
+		description: 'จัดรูปแบบตอนบันทึกทั้งไฟล์หรือเฉพาะส่วนที่แก้ไข ใช้เมื่อเปิด editor.formatOnSave (Controls if format on save formats the whole file or only modifications. Only applies when `#editor.formatOnSave#` is enabled.)'
+	},
+	{
 		id: 'editor.formatOnSave',
 		group: 'Text Editor',
 		type: 'boolean',

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cliAgent, cliOf, cliResume, cliStart, isWorking, parseCliCommand } from './agentCli';
+import { agentForPick, cliAgent, cliOf, cliResume, cliStart, isWorking, parseCliCommand } from './agentCli';
 
 describe('agent CLI', () => {
 	test('parses a plain command and refuses shell syntax', () => {
@@ -24,5 +24,14 @@ describe('agent CLI', () => {
 		expect(isWorking(1000, 2000)).toBe(true);
 		expect(isWorking(1000, 5000)).toBe(false);
 		expect(isWorking(undefined, 5000)).toBe(false);
+	});
+});
+
+describe('agentForPick', () => {
+	test('the default command keeps its flags for the same program', () => {
+		expect(agentForPick('claude', 'claude --model opus')).toBe('claude --model opus');
+		expect(agentForPick('claude', '')).toBe('claude');
+		expect(agentForPick('codex', 'claude --model opus')).toBe('codex');
+		expect(agentForPick('gemini', '')).toBe('gemini');
 	});
 });

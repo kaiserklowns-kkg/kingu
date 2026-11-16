@@ -114,7 +114,46 @@ pub fn create(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>)
 }
 
 /// [`create`] on the branch `<prefix><leaf>` when `leaf` is given (the folder is still the slug).
+/// The app calls [`create_named_sparse`] (an empty folder list checks out everything).
+#[cfg(test)]
 pub fn create_named(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>, leaf: Option<&str>) -> Result<WorktreeInfo, String> {
+  create_named_sparse(repo, slug, base, prefix, leaf, &[])
+}
+
+/// Orca's sparse-checkout directory rule (`is` in out/main/index.js): each entry trimmed, `\` made
+/// `/`, leading and trailing `/` removed; empty and `.` dropped; absolute paths (`/…`, `\…`,
+/// `C:…`) and any `..` part refused; duplicates dropped, first one kept, order kept.
+pub fn normalize_sparse_dirs(dirs: &[String]) -> Result<Vec<String>, String> {
+  const NOT_RELATIVE: &str = "Sparse checkout folders must be paths inside the project.";
+  let mut seen = std::collections::HashSet::new();
+  let mut out = Vec::new();
+  for raw in dirs {
+    let d = raw.trim();
+    let drive = d.len() >= 2 && d.as_bytes()[0].is_ascii_alphabetic() && d.as_bytes()[1] == b':';
+    if d.starts_with('/') || d.starts_with('\\') || drive {
+      return Err(NOT_RELATIVE.into());
+    }
+    let d = d.replace('\\', "/");
+    let d = d.trim_matches('/');
+    if d.is_empty() || d == "." {
+      continue;
+    }
+    if d.split('/').any(|p| p == "..") {
+      return Err(NOT_RELATIVE.into());
+    }
+    if seen.insert(d.to_string()) {
+      out.push(d.to_string());
+    }
+  }
+  Ok(out)
+}
+
+/// `create_named`, checking out only `sparse` folders (plus the files at the top) when it isn't
+/// empty. Orca's `addSparseWorktree` (`fo`): `worktree add --no-checkout`, then in the worktree
+/// `sparse-checkout init --cone`, `sparse-checkout set -- <folders>` and `checkout <branch>`; if a
+/// step fails the half-made worktree and its new branch are removed again.
+pub fn create_named_sparse(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<&str>, leaf: Option<&str>, sparse: &[String]) -> Result<WorktreeInfo, String> {
+  let sparse = normalize_sparse_dirs(sparse)?;
   validate_slug(slug)?;
   if let Some(l) = leaf {
     validate_leaf(l)?;
@@ -138,7 +177,20 @@ pub fn create_named(repo: &Path, slug: &str, base: Option<&str>, prefix: Option<
   let path_str = path.to_str().ok_or("worktree path is not valid UTF-8")?;
   exclude_kingu_logged(repo);
   let _queue = git_queue::lock(repo, Scope::Refs, "worktree add")?;
-  git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
+  if sparse.is_empty() {
+    git(repo, &["worktree", "add", "-b", &branch, "--", path_str, commit])?;
+  } else {
+    git(repo, &["worktree", "add", "--no-checkout", "-b", &branch, "--", path_str, commit])?;
+    let mut set = vec!["sparse-checkout", "set", "--"];
+    set.extend(sparse.iter().map(String::as_str));
+    let steps = git(&path, &["sparse-checkout", "init", "--cone"]).and_then(|_| git(&path, &set)).and_then(|_| git(&path, &["checkout", &branch]));
+    if let Err(e) = steps {
+      let _ = git(repo, &["worktree", "remove", "--force", "--", path_str]);
+      let _ = git(repo, &["branch", "-D", "--", &branch]);
+      return Err(e);
+    }
+    log::info!("worktree {slug}: sparse checkout of {}", sparse.join(", "));
+  }
   log::info!("worktree {slug} created at {path_str} from {base} ({commit})");
   list(repo)?
     .into_iter()
@@ -326,7 +378,7 @@ pub fn remove(repo: &Path, slug: &str, force: bool, branch: DeleteBranch) -> Res
 // `.kingu/` stays out of git status
 
 /// The line that starts Kingu's block in `info/exclude` (written once per repository).
-const EXCLUDE_MARK: &str = "# Kingu: task worktrees and local state (shared .kingu files stay visible)";
+pub(crate) const EXCLUDE_MARK: &str = "# Kingu: task worktrees and local state (shared .kingu files stay visible)";
 
 /// `.kingu/` holds task worktrees and machine-local state (tasks.json, chats.json …), but also
 /// files a team may commit: settings.json, snaps/ and the older `<kind>.sh` scripts. Its children

@@ -41,6 +41,12 @@ pub fn gitlab(p: &Project) -> Result<(Http, Route), String> {
   Ok((t, r))
 }
 
+/// What Kingu does not do on Bitbucket yet (Orca's Bitbucket provider only finds, shows and
+/// creates pull requests too): a translated "open it on bitbucket.org".
+pub fn not_on_bitbucket<T>() -> Result<T, String> {
+  Err(tr!(crate::i18n::msg::BitbucketMsg::NotOnBitbucket))
+}
+
 /// The repository a command acts on: the open folder, or task worktree `slug`.
 fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
   let root = ws.root()?;
@@ -124,6 +130,12 @@ pub async fn forge_pr_create(ws: Workspace, slug: Option<String>, base: String, 
       push_head(&dir)?;
       mr::create(&t, &r, &branch, &base, &title, &body, draft)
     }
+    Forge::Bitbucket(repo) => {
+      let branch = super::worktree::current_branch(&dir)?.ok_or_else(|| tr!(ForgeMsg::NoBranch))?;
+      let t = crate::bitbucket::connected_for_create()?;
+      push_head(&dir)?;
+      crate::bitbucket::create(&t, &repo, &branch, &base, &title, &body)
+    }
     Forge::Github => {
       if title.trim().is_empty() {
         return Err(tr!(ForgeMsg::PrEmptyTitle));
@@ -160,6 +172,7 @@ pub async fn forge_pr_action(ws: Workspace, slug: Option<String>, number: Option
         other => Err(tr!(ForgeMsg::UnknownAction, action = other)),
       }
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => {
       let flag = match method {
         MergeMethod::Merge => "--merge",
@@ -190,6 +203,7 @@ pub async fn forge_pr_edit_title(ws: Workspace, slug: Option<String>, number: Op
       let (p, iid) = gitlab_mr(&t, &r, &dir, number)?;
       mr::edit_title(&t, &p, iid, &title)
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github if title.trim().is_empty() => Err(tr!(ForgeMsg::PrEmptyTitle)),
     Forge::Github => gh(&dir, &["pr", "edit", "--title", title.trim()]).map(drop),
   })
@@ -207,6 +221,7 @@ pub async fn forge_pr_comments(ws: Workspace, slug: Option<String>, number: Opti
       let (p, iid) = gitlab_mr(&t, &r, &dir, number)?;
       mr::comments(&t, &p, iid, &mr_url(&p, iid))
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => serde_json::from_slice(&gh(&dir, &["pr", "view", "--json", "comments,reviews"])?).map_err(|e| e.to_string()),
   })
   .await
@@ -222,6 +237,7 @@ pub async fn forge_pr_comment(ws: Workspace, slug: Option<String>, number: Optio
       let (p, iid) = gitlab_mr(&t, &r, &dir, number)?;
       mr::comment(&t, &p, iid, &body)
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => gh(&dir, &["pr", "comment", "--body", &body]).map(drop),
   })
   .await
@@ -234,6 +250,7 @@ pub async fn forge_check_log(ws: Workspace, slug: Option<String>, url: String) -
   let dir = repo_dir(&ws, slug.as_deref())?;
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(p) => mr::job_log(&crate::gitlab::connected(&p.host)?, &p, &url),
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => {
       let run = actions_run(&url).ok_or_else(|| tr!(ForgeMsg::NoCheckDetails))?;
       let out = gh(&dir, &["run", "view", run, "--log-failed"])?;
@@ -254,6 +271,7 @@ pub async fn forge_review_threads(ws: Workspace, slug: Option<String>, number: u
       let (p, iid) = gitlab_mr(&t, &r, &dir, Some(number))?;
       Ok(mr::thread_nodes(&mr::threads(&t, &p, iid, &mr_url(&p, iid))?))
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => {
       let query = "query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:100){nodes{id isResolved path line comments(first:50){nodes{id databaseId body createdAt author{login} reactionGroups{content viewerHasReacted reactors{totalCount}}}}}}}}}";
       let out = gh(&dir, &["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}", "-F", &format!("n={number}"), "-f", &format!("query={query}")])?;
@@ -274,6 +292,7 @@ pub async fn forge_reply_thread(ws: Workspace, slug: Option<String>, number: Opt
       let (p, iid) = gitlab_mr(&t, &r, &dir, number)?;
       mr::reply(&t, &p, iid, &thread, &body)
     }
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => {
       let query = "mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}";
       gh(&dir, &["api", "graphql", "-f", &format!("id={thread}"), "-f", &format!("body={body}"), "-f", &format!("query={query}")]).map(drop)
@@ -291,6 +310,7 @@ pub async fn forge_react(ws: Workspace, slug: Option<String>, subject: String, c
   }
   blocking(move || match mr::forge(&dir) {
     Forge::Gitlab(_) => Err(tr!(ForgeMsg::ReactionsNotOnGitlab)),
+    Forge::Bitbucket(_) => not_on_bitbucket(),
     Forge::Github => {
       let m = if remove { "removeReaction" } else { "addReaction" };
       let query = format!("mutation($id:ID!,$c:ReactionContent!){{{m}(input:{{subjectId:$id,content:$c}}){{reaction{{content}}}}}}");

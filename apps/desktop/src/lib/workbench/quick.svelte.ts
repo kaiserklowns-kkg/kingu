@@ -56,6 +56,8 @@ export type Picker = {
 	id?: string;
 	/** VS Code's quickNavigate: releasing Ctrl/Cmd accepts the focused item (the ⌃Tab switcher). */
 	quickNavigate?: boolean;
+	/** A step of a multi-step input: Back (⌃- / Alt+←, VS Code's quickInputBack) goes to the step before. */
+	onBack?: () => void;
 	/** An input box for a secret (a task's promptString input with `password`): typed text is hidden. */
 	password?: boolean;
 };
@@ -142,7 +144,29 @@ class Quick {
 		return (await item)?.id;
 	}
 
+	/** Inputs replaced by a `?` help row's prefix in this session, for Back. */
+	#previous: string[] = [];
+
+	/** The `?` list filled the input with a prefix: Back returns to what was there. */
+	fill(value: string) {
+		this.#previous.push(this.value);
+		this.value = value;
+	}
+
+	/** VS Code's Go Back in the quick input (workbench.action.quickInputBack). False when there is nowhere to go. */
+	back(): boolean {
+		if (this.picker?.onBack) {
+			this.picker.onBack();
+			return true;
+		}
+		const prev = this.#previous.pop();
+		if (prev === undefined) return false;
+		this.value = prev;
+		return true;
+	}
+
 	hide({ accepted = false } = {}) {
+		this.#previous = [];
 		const picker = this.picker;
 		if (this.visible && !picker) {
 			const kind = quickValueKind(this.value);

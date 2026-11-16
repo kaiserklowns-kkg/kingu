@@ -309,6 +309,19 @@ crate::i18n::messages! {
       en: "This chat already has a running agent: stop it first",
       th: "แชตนี้มี agent ทำงานอยู่แล้ว: หยุดก่อน",
     },
+    /// Operation ledger (agent/op_ledger.rs, supervisor.rs): the same request was already run.
+    OperationReplayed {
+      en: "This request already ran; it was not sent again",
+      th: "คำขอนี้ทำไปแล้ว จึงไม่ส่งซ้ำ",
+    },
+    OperationInFlight {
+      en: "This request is still running (or Kingu stopped while it ran); it was not sent again",
+      th: "คำขอนี้ยังทำงานอยู่ (หรือ Kingu ปิดไปขณะทำ) จึงไม่ส่งซ้ำ",
+    },
+    OperationRefused {
+      en: "This request's operation id is invalid, too old or was used for another request",
+      th: "operation id ของคำขอนี้ไม่ถูกต้อง เก่าเกินไป หรือถูกใช้กับคำขออื่นแล้ว",
+    },
     ChatCwdOutside {
       en: "{path}: an agent chat runs only in the open folder or one of its task worktrees",
       th: "{path}: แชต agent รันได้เฉพาะในโฟลเดอร์ที่เปิดอยู่หรือ worktree ของงานในโฟลเดอร์นั้น",

@@ -312,6 +312,9 @@ fn checked(ws: &Workspace, rel: &str) -> Result<(PathBuf, String), String> {
 /// The index version of a file (quick diff, index ↔ working tree diffs); `None` when untracked or conflicted.
 #[tauri::command]
 pub async fn scm_show_index(ws: Workspace, rel: String) -> Result<Option<String>, String> {
+  if let Some(r) = ws.remote() {
+    return crate::ssh_hosts::blocking(move || crate::remote_ws::show(&r, &rel, "")).await?;
+  }
   let (root, rel) = checked(&ws, &rel)?;
   blocking(move || show_index(&root, &rel)).await
 }

@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { PROFILES } from '#lib/ade/agentProfiles.ts';
 import { agentCatalog, catalogEntry, onSurface } from './agentCatalog';
 import { CLAUDE, type RuntimeInfo } from './runtimes';
@@ -48,6 +50,20 @@ describe('agentCatalog', () => {
 		expect(arkai.surfaces).toEqual(['ide']);
 		expect(arkai.cliProfile).toBeUndefined();
 		expect(arkai.title).toBe('Arkai');
+	});
+
+	test("Rust's known chat runtimes join their CLI profile by id (drift guard for agent/runtimes.rs KNOWN)", () => {
+		const rs = readFileSync(join(import.meta.dir, '../../../src-tauri/src/agent/runtimes.rs'), 'utf8');
+		const known = [...rs.matchAll(/Known \{ id: "([^"]+)", name: "([^"]+)",[^}]*protocol: Protocol::(\w+)/g)];
+		expect(known.map((m) => m[1])).toEqual(['codex', 'gemini', 'qwen', 'opencode', 'goose', 'grok', 'omp']);
+		const runtimes: RuntimeInfo[] = known.map(([, id, name, p]) => ({ id, name, protocol: p.toLowerCase() as RuntimeInfo['protocol'], features: { rewind: false, models: true }, custom: false }));
+		const cat = agentCatalog(runtimes);
+		for (const r of runtimes) {
+			const e = catalogEntry(cat, r.id)!;
+			expect([r.id, e.cliProfile?.id, e.chatRuntime?.id, e.surfaces]).toEqual([r.id, r.id, r.id, ['ide', 'ade']]);
+		}
+		// Every other profile stays CLI-only: a runtime is never invented for it.
+		for (const e of cat) if (!runtimes.some((r) => r.id === e.id) && e.id !== 'claude') expect([e.id, e.chatRuntime]).toEqual([e.id, undefined]);
 	});
 
 	test('onSurface splits the catalog', () => {

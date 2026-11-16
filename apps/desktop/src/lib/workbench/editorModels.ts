@@ -194,7 +194,8 @@ export function refreshLanguages(m: MonacoModule) {
 	}
 }
 
-export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?: string };
+/** `skipSaveParticipants`: no format, code actions or trimming on the way (VS Code's Save without Formatting). */
+export type SaveOptions = { reason?: SaveReason; overwrite?: boolean; encoding?: string; skipSaveParticipants?: boolean };
 
 /** Editors that save without a Monaco model entry here (the Search Editor's `.code-search`). */
 const customSavers: { owns: (path: string) => boolean; save: (path: string, reason: SaveReason) => Promise<boolean> }[] = [];
@@ -216,7 +217,7 @@ export async function saveFile(path: string, reasonOrOptions: SaveReason | SaveO
 	// An untitled editor has no file yet: an explicit save asks where (auto save leaves it alone).
 	if (isUntitled(path)) return (opts.reason ?? 'explicit') === 'explicit' && (await saveAs(path)) !== null;
 	if (entry.inConflict && (opts.reason ?? 'explicit') !== 'explicit' && !opts.overwrite) return false;
-	if (api) await runSaveParticipants(api.monaco, entry.model, opts.reason ?? 'explicit');
+	if (api && !opts.skipSaveParticipants) await runSaveParticipants(api.monaco, entry.model, opts.reason ?? 'explicit', path);
 	if (entry.model.isDisposed()) return false;
 	const version = entry.model.getAlternativeVersionId();
 	const encoding = opts.encoding ?? entry.encoding;

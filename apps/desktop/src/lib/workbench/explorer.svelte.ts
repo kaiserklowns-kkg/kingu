@@ -8,7 +8,8 @@ import { editors } from './editors.svelte';
 import { lsp } from '#lib/lsp/lsp.svelte.ts';
 import { affectedBy, baseName, dirsToRefresh, isUnder, joinRel, parentOf, remapPath, validateName } from './fileTree';
 import { notifications } from './notifications.svelte';
-import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel } from './explorerModel';
+import { compactChain, compactLabel, dropTarget, moveQuestion, planTransfer, rangeSelection, topLevel, undoNeedsConfirm, type UndoKind } from './explorerModel';
+import { FileUndo, type FileStep } from '#lib/ade/fileUndo.ts';
 import { nestFiles } from './fileNesting';
 import { workspaceStorage } from './workspaceStorage.svelte';
 import { fireDidMoveFiles } from './fileMoves';
@@ -57,6 +58,8 @@ class Explorer {
 	nestToggled = new SvelteSet<string>();
 	/** Root folders collapsed in a multi-root workspace (VS Code shows each root as a tree node). */
 	collapsedRoots = new SvelteSet<string>();
+	/** Undo / redo of the Explorer's file operations (VS Code's explorer undo source, ⌘Z / ⇧⌘Z in the tree). */
+	history = new FileUndo();
 
 	constructor() {
 		// The expanded folders are kept per workspace (VS Code's workbench.explorer.treeViewState).
@@ -401,6 +404,8 @@ class Explorer {
 			}
 		}
 		if (imports) void lsp.filesRenamed(imports, moved);
+		if (copy) this.#recordCopies(created, confirm ? 'drop' : 'paste');
+		else this.#recordMoves(ops.flatMap((o) => (moved.has(o.from) ? [{ from: o.from, to: o.to }] : [])));
 		if (dir) this.expanded.add(dir);
 		await this.refresh([...ops.map((o) => o.from), ...created, dir]);
 		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
@@ -471,6 +476,7 @@ class Explorer {
 	async importDropped(paths: string[], dir: string) {
 		try {
 			const created = await invoke<string[]>('fs_import', { paths, toDir: dir, naming: settings.get<string>('explorer.incrementalNaming') });
+			this.#recordCopies(created, 'drop');
 			if (dir) this.expanded.add(dir);
 			await this.refresh([...created, dir]);
 			if (dir && !this.children.has(dir)) await this.load(dir);
@@ -535,8 +541,17 @@ class Explorer {
 
 	async #create(kind: 'file' | 'folder', parent: string, name: string) {
 		const rel = joinRel(parent, name);
-		await invoke(kind === 'file' ? 'fs_create_file' : 'fs_create_dir', { rel });
+		const command = kind === 'file' ? 'fs_create_file' : 'fs_create_dir';
+		await invoke(command, { rel });
 		this.editing = null;
+		// Undo trashes it (keeping a copy, since it may have been edited since); redo puts that copy back.
+		let token: string | null = null;
+		this.#record(t('workbench.explorer.undoCreate', { name }), 'create', async () => {
+			token = await this.#removeForUndo(rel);
+		}, async () => {
+			if (token) await this.#restore(rel, token);
+			else await invoke(command, { rel }), await this.refresh([rel]);
+		});
 		// Nested names (`a/b/c.ts`) create folders on the way: show the whole chain.
 		const parts = name.split('/').slice(0, -1);
 		const dirs = parts.map((_, i) => joinRel(parent, parts.slice(0, i + 1).join('/')));
@@ -547,7 +562,7 @@ class Explorer {
 		if (kind === 'file') editors.open(rel, { preview: false });
 	}
 
-	async #rename(from: string, to: string) {
+	async #rename(from: string, to: string, record = true) {
 		if (editors.allTabs().some((t) => t.dirty && remapPath(t.path, from, to) !== null)) throw new Error(t('workbench.explorer.saveBeforeRename'));
 		const imports = await lsp.willRenameFiles([{ from, to, isDir: this.isDir(from) }]);
 		await invoke('fs_rename', { from, to });
@@ -562,6 +577,7 @@ class Explorer {
 		this.select(to);
 		this.#moveTabs(from, to);
 		if (imports) void lsp.filesRenamed(imports);
+		if (record) this.#record(t('workbench.explorer.undoRename', { from: baseName(from), to: baseName(to) }), 'other', () => this.#rename(to, from, false), () => this.#rename(from, to, false));
 	}
 
 	/** Points the renamed path's tabs (in every group) at the new name; they are clean, so nothing is lost. */
@@ -593,8 +609,9 @@ class Explorer {
 				{ title: t('common.delete'), kind: 'warning', okLabel: useTrash ? t('workbench.explorer.moveToTrash') : t('common.delete'), cancelLabel: t('common.cancel') }
 			));
 		if (!ok) return;
+		let token: string | null;
 		try {
-			await invoke('fs_delete', { rel, useTrash });
+			token = await invoke<string | null>('fs_delete', { rel, useTrash });
 		} catch (e) {
 			notifications.error(String(e));
 			return;
@@ -603,6 +620,7 @@ class Explorer {
 		this.#forget(rel);
 		if (this.selected && isUnder(this.selected, rel)) this.select(null);
 		await this.refresh([rel]);
+		this.#recordDeletes(token ? [{ rel, token }] : [], t('workbench.explorer.undoDelete', { name }));
 	}
 
 	/** VS Code: "Are you sure you want to delete the following N files?" then each to the Trash. */
@@ -622,9 +640,11 @@ class Explorer {
 				{ title: t('common.delete'), kind: 'warning', okLabel: useTrash ? t('workbench.explorer.moveToTrash') : t('common.delete'), cancelLabel: t('common.cancel') }
 			));
 		if (!ok) return;
+		const kept: { rel: string; token: string }[] = [];
 		for (const rel of targets) {
 			try {
-				await invoke('fs_delete', { rel, useTrash });
+				const token = await invoke<string | null>('fs_delete', { rel, useTrash });
+				if (token) kept.push({ rel, token });
 			} catch (e) {
 				notifications.error(String(e));
 				break;
@@ -634,6 +654,94 @@ class Explorer {
 		}
 		this.select(null);
 		await this.refresh(targets);
+		this.#recordDeletes(kept, t('workbench.explorer.undoDeleteMany', { count: targets.length }));
+	}
+
+	// --- Undo / redo (VS Code's IUndoRedoService with the explorer's source) ---------------------
+
+	#record(label: string, kind: UndoKind, undo: () => Promise<void>, redo: () => Promise<void>) {
+		const step: FileStep & { kind: UndoKind } = { label, kind, undo, redo };
+		this.history.push(step);
+	}
+
+	/** Undo / Redo (⌘Z / ⇧⌘Z with focus in the Explorer, explorer.enableUndo). explorer.confirmUndo
+	 * says which undos ask "Would you like to undo '…'?" first; redo never asks (VS Code). */
+	async undoRedo(how: 'undo' | 'redo') {
+		if (settings.get<boolean>('explorer.enableUndo') === false) return;
+		const step = this.history.peek(how) as (FileStep & { kind?: UndoKind }) | undefined;
+		if (!step) return;
+		if (how === 'undo' && undoNeedsConfirm(settings.get('explorer.confirmUndo'), step.kind ?? 'other')) {
+			const yes = await ask(t('workbench.explorer.confirmUndo', { label: step.label }), { title: t('workbench.explorer.undoTitle'), kind: 'info', okLabel: t('workbench.explorer.undoYes'), cancelLabel: t('workbench.explorer.undoNo') });
+			if (!yes) return;
+		}
+		try {
+			await this.history[how]();
+		} catch (e) {
+			notifications.error(e instanceof Error ? e.message : String(e));
+		}
+	}
+
+	/** Moves are undone by moving each file back, last first. */
+	#recordMoves(moves: { from: string; to: string }[]) {
+		if (!moves.length) return;
+		const label = moves.length > 1 ? t('workbench.explorer.undoMoveMany', { count: moves.length }) : t('workbench.explorer.undoMove', { name: baseName(moves[0].to) });
+		this.#record(label, 'other', async () => {
+			for (const m of [...moves].reverse()) await this.#rename(m.to, m.from, false);
+		}, async () => {
+			for (const m of moves) await this.#rename(m.from, m.to, false);
+		});
+	}
+
+	/** Copies (paste, ⌥-drag, files dropped from Finder) are undone by trashing them; redo puts them back. */
+	#recordCopies(created: string[], how: 'paste' | 'drop') {
+		if (!created.length) return;
+		const one = created.length === 1;
+		const label = how === 'paste' ? (one ? t('workbench.explorer.undoPaste', { name: baseName(created[0]) }) : t('workbench.explorer.undoPasteMany', { count: created.length })) : one ? t('workbench.explorer.undoCopy', { name: baseName(created[0]) }) : t('workbench.explorer.undoCopyMany', { count: created.length });
+		let kept: { rel: string; token: string | null }[] = created.map((rel) => ({ rel, token: null }));
+		this.#record(label, 'copy', async () => {
+			kept = [];
+			for (const rel of [...created].reverse()) kept.push({ rel, token: await this.#removeForUndo(rel) });
+		}, async () => {
+			for (const k of [...kept].reverse()) {
+				if (!k.token) throw new Error(t('workbench.explorer.noCopyKept', { name: baseName(k.rel) }));
+				await this.#restore(k.rel, k.token);
+			}
+		});
+	}
+
+	/** A delete is undone from the copy Rust kept before trashing it (`fs_delete`'s token); a delete for good or a file too large to copy cannot be. */
+	#recordDeletes(kept: { rel: string; token: string }[], label: string) {
+		if (!kept.length) return;
+		let tokens = kept;
+		this.#record(label, 'other', async () => {
+			for (const k of [...tokens].reverse()) await this.#restore(k.rel, k.token);
+		}, async () => {
+			const again: { rel: string; token: string }[] = [];
+			for (const k of tokens) {
+				const token = await this.#removeForUndo(k.rel);
+				if (token) again.push({ rel: k.rel, token });
+			}
+			tokens = again;
+		});
+	}
+
+	/** Deletes `rel` without asking (an undo or redo), closing its tabs; the token that restores it, or null. */
+	async #removeForUndo(rel: string): Promise<string | null> {
+		if (editors.allTabs().some((tab) => tab.dirty && affectedBy([tab.path], rel).length)) throw new Error(t('workbench.explorer.targetDirty', { path: rel }));
+		const tabs = affectedBy([...editors.openPaths()], rel);
+		const token = await invoke<string | null>('fs_delete', { rel, useTrash: this.#useTrash() });
+		for (const tab of tabs) editors.closeEverywhere(tab);
+		this.#forget(rel);
+		if (this.selected && isUnder(this.selected, rel)) this.select(null);
+		await this.refresh([rel]);
+		return token;
+	}
+
+	async #restore(rel: string, token: string) {
+		await invoke('fs_restore', { rel, token });
+		await this.refresh([rel]);
+		for (const d of [...this.expanded]) if (!this.children.has(d)) await this.load(d);
+		this.select(rel);
 	}
 }
 

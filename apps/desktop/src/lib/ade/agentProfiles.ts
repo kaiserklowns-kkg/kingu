@@ -44,9 +44,15 @@ export type Launch = { argv: string[]; typePrompt?: string; files?: LaunchFile[]
 
 export type AgentProfile = {
 	id: string;
+	/** Orca's agent kind (shared/agent-kind.ts) when it differs from `id` (Kingu's older ids: `qwen`). */
+	kind?: string;
 	title: string;
 	/** Program names that select this profile (the first one is what the picker sets). */
 	bins: readonly string[];
+	/** Other programs that must be on PATH too before the profile counts as installed (Orca's detectRequiredCommands). */
+	requires?: readonly string[];
+	/** Resume works only with a session id (no "latest session" form): `cliResume` gives null. */
+	resumeNeedsId?: boolean;
 	status: StatusSource;
 	account: AccountProvider | null;
 	/** Kingu chooses the session id at start (so a restart resumes exactly it). */
@@ -201,11 +207,20 @@ export function ampMcpConfig(servers: McpServers): string | null {
 /** What MCP servers and skills add to a launch: arguments right after the base command, env, files. */
 type Extras = { args?: string[]; env?: Record<string, string>; files?: LaunchFile[] };
 
-type Spec = Omit<AgentProfile, 'launch' | 'canResume' | 'mcp' | 'skills'> & {
-	/** Where the prompt goes: a positional argument, a flag, or pasted once the CLI is up. */
-	prompt: { kind: 'argv' } | { kind: 'flag'; flag: string } | { kind: 'type' };
-	/** The resume argv after the base command (null: the CLI cannot resume). */
-	resume: ((id: string | null) => string[]) | null;
+type Spec = Omit<AgentProfile, 'launch' | 'canResume' | 'mcp' | 'skills' | 'resumeNeedsId'> & {
+	/**
+	 * Where the prompt goes (Orca's promptInjectionMode): a positional argument (`sep`: always after
+	 * `--`, Orca's argvPromptSeparator), a flag, Hermes' `chat --query=` form, or pasted once the CLI
+	 * is up (`stdin-after-start`).
+	 */
+	prompt: { kind: 'argv'; sep?: boolean } | { kind: 'flag'; flag: string } | { kind: 'hermes' } | { kind: 'type' };
+	/** The resume argv after the base command (null: the CLI cannot resume; a null result: not without an id). */
+	resume: ((id: string | null) => string[] | null) | null;
+	/**
+	 * Arguments Orca's launchCmd puts after the program (`kiro-cli chat --tui`, `acli rovodev run`),
+	 * added unless the command already has them; `resume: false` leaves them out of a resume.
+	 */
+	launchArgs?: { args: readonly string[]; resume?: boolean };
 	mcp?: boolean;
 	skills?: boolean;
 	extras?: (ctx: LaunchContext) => Extras;
@@ -224,21 +239,54 @@ const envPrefix = (env: Record<string, string>) => {
 	return e.length ? ['env', ...e.map(([k, v]) => `${k}=${v}`)] : [];
 };
 
+/** `base` with `args` right after its program word, unless they already follow it. */
+export function withLaunchArgs(base: readonly string[], args: readonly string[]): string[] {
+	if (!args.length) return [...base];
+	let i = 0;
+	if (base[0] && programName(base[0]) === 'env') {
+		i = 1;
+		while (i < base.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(base[i])) i++;
+	}
+	if (i >= base.length) return [...base];
+	const after = base.slice(i + 1);
+	if (args.every((a, k) => after[k] === a)) return [...base];
+	return [...base.slice(0, i + 1), ...args, ...after];
+}
+
+/** Hermes' startup query (Orca planHermesStartupQuery): `hermes chat --query=<prompt> … --tui`, its own `--tui`/`--query` dropped. */
+function hermesQuery(head: readonly string[], prompt: string): string[] {
+	let i = 0;
+	if (head[0] && programName(head[0]) === 'env') {
+		i = 1;
+		while (i < head.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(head[i])) i++;
+	}
+	const rest = head.slice(i + 1).filter((a) => a !== 'chat' && a !== '--tui' && a !== '--cli' && !a.startsWith('--query='));
+	return [...head.slice(0, i + 1), 'chat', `--query=${prompt}`, ...rest, '--tui'];
+}
+
 function simple(spec: Spec): AgentProfile {
-	const { prompt, resume, mcp = false, skills = false, extras, ...rest } = spec;
+	const { prompt, resume, mcp = false, skills = false, extras, launchArgs, ...rest } = spec;
 	return {
 		...rest,
 		canResume: resume !== null,
+		...(resume && resume(null) === null ? { resumeNeedsId: true } : {}),
 		mcp,
 		skills,
 		launch(base, how, ctx) {
 			const x = extras?.(skills ? ctx : { ...ctx, plugins: [] }) ?? {};
-			const head = [...envPrefix({ ...(rest.status === 'agent-hooks' ? hookEnv(ctx) : {}), ...x.env }), ...base, ...(x.args ?? [])];
+			const resuming = 'resume' in how;
+			const cmd = launchArgs && (!resuming || launchArgs.resume !== false) ? withLaunchArgs(base, launchArgs.args) : base;
+			const head = [...envPrefix({ ...(rest.status === 'agent-hooks' ? hookEnv(ctx) : {}), ...x.env }), ...cmd, ...(x.args ?? [])];
 			const files = x.files?.length ? { files: x.files } : {};
-			if ('resume' in how) return { argv: resume ? [...head, ...resume(how.resume)] : head, ...files };
+			if ('resume' in how) {
+				const r = resume?.(how.resume) ?? null;
+				return { argv: r ? [...head, ...r] : head, ...files };
+			}
 			if ('fresh' in how) return { argv: head, ...files };
 			if (prompt.kind === 'type') return { argv: head, typePrompt: how.prompt, ...files };
-			return { argv: [...head, ...(prompt.kind === 'flag' ? valueFlag(prompt.flag, how.prompt) : positional(how.prompt))], ...files };
+			if (prompt.kind === 'hermes') return { argv: hermesQuery(head, how.prompt), ...files };
+			if (prompt.kind === 'flag') return { argv: [...head, ...valueFlag(prompt.flag, how.prompt)], ...files };
+			return { argv: [...head, ...(prompt.sep ? ['--', how.prompt] : positional(how.prompt))], ...files };
 		}
 	};
 }
@@ -299,6 +347,60 @@ const codex: AgentProfile = {
 		return { argv: [...head, ...positional(how.prompt)] };
 	}
 };
+
+/** Status from hooks Kingu installs (status_hooks.rs); the others go by their terminal output. */
+const H = 'agent-hooks' as const;
+const O = 'output' as const;
+const plain = { account: null, ownsSessionId: false } as const;
+const byId = (...flags: string[]) => (id: string | null) => (id ? [...flags, id] : null);
+
+/** Orca's agents beyond the ones above, in Orca's order. */
+const ORCA_AGENTS: readonly Spec[] = [
+	{ id: 'grok', title: 'Grok', bins: ['grok'], status: H, ...plain, prompt: { kind: 'argv', sep: true }, resume: byId('--resume') },
+	{ id: 'devin', title: 'Devin', bins: ['devin'], status: H, ...plain, prompt: { kind: 'argv', sep: true }, resume: byId('--resume') },
+	// The installer ships kiro-cli; `chat --tui` is the interactive TUI (its trust flags belong to chat).
+	{ id: 'kiro', title: 'Kiro', bins: ['kiro-cli'], status: H, ...plain, launchArgs: { args: ['chat', '--tui'] }, prompt: { kind: 'type' }, resume: byId('--resume-id') },
+	{ id: 'kimi', title: 'Kimi', bins: ['kimi', 'kimi-code'], status: H, ...plain, prompt: { kind: 'type' }, resume: byId('--session') },
+	{ id: 'antigravity', title: 'Antigravity', bins: ['agy'], status: H, ...plain, prompt: { kind: 'flag', flag: '--prompt-interactive' }, resume: byId('--conversation') },
+	{ id: 'qoder', title: 'Qoder CLI', bins: ['qodercli', 'qoder'], status: H, ...plain, prompt: { kind: 'flag', flag: '--prompt-interactive' }, resume: byId('--resume') },
+	{ id: 'qoder-cn', title: 'Qoder CLI China', bins: ['qoderclicn', 'qodercn'], status: H, ...plain, prompt: { kind: 'flag', flag: '--prompt-interactive' }, resume: byId('--resume') },
+	// `--trust` skips the first-run trust prompt, which would take the task text.
+	{ id: 'command-code', title: 'Command Code', bins: ['command-code'], status: H, ...plain, launchArgs: { args: ['--trust'] }, prompt: { kind: 'argv' }, resume: null },
+	// Bare hermes opens the classic REPL; `--tui` is the full-screen one; a prompt goes in as `chat --query=`.
+	{ id: 'hermes', title: 'Hermes', bins: ['hermes'], status: H, ...plain, launchArgs: { args: ['--tui'], resume: false }, prompt: { kind: 'hermes' }, resume: byId('--resume') },
+	{ id: 'codebuddy', title: 'CodeBuddy', bins: ['codebuddy', 'cbc'], status: H, ...plain, prompt: { kind: 'argv' }, resume: byId('--resume') },
+	{ id: 'openclaude', title: 'OpenClaude', bins: ['openclaude'], status: H, ...plain, prompt: { kind: 'argv' }, resume: null },
+	{ id: 'muse', title: 'Muse', bins: ['muse'], status: H, ...plain, launchArgs: { args: ['--trust-workspace'], resume: false }, prompt: { kind: 'type' }, resume: byId('resume') },
+	{ id: 'zcode', title: 'ZCode', bins: ['zcode'], status: H, ...plain, prompt: { kind: 'type' }, resume: byId('--resume') },
+	// dsh-tui needs the dsh backend; a bare first launch opens the session browser, `.` the composer.
+	{ id: 'dsh', title: 'DeepSeek Harness', bins: ['dsh-tui', 'dst'], requires: ['dsh'], status: H, ...plain, launchArgs: { args: ['.'], resume: false }, prompt: { kind: 'type' }, resume: byId('--backend=dsh', '--resume') },
+	{ id: 'jcode', title: 'Jcode', bins: ['jcode'], status: H, ...plain, prompt: { kind: 'type' }, resume: byId('--resume') },
+	// pi resumes by its session file (`--session <file>`), which Kingu does not know.
+	{ id: 'pi', title: 'Pi', bins: ['pi'], status: H, ...plain, prompt: { kind: 'argv' }, resume: null },
+	{ id: 'omp', title: 'OMP', bins: ['omp'], status: H, ...plain, prompt: { kind: 'argv' }, resume: byId('--resume') },
+	{ id: 'prime-agent', title: 'Prime Agent', bins: ['prime-agent'], status: O, ...plain, prompt: { kind: 'argv', sep: true }, resume: null },
+	{ id: 'mimo-code', title: 'MiMo Code', bins: ['mimo'], status: H, ...plain, prompt: { kind: 'flag', flag: '--prompt' }, resume: byId('--session') },
+	// The private server inherits this pane's hook env.
+	{ id: 'opencode2', title: 'OpenCode 2', bins: ['opencode2'], status: H, ...plain, launchArgs: { args: ['--standalone'] }, prompt: { kind: 'flag', flag: '--prompt' }, resume: byId('--session') },
+	{ id: 'goose', title: 'Goose', bins: ['goose'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'kilo', title: 'Kilocode', bins: ['kilo'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'crush', title: 'Charm', bins: ['crush'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'aug', title: 'Auggie', bins: ['auggie'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'cline', title: 'Cline', bins: ['cline'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'codebuff', title: 'Codebuff', bins: ['codebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'freebuff', title: 'Freebuff', bins: ['freebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	// The binary is `cn` (`continue` is a shell keyword).
+	{ id: 'continue', title: 'Continue', bins: ['cn'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'mistral-vibe', title: 'Mistral Vibe', bins: ['vibe', 'mistral-vibe'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	// Rovo Dev is an acli subcommand; an instruction argument there would run one-shot.
+	{ id: 'rovo', title: 'Rovo Dev', bins: ['acli'], status: O, ...plain, launchArgs: { args: ['rovodev', 'run'] }, prompt: { kind: 'type' }, resume: null },
+	{ id: 'openclaw', title: 'OpenClaw', bins: ['openclaw'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'autohand', title: 'Autohand Code', bins: ['autohand'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	// `ante --prompt` is headless.
+	{ id: 'ante', title: 'Ante', bins: ['ante'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	// TRAE CN's own `traecli` (bytedance/trae-agent also installs trae-cli).
+	{ id: 'trae', title: 'Trae', bins: ['traecli'], status: O, ...plain, prompt: { kind: 'argv', sep: true }, resume: null }
+];
 
 export const PROFILES: readonly AgentProfile[] = [
 	claude,
@@ -363,7 +465,8 @@ export const PROFILES: readonly AgentProfile[] = [
 		id: 'amp',
 		title: 'Amp',
 		bins: ['amp'],
-		status: 'output',
+		// Kingu's Amp plugin (status_hooks.rs, Orca amp/agent-status-plugin-source.ts).
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		// `amp -x` is one-shot; the interactive TUI takes no prompt argument.
@@ -387,9 +490,10 @@ export const PROFILES: readonly AgentProfile[] = [
 	}),
 	simple({
 		id: 'qwen',
+		kind: 'qwen-code',
 		title: 'Qwen Code',
 		bins: ['qwen'],
-		status: 'output',
+		status: 'agent-hooks',
 		account: null,
 		ownsSessionId: false,
 		prompt: { kind: 'type' },
@@ -405,7 +509,11 @@ export const PROFILES: readonly AgentProfile[] = [
 		// `--message` sends one message and exits.
 		prompt: { kind: 'type' },
 		resume: () => ['--restore-chat-history']
-	})
+	}),
+	// ---- the rest of Orca's TUI agents (shared/agent-launch/catalog/tui-agent-config.ts; resume argv
+	// from shared/agent-launch/startup/agent-resume-argv.ts). `claude-agent-teams` is claude with
+	// `kingu.agent.claudeAgentTeams` (agentCli.ts), not a profile of its own.
+	...ORCA_AGENTS.map(simple)
 ];
 
 /** Any other command: the prompt as its last argument, no resume, status from the output. */
@@ -433,11 +541,17 @@ export function profileOf(argv: readonly string[]): AgentProfile {
 /** Continue the latest session in that worktree, for the CLIs that can; null when it cannot. */
 export function cliResume(argv: string[]): string[] | null {
 	const p = profileOf(argv);
-	return p.canResume ? p.launch(argv, { resume: null }, { servers: {}, plugins: [] }).argv : null;
+	return p.canResume && !p.resumeNeedsId ? p.launch(argv, { resume: null }, { servers: {}, plugins: [] }).argv : null;
 }
 
-/** Every program name the picker looks for on PATH. */
-export const KNOWN_BINS: readonly string[] = PROFILES.flatMap((p) => p.bins);
+/** Every program name the picker looks for on PATH (with the ones a profile also requires). */
+export const KNOWN_BINS: readonly string[] = [...new Set(PROFILES.flatMap((p) => [...p.bins, ...(p.requires ?? [])]))];
+
+/** The profile's program found on PATH (`found`), with every program it also requires; else undefined. */
+export function foundBin(p: AgentProfile, found: readonly string[]): string | undefined {
+	if (!(p.requires ?? []).every((r) => found.includes(r))) return undefined;
+	return p.bins.find((b) => found.includes(b));
+}
 
 // ---- the CLI picker ("Agent: Choose CLI…") ----------------------------------------------------
 
@@ -452,9 +566,8 @@ export function profileSummary(p: AgentProfile): string {
 
 /** Picker rows: the profiles whose program is in `found`, in profile order. */
 export function pickerItems(found: readonly string[], current: string): PickRow[] {
-	const have = new Set(found);
 	const rows: PickRow[] = PROFILES.flatMap((p) => {
-		const bin = p.bins.find((b) => have.has(b));
+		const bin = foundBin(p, found);
 		return bin ? [{ id: bin, label: p.title, description: `${bin} — ${profileSummary(p)}`, agent: p.id }] : [];
 	});
 	rows.push({ id: CUSTOM_PICK, label: 'Custom…', description: current ? t('ade.agentProfiles.current', { command: current }) : t('ade.agentProfiles.typeCommand') });

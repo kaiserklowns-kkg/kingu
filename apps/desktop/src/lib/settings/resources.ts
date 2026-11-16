@@ -21,6 +21,8 @@ import { isLocalHistoryKey, parseLocalHistoryKey } from '#lib/scm/localHistory.t
 import { isSearchEditorKey } from '#lib/workbench/searchEditor.ts';
 import { isOutputKey } from '#lib/output/output.ts';
 import { userSnippetsName } from '#lib/editor/snippets/snippetFiles.ts';
+import { USER_TASKS_KEY, USER_TASKS_TEMPLATE } from '#lib/tasks/userTasks.ts';
+import { DEFAULT_KEYBINDINGS_KEY, DEFAULT_SETTINGS_KEY, isDefaultsKey } from './defaultsJson.ts';
 
 /** Kingu's user mcp.json (the MCP store's `USER_MCP_KEY`): in the app config dir, read and saved by Rust. */
 const USER_MCP_KEY = 'mcp://user/mcp.json';
@@ -46,6 +48,7 @@ export async function readResource(key: string): Promise<string> {
 	}
 	// An Output channel opened in an editor (read-only; output.svelte.ts keeps it current).
 	if (isOutputKey(key)) return import('#lib/output/output.svelte.ts').then((m) => m.output.text(key));
+	if (key === DEFAULT_SETTINGS_KEY || key === DEFAULT_KEYBINDINGS_KEY) return readDefaults(key);
 	const snapId = userSnapId(key);
 	if (snapId) return invoke<string>('snap_manifest_read', { id: snapId });
 	if (key === USER_MCP_KEY) return invoke<string>('mcp_user_read');
@@ -55,11 +58,26 @@ export async function readResource(key: string): Promise<string> {
 		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'user' });
 		return file.content ?? '{\n}\n';
 	}
+	if (key === USER_TASKS_KEY) {
+		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'tasks' });
+		return file.content ?? USER_TASKS_TEMPLATE;
+	}
 	if (key === USER_KEYBINDINGS_KEY) {
 		const file = await invoke<{ content: string | null }>('settings_read', { scope: 'keybindings' });
 		return file.content ?? KEYBINDINGS_TEMPLATE;
 	}
 	return invoke<string>('read_workspace_file', { rel: key });
+}
+
+/** Default Settings / Keyboard Shortcuts (JSON), generated from the registries (loaded lazily). */
+async function readDefaults(key: string): Promise<string> {
+	const [{ defaultKeybindingsJson, defaultSettingsJson }, { t }] = await Promise.all([import('./defaultsJson.ts'), import('#lib/i18n/index.ts')]);
+	if (key === DEFAULT_SETTINGS_KEY) {
+		const { settingSchemas } = await import('./schemas.svelte');
+		return defaultSettingsJson(settingSchemas.all, t('settings.defaults.settingsHeader'));
+	}
+	const [{ commands }, { isMac }] = await Promise.all([import('#lib/workbench/commands.svelte.ts'), import('#lib/workbench/keys.ts')]);
+	return defaultKeybindingsJson(commands.all, isMac, t('settings.defaults.keybindingsHeader'), (layout) => t('settings.defaults.layout', { layout }));
 }
 
 export async function writeResource(key: string, content: string): Promise<void> {
@@ -70,11 +88,13 @@ export async function writeResource(key: string, content: string): Promise<void>
 	if (isUntitled(key)) throw new Error('an untitled editor is saved with Save As');
 	if (isLocalHistoryKey(key)) throw new Error('a local history entry is read-only');
 	if (isOutputKey(key)) throw new Error('an Output channel is read-only');
+	if (isDefaultsKey(key)) throw new Error('the default settings and keybindings are read-only');
 	const snapId = userSnapId(key);
 	const snippets = userSnippetsName(key);
 	if (key === USER_SETTINGS_KEY) await invoke('settings_write', { scope: 'user', content });
 	else if (snippets) await invoke('snippets_user_write', { name: snippets, content });
 	else if (key === USER_KEYBINDINGS_KEY) await invoke('settings_write', { scope: 'keybindings', content });
+	else if (key === USER_TASKS_KEY) await invoke('settings_write', { scope: 'tasks', content });
 	else if (snapId) await invoke('snap_manifest_write', { id: snapId, content });
 	else if (key === USER_MCP_KEY) await invoke('mcp_user_write', { content });
 	else await invoke('fs_write_file', { rel: key, content });
@@ -89,7 +109,7 @@ export async function writeResource(key: string, content: string): Promise<void>
 /** Workspace files are read and saved with their encoding and checked for save conflicts; the
  * settings, keybindings and snap manifests are always UTF-8 and owned by Kingu. Files outside the
  * folder (`external:`) are text files too, but not workspace files (auto save, associations). */
-export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && !isOutputKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_MCP_KEY && !userSnapId(key) && !userSnippetsName(key) && !isLocalHistoryKey(key);
+export const isWorkspaceTextFile = (key: string) => !isExternalKey(key) && !isOutputKey(key) && !isDefaultsKey(key) && key !== USER_SETTINGS_KEY && key !== USER_KEYBINDINGS_KEY && key !== USER_TASKS_KEY && key !== USER_MCP_KEY && !userSnapId(key) && !userSnippetsName(key) && !isLocalHistoryKey(key);
 
 /** `readonly`: the file's permissions say it cannot be written (files.readonlyFromPermissions). */
 export type FileStat = { mtime: number; size: number; hash: string; readonly?: boolean };

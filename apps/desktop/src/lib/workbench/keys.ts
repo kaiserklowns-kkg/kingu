@@ -150,6 +150,8 @@ export function toAccelerator(keybinding: string, mac = isMac): string | null {
 	const c = parseChord(parts[0], mac);
 	let key = ACCELERATOR_KEYS[c.key] ?? (c.key.length === 1 ? c.key.toUpperCase() : null);
 	if (!key && /^f\d{1,2}$/.test(c.key)) key = c.key.toUpperCase();
+	// muda parses `Numpad0`…`Numpad9` (VS Code's `numpad0`, e.g. Reset Zoom ⌘Numpad0).
+	if (!key && /^numpad\d$/.test(c.key)) key = `Numpad${c.key.slice(6)}`;
 	if (!key) return null;
 	return [c.ctrl && 'Ctrl', c.alt && 'Alt', c.shift && 'Shift', c.meta && 'Cmd', key].filter(Boolean).join('+');
 }

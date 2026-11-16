@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { compactChain, compactLabel, dropTarget, incrementFileName, pasteName, planTransfer, rangeSelection, topLevel } from './explorerModel';
+import { compactChain, compactLabel, dropTarget, incrementFileName, pasteName, planTransfer, rangeSelection, topLevel, typeNavigate, undoNeedsConfirm } from './explorerModel';
 import { nextUntitledKey, suggestedName, untitledName } from './untitled';
 import { toMonacoKeybinding } from './monacoKeys';
 
@@ -87,5 +87,29 @@ describe('keybindings.json keys as Monaco keybindings', () => {
 		expect(toMonacoKeybinding('shift+alt+f12', e, false)).toBe(KeyMod.Shift | KeyMod.Alt | 70);
 		expect(toMonacoKeybinding('cmd+k cmd+c', e, true)).toBe(KeyMod.chord(KeyMod.CtrlCmd | 41, KeyMod.CtrlCmd | 33));
 		expect(toMonacoKeybinding('cmd+nosuchkey', e, true)).toBeNull();
+	});
+});
+
+describe('Explorer undo confirmation (explorer.confirmUndo)', () => {
+	test('a new file always asks, a paste unless light, the rest only when verbose', () => {
+		for (const level of ['verbose', 'default', 'light']) expect(undoNeedsConfirm(level, 'create')).toBe(true);
+		expect(undoNeedsConfirm('default', 'copy')).toBe(true);
+		expect(undoNeedsConfirm('light', 'copy')).toBe(false);
+		expect(undoNeedsConfirm('default', 'other')).toBe(false);
+		expect(undoNeedsConfirm('verbose', 'other')).toBe(true);
+	});
+});
+
+describe('type navigation in the tree', () => {
+	const names = ['src', 'scripts', 'README.md', 'package.json', 'Sass'];
+	test('the first letter goes to the next match after the focused row, wrapping', () => {
+		expect(typeNavigate(names, 0, 's', true)).toBe(1);
+		expect(typeNavigate(names, 1, 's', true)).toBe(4);
+		expect(typeNavigate(names, 4, 's', true)).toBe(0);
+	});
+	test('more letters keep the focused row when it still matches', () => {
+		expect(typeNavigate(names, 1, 'sc', false)).toBe(1);
+		expect(typeNavigate(names, 0, 'pa', false)).toBe(3);
+		expect(typeNavigate(names, 0, 'zz', false)).toBe(-1);
 	});
 });

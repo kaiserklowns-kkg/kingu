@@ -36,7 +36,11 @@ function write(key: string, v: unknown) {
 	}
 }
 
-export type FloatingTab = { id: string; kind: 'terminal' | 'note' | 'browser'; title: string; path?: string; url?: string };
+/** `run`: typed into a terminal's shell when it starts (an `ssh -t …` of an SSH project). */
+export type FloatingTab = { id: string; kind: 'terminal' | 'note' | 'browser'; title: string; path?: string; url?: string; run?: string[] };
+
+/** Who follows a terminal tab: its title (OSC 0/2), its output, and its closing (SSH agent status). */
+export type FloatingWatch = { title?: (title: string) => void; output?: () => void; closed?: () => void };
 
 class Floating {
 	enabled = $derived(settings.get<boolean>('kingu.floating.enabled') !== false);
@@ -149,9 +153,21 @@ class Floating {
 	newBrowser(url = '') {
 		return this.#add({ kind: 'browser', title: 'New Tab', url });
 	}
-	newTerminal() {
+	newTerminal(opts: { title?: string; run?: string[]; watch?: FloatingWatch } = {}) {
 		const n = this.tabs.filter((t) => t.kind === 'terminal').length + 1;
-		return this.#add({ kind: 'terminal', title: n === 1 ? 'Terminal' : `Terminal ${n}` });
+		const id = this.#add({ kind: 'terminal', title: opts.title ?? (n === 1 ? 'Terminal' : `Terminal ${n}`), ...(opts.run ? { run: opts.run } : {}) });
+		if (opts.watch) this.#watch.set(id, opts.watch);
+		return id;
+	}
+	#watch = new Map<string, FloatingWatch>();
+	/** A terminal tab's title changed. */
+	titled(id: string, title: string) {
+		this.#watch.get(id)?.title?.(title);
+	}
+	/** A terminal tab printed something. */
+	output(id: string) {
+		this.activity(id);
+		this.#watch.get(id)?.output?.();
 	}
 	async newNote() {
 		try {
@@ -182,6 +198,8 @@ class Floating {
 		const i = this.tabs.findIndex((t) => t.id === id);
 		if (i < 0) return;
 		if (this.tabs[i].kind === 'terminal') killPty(this.terminalKey(id));
+		this.#watch.get(id)?.closed?.();
+		this.#watch.delete(id);
 		this.tabs = this.tabs.filter((t) => t.id !== id);
 		delete this.unread[id];
 		if (this.active === id) this.active = this.tabs[Math.min(i, this.tabs.length - 1)]?.id ?? null;

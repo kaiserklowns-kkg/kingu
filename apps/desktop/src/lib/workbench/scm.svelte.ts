@@ -615,7 +615,8 @@ export class Repository {
 		if (owner.op || !this.repo?.remotes.length) return;
 		owner.op = opLabel('fetch');
 		try {
-			await invoke('git_fetch', this.#args({ options: fetchOptions(get, { auto: true }) }));
+			// background: git_admission.rs lets clicks and status reads go first.
+			await invoke('git_fetch', this.#args({ options: fetchOptions(get, { auto: true }), background: true }));
 		} catch (e) {
 			clientLog('info', `git autofetch: ${e}`);
 		} finally {

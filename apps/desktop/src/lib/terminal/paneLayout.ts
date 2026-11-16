@@ -96,6 +96,37 @@ export function dividers(node: PaneNode, rect: Rect = { x: 0, y: 0, w: 1, h: 1 }
 	return [{ path, direction: node.direction, area: rect, ratio }, ...dividers(node.first, a, [...path, 0]), ...dividers(node.second, b, [...path, 1])];
 }
 
+/** The child path from the root to pane `id`, or null when the tree has no such pane. */
+export function pathTo(node: PaneNode, id: string, path: PanePath = []): PanePath | null {
+	if (node.type === 'leaf') return node.id === id ? path : null;
+	return pathTo(node.first, id, [...path, 0]) ?? pathTo(node.second, id, [...path, 1]);
+}
+
+export type ResizeDirection = 'left' | 'right' | 'up' | 'down';
+
+/**
+ * VS Code's Resize Pane Left / Right / Up / Down (terminalGroup.resizePane): the divider nearest
+ * pane `id` on the arrow's axis moves `px` pixels that way (side by side for left / right,
+ * stacked for up / down). `size` is the whole group's size in pixels. Null when no split on that
+ * axis holds the pane (VS Code then resizes the panel instead).
+ */
+export function resizePaneBy(node: PaneNode, id: string, direction: ResizeDirection, px: number, size: { w: number; h: number }): PaneNode | null {
+	const path = pathTo(node, id);
+	if (!path) return null;
+	const axis: SplitDirection = direction === 'left' || direction === 'right' ? 'vertical' : 'horizontal';
+	const all = dividers(node);
+	for (let depth = path.length - 1; depth >= 0; depth--) {
+		const at = path.slice(0, depth);
+		const d = all.find((x) => x.path.length === at.length && x.path.every((p, i) => p === at[i]));
+		if (!d || d.direction !== axis) continue;
+		const span = axis === 'vertical' ? d.area.w * size.w : d.area.h * size.h;
+		if (span <= 0) return null;
+		const sign = direction === 'right' || direction === 'down' ? 1 : -1;
+		return setRatio(node, at, d.ratio + (sign * px) / span);
+	}
+	return null;
+}
+
 /** The pane after (`step` 1) or before (-1) `current` in `order`, wrapping around. */
 export function cyclePane(order: string[], current: string, step: 1 | -1): string {
 	if (!order.length) return current;

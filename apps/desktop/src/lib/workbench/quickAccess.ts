@@ -13,7 +13,11 @@ export type QuickMode =
 	| { kind: 'workspaceSymbol'; query: string }
 	| { kind: 'help'; query: string }
 	| { kind: 'view'; query: string }
-	| { kind: 'editors'; query: string; mru: boolean };
+	| { kind: 'editors'; query: string; mru: boolean }
+	| { kind: 'task'; query: string }
+	| { kind: 'debug'; query: string }
+	| { kind: 'term'; query: string }
+	| { kind: 'text'; query: string };
 
 /** The providers `?` lists, in VS Code's order. */
 export const QUICK_ACCESS_HELP: { readonly prefix: string; readonly label: string }[] = [
@@ -23,6 +27,10 @@ export const QUICK_ACCESS_HELP: { readonly prefix: string; readonly label: strin
 	{ prefix: '@', get label() { return t('workbench.quickAccess.symbol'); } },
 	{ prefix: '@:', get label() { return t('workbench.quickAccess.symbolByKind'); } },
 	{ prefix: '#', get label() { return t('workbench.quickAccess.workspaceSymbol'); } },
+	{ prefix: '%', get label() { return t('workbench.quickAccess.textSearch'); } },
+	{ prefix: 'debug ', get label() { return t('workbench.quickAccess.debug'); } },
+	{ prefix: 'task ', get label() { return t('workbench.quickAccess.task'); } },
+	{ prefix: 'term ', get label() { return t('workbench.quickAccess.terminal'); } },
 	{ prefix: 'edt ', get label() { return t('workbench.quickAccess.editors'); } },
 	{ prefix: 'edt mru ', get label() { return t('workbench.quickAccess.editorsMru'); } },
 	{ prefix: 'view ', get label() { return t('workbench.quickAccess.view'); } },
@@ -56,7 +64,11 @@ export function parseQuickInput(value: string): QuickMode {
 	if (value.startsWith('@')) return { kind: 'symbol', query: value.slice(1).trim(), byKind: false };
 	if (value.startsWith('#')) return { kind: 'workspaceSymbol', query: value.slice(1).trim() };
 	if (value.startsWith('?')) return { kind: 'help', query: value.slice(1).trim() };
+	if (value.startsWith('%')) return { kind: 'text', query: value.slice(1).trim() };
 	if (value.startsWith('view ')) return { kind: 'view', query: value.slice(5).trim() };
+	if (value.startsWith('task ')) return { kind: 'task', query: value.slice(5).trim() };
+	if (value.startsWith('debug ')) return { kind: 'debug', query: value.slice(6).trim() };
+	if (value.startsWith('term ')) return { kind: 'term', query: value.slice(5).trim() };
 	if (value.startsWith('edt mru ')) return { kind: 'editors', query: value.slice(8).trim(), mru: true };
 	if (value.startsWith('edt ')) return { kind: 'editors', query: value.slice(4).trim(), mru: false };
 	return { kind: 'files', ...splitFileAndPosition(value.trim()) };

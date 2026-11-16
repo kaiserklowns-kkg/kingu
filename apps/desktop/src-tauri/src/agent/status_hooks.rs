@@ -32,6 +32,9 @@ use sha2::{Digest, Sha256};
 
 use super::trust::{self, Homes};
 
+/// The oldest claude whose user settings get Kingu's entries: PermissionRequest came in 2.0.45
+/// (Orca `CLAUDE_HOOK_EVENT_FIRST_VERSIONS`).
+pub const CLAUDE_GLOBAL_FLOOR: (u32, u32, u32) = (2, 0, 45);
 /// What every Kingu entry's command contains (and nothing else's).
 pub const MARKER: &str = "agent-status/agent-hook.sh";
 const COPILOT_FILE: &str = "kingu-desktop.json";
@@ -44,12 +47,43 @@ pub const SCRIPT: &str = r#"#!/bin/sh
 # Appends the hook payload (stdin), tagged, to the status file of the Kingu terminal the CLI runs
 # in (KINGU_AGENT_HOOK_FILE); in any other terminal it only drains stdin.
 [ -n "${3-}" ] && printf '%s\n' "$3"
-payload=$(cat)
 f="${KINGU_AGENT_HOOK_FILE-}"
+# Command Code runs hooks without the terminal's env (Orca command-code-managed-script.ts): the
+# file is taken from the nearest ancestor process that has it.
+if [ -z "$f" ] && [ "$1" = command-code ]; then
+  pid=$PPID; n=0
+  while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null && [ "$n" -lt 16 ]; do
+    f=$(ps eww -o command= -p "$pid" 2>/dev/null | sed -n 's/.*KINGU_AGENT_HOOK_FILE=\([^ ]*\.jsonl\).*/\1/p' | head -n 1)
+    [ -n "$f" ] && break
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' '); n=$((n + 1))
+  done
+fi
 case "$f" in
   */agent-hooks/*.jsonl) ;;
-  *) exit 0 ;;
+  # Grok keeps stdin open (no EOF): never wait on it outside Kingu.
+  *) [ "$1" = grok ] || cat >/dev/null 2>&1; exit 0 ;;
 esac
+if [ "$1" = grok ] && command -v python3 >/dev/null 2>&1; then
+  # The first complete JSON value, 5s for the first byte then 1.5s idle (Orca hook-stdin-contract.ts).
+  payload=$(python3 -c '
+import sys, os, select, json
+fd = sys.stdin.fileno(); buf = b""; dec = json.JSONDecoder(); t = 5.0
+while True:
+    r, _, _ = select.select([fd], [], [], t)
+    if not r: break
+    c = os.read(fd, 65536)
+    if not c: break
+    buf += c; t = 1.5
+    try:
+        v, _ = dec.raw_decode(buf.decode("utf-8", "replace").lstrip())
+        sys.stdout.write(json.dumps(v)); sys.exit(0)
+    except ValueError:
+        pass
+sys.stdout.write(buf.decode("utf-8", "replace"))
+' 2>/dev/null)
+else
+  payload=$(cat)
+fi
 [ -n "$payload" ] || exit 0
 one=$(printf '%s' "$payload" | tr '\r\n' '  ')
 printf '{"kingu_hook":"%s","event":"%s","payload":%s}\n' "$1" "$2" "$one" >> "$f" 2>/dev/null
@@ -109,10 +143,60 @@ pub enum Agent {
   Copilot,
   Droid,
   Codex,
+  /// A `claude` typed by hand in a task's terminal pane (a Kingu-launched one gets `--settings`, hooks.rs).
+  Claude,
+  // Orca's other hooks.json-shaped integrations (src/main/<agent>/hook-service.ts).
+  /// Claude-shaped `settings.json` in their own config dirs (Orca ClaudeHookService).
+  Qoder,
+  QoderCn,
+  Qwen,
+  CodeBuddy,
+  OpenClaude,
+  /// `$GROK_HOME/hooks/kingu-status.json`, a file of Kingu's own.
+  Grok,
+  /// `~/.config/devin/config.json`.
+  Devin,
+  /// `~/.commandcode/settings.json`.
+  CommandCode,
+  /// `~/.gemini/config/hooks.json`, under a bundle key of Kingu's own.
+  Antigravity,
 }
 
+/// Env dirs of the launch (`COPILOT_HOME`, `GROK_HOME`, …): absolute paths only.
+pub type EnvDirs<'a> = &'a dyn Fn(&str) -> Option<PathBuf>;
+
+/// The process env as [`EnvDirs`].
+pub fn process_env_dir(k: &str) -> Option<PathBuf> {
+  std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
+/// No env dirs (tests).
+pub fn no_env_dir(_: &str) -> Option<PathBuf> {
+  None
+}
+
+const GROK_FILE: &str = "kingu-status.json";
+/// Antigravity's hooks.json keeps hooks under named bundles; Kingu's is its own.
+pub const ANTIGRAVITY_BUNDLE: &str = "kingu-status";
+
 impl Agent {
-  pub const ALL: [Agent; 5] = [Agent::Gemini, Agent::Cursor, Agent::Copilot, Agent::Droid, Agent::Codex];
+  pub const ALL: [Agent; 15] = [
+    Agent::Gemini,
+    Agent::Cursor,
+    Agent::Copilot,
+    Agent::Droid,
+    Agent::Codex,
+    Agent::Claude,
+    Agent::Qoder,
+    Agent::QoderCn,
+    Agent::Qwen,
+    Agent::CodeBuddy,
+    Agent::OpenClaude,
+    Agent::Grok,
+    Agent::Devin,
+    Agent::CommandCode,
+    Agent::Antigravity,
+  ];
 
   pub fn of_id(id: &str) -> Option<Self> {
     match id {
@@ -121,28 +205,69 @@ impl Agent {
       "copilot" => Some(Self::Copilot),
       "droid" => Some(Self::Droid),
       "codex" => Some(Self::Codex),
+      "claude" => Some(Self::Claude),
+      "qoder" => Some(Self::Qoder),
+      "qoder-cn" => Some(Self::QoderCn),
+      "qwen" => Some(Self::Qwen),
+      "codebuddy" => Some(Self::CodeBuddy),
+      "openclaude" => Some(Self::OpenClaude),
+      "grok" => Some(Self::Grok),
+      "devin" => Some(Self::Devin),
+      "command-code" => Some(Self::CommandCode),
+      "antigravity" => Some(Self::Antigravity),
       _ => None,
     }
   }
 
-  fn id(self) -> &'static str {
+  /// The profile id (agentProfiles.ts), also the `kingu_hook` tag of its lines.
+  pub fn id(self) -> &'static str {
     match self {
       Self::Gemini => "gemini",
       Self::Cursor => "cursor",
       Self::Copilot => "copilot",
       Self::Droid => "droid",
       Self::Codex => "codex",
+      Self::Claude => "claude",
+      Self::Qoder => "qoder",
+      Self::QoderCn => "qoder-cn",
+      Self::Qwen => "qwen",
+      Self::CodeBuddy => "codebuddy",
+      Self::OpenClaude => "openclaude",
+      Self::Grok => "grok",
+      Self::Devin => "devin",
+      Self::CommandCode => "command-code",
+      Self::Antigravity => "antigravity",
     }
   }
 
+  /// The object in the config that holds the event lists.
+  fn hooks_key(self) -> &'static str {
+    if self == Self::Antigravity { ANTIGRAVITY_BUNDLE } else { "hooks" }
+  }
+
+  /// A file that holds only Kingu's entries: removed when none are left.
+  fn own_file(self) -> bool {
+    matches!(self, Self::Copilot | Self::Grok)
+  }
+
   /// The config file Kingu's entries go into.
-  pub fn file(self, h: &Homes, copilot_home: Option<&Path>) -> PathBuf {
+  pub fn file(self, h: &Homes, env: EnvDirs) -> PathBuf {
     match self {
       Self::Gemini => h.home.join(".gemini/settings.json"),
       Self::Cursor => h.home.join(".cursor/hooks.json"),
-      Self::Copilot => copilot_home.map(Path::to_path_buf).unwrap_or_else(|| h.home.join(".copilot")).join("hooks").join(COPILOT_FILE),
+      Self::Copilot => env("COPILOT_HOME").unwrap_or_else(|| h.home.join(".copilot")).join("hooks").join(COPILOT_FILE),
       Self::Droid => h.home.join(".factory/settings.json"),
       Self::Codex => h.codex_home.clone().unwrap_or_else(|| h.home.join(".codex")).join("hooks.json"),
+      Self::Claude => h.claude_config_dir.clone().unwrap_or_else(|| h.home.join(".claude")).join("settings.json"),
+      Self::Qoder => h.home.join(".qoder/settings.json"),
+      Self::QoderCn => h.home.join(".qoder-cn/settings.json"),
+      Self::Qwen => h.home.join(".qwen/settings.json"),
+      Self::CodeBuddy => h.home.join(".codebuddy/settings.json"),
+      Self::OpenClaude => h.home.join(".openclaude/settings.json"),
+      Self::Grok => env("GROK_HOME").unwrap_or_else(|| h.home.join(".grok")).join("hooks").join(GROK_FILE),
+      Self::Devin => h.home.join(".config/devin/config.json"),
+      Self::CommandCode => h.home.join(".commandcode/settings.json"),
+      Self::Antigravity => h.home.join(".gemini/config/hooks.json"),
     }
   }
 
@@ -194,6 +319,94 @@ impl Agent {
       Self::Codex => ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "Interrupt"]
         .map(|e| (e, None, None))
         .to_vec(),
+      // The events every claude Kingu installs for knows (install checks the version first, like
+      // Orca: an unknown event makes claude reject the whole settings file). Tool events match all tools.
+      Self::Claude => super::hooks::EVENTS
+        .iter()
+        .chain(["SubagentStart", "SubagentStop"].iter())
+        .map(|e| (*e, matches!(*e, "PreToolUse" | "PostToolUse" | "PermissionRequest").then_some("*"), None))
+        .collect(),
+      // Orca qoder/qwen-code/codebuddy hook-service.ts: their own event lists, no matcher (`definition: {}`).
+      Self::Qoder | Self::QoderCn => [
+        "SessionStart",
+        "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionRequest",
+        "Stop",
+        "StopFailure",
+        "Notification",
+        "PostCompact",
+      ]
+      .map(|e| (e, None, None))
+      .to_vec(),
+      Self::Qwen => [
+        "SessionStart",
+        "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionRequest",
+        "Stop",
+        "StopFailure",
+        "Notification",
+        "SubagentStart",
+        "SubagentStop",
+      ]
+      .map(|e| (e, None, None))
+      .to_vec(),
+      Self::CodeBuddy => [
+        "SessionStart",
+        "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionRequest",
+        "Stop",
+        "StopFailure",
+        "Notification",
+      ]
+      .map(|e| (e, None, None))
+      .to_vec(),
+      // OpenClaude uses Claude's settings shape and events (Orca OPENCLAUDE_HOOK_SETTINGS).
+      Self::OpenClaude => super::hooks::EVENTS
+        .iter()
+        .map(|e| (*e, matches!(*e, "PreToolUse" | "PostToolUse" | "PermissionRequest").then_some("*"), None))
+        .collect(),
+      // Orca grok-hook-config.ts: tool events match every tool with the regex `.*`.
+      Self::Grok => [
+        "SessionStart",
+        "UserPromptSubmit",
+        "Stop",
+        "StopCancelled",
+        "StopFailure",
+        "SessionEnd",
+        "PreToolUse",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "Notification",
+      ]
+      .map(|e| (e, matches!(e, "PreToolUse" | "PostToolUse" | "PostToolUseFailure").then_some(".*"), None))
+      .to_vec(),
+      // Orca devin/hook-settings.ts: Devin's matchers are regexes, so none (`*` is invalid).
+      Self::Devin => ["SessionStart", "UserPromptSubmit", "Stop", "PostCompaction", "SessionEnd", "PreToolUse", "PostToolUse", "PermissionRequest"]
+        .map(|e| (e, None, None))
+        .to_vec(),
+      // Orca command-code/hook-service.ts: it has no prompt hook.
+      Self::CommandCode => vec![("PreToolUse", Some(".*"), None), ("PostToolUse", Some(".*"), None), ("Stop", None, None)],
+      // Orca antigravity/hook-script.ts: silence on PreToolUse is a denial; `ask` keeps agy's own
+      // permission policy. Stop answers an empty decision.
+      Self::Antigravity => vec![
+        ("PreInvocation", None, Some("{}")),
+        ("PostInvocation", None, Some("{}")),
+        ("Stop", None, Some(r#"{"decision":""}"#)),
+        ("PreToolUse", Some("*"), Some(r#"{"decision":"ask"}"#)),
+        ("PostToolUse", Some("*"), Some("{}")),
+      ],
     }
   }
 
@@ -202,7 +415,16 @@ impl Agent {
       Self::Gemini => json!({ "hooks": [{ "type": "command", "command": command, "timeout": 10000 }] }),
       Self::Cursor => json!({ "command": command, "timeout": 10 }),
       Self::Copilot => json!({ "type": "command", "bash": command, "timeoutSec": 5 }),
-      Self::Droid => {
+      // agy runs a lifecycle command flat; tool events nest under a matcher. ACP hosts split the
+      // command into argv, so the shell is the program (Orca antigravity/hooks-json-bundle.ts).
+      Self::Antigravity => {
+        let command = format!("/bin/sh -c {}", sh_quote(&command));
+        match matcher {
+          Some(m) => json!({ "matcher": m, "hooks": [{ "type": "command", "command": command, "timeout": 10 }] }),
+          None => json!({ "type": "command", "command": command, "timeout": 10 }),
+        }
+      }
+      Self::Droid | Self::Claude | Self::Qoder | Self::QoderCn | Self::Qwen | Self::CodeBuddy | Self::OpenClaude | Self::Grok | Self::Devin | Self::CommandCode => {
         let mut d = json!({ "hooks": [{ "type": "command", "command": command, "timeout": 10 }] });
         if let Some(m) = matcher {
           d["matcher"] = json!(m);
@@ -253,9 +475,14 @@ pub fn sh_quote(s: &str) -> String {
 
 /// The hook command: the script when it is there, else drain stdin (and still give the answer).
 pub fn hook_command(script: &Path, agent: Agent, event: &str, response: Option<&str>) -> String {
+  hook_command_for(script, agent.id(), event, response)
+}
+
+/// [`hook_command`] by the `kingu_hook` tag (status_plugins.rs uses it for its CLIs).
+pub fn hook_command_for(script: &Path, id: &str, event: &str, response: Option<&str>) -> String {
   let s = sh_quote(&script.to_string_lossy());
   let resp = response.map(sh_quote);
-  let run = format!("/bin/sh {s} {} {event}{}", agent.id(), resp.as_deref().map(|r| format!(" {r}")).unwrap_or_default());
+  let run = format!("/bin/sh {s} {id} {event}{}", resp.as_deref().map(|r| format!(" {r}")).unwrap_or_default());
   let drain = match resp {
     Some(r) => format!("{{ cat >/dev/null 2>&1 || :; }}; printf '%s\\n' {r}"),
     None => "cat >/dev/null 2>&1 || :".to_owned(),
@@ -287,8 +514,13 @@ fn strip_group(g: &Value) -> Option<Value> {
 /// Takes Kingu's entries out of `config.hooks` and adds `defs` (event, definition) after the
 /// user's own. Returns each event's group index of Kingu's entry. Err: a shape it will not touch.
 pub fn merge(config: &mut Map<String, Value>, defs: Vec<(String, Value)>) -> Result<Vec<(String, usize)>, String> {
-  let hooks = config.entry("hooks").or_insert_with(|| Value::Object(Map::new()));
-  let hooks = hooks.as_object_mut().ok_or("hooks is not an object")?;
+  merge_at(config, "hooks", defs)
+}
+
+/// [`merge`] into `config[key]` instead of `config.hooks`.
+pub fn merge_at(config: &mut Map<String, Value>, key: &str, defs: Vec<(String, Value)>) -> Result<Vec<(String, usize)>, String> {
+  let hooks = config.entry(key).or_insert_with(|| Value::Object(Map::new()));
+  let hooks = hooks.as_object_mut().ok_or_else(|| format!("{key} is not an object"))?;
   let events: Vec<String> = hooks.keys().cloned().collect();
   for e in events {
     let Some(arr) = hooks.get(&e).and_then(Value::as_array) else { continue };
@@ -375,7 +607,17 @@ pub fn apply(agent: Agent, file: &Path, script: &Path, on: bool) -> Result<bool,
   } else {
     Vec::new()
   };
-  let placed = merge(&mut config, defs)?;
+  let key = agent.hooks_key();
+  let placed = merge_at(&mut config, key, defs)?;
+  // Antigravity's bundle of Kingu's own goes with its last entry.
+  if !on && agent == Agent::Antigravity && config.get(key).and_then(Value::as_object).is_some_and(Map::is_empty) {
+    config.remove(key);
+  }
+  // Claude's own settings file: an empty `hooks` left by taking Kingu's entries out goes too, so a
+  // file Kingu added hooks to comes back as it was (only when it was Kingu's alone).
+  if !on && agent == Agent::Claude && config.get("hooks").and_then(Value::as_object).is_some_and(Map::is_empty) && !before.get("hooks").and_then(Value::as_object).is_some_and(Map::is_empty) {
+    config.remove("hooks");
+  }
   if on && matches!(agent, Agent::Cursor | Agent::Copilot) && !config.contains_key("version") {
     config.insert("version".into(), json!(1));
   }
@@ -385,7 +627,7 @@ pub fn apply(agent: Agent, file: &Path, script: &Path, on: bool) -> Result<bool,
   }
   let changed = config != before;
   if changed {
-    if !on && agent == Agent::Copilot && config.get("hooks").and_then(Value::as_object).is_some_and(Map::is_empty) {
+    if !on && agent.own_file() && config.get("hooks").and_then(Value::as_object).is_some_and(Map::is_empty) {
       fs::remove_file(&target).map_err(|e| e.to_string())?;
     } else {
       let text = serde_json::to_string_pretty(&Value::Object(config)).map_err(|e| e.to_string())? + "\n";
@@ -458,10 +700,6 @@ pub fn opencode_dir(base: &Path, user_dir: Option<&Path>) -> Result<PathBuf, Str
   Ok(dir)
 }
 
-fn copilot_home() -> Option<PathBuf> {
-  std::env::var_os("COPILOT_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute())
-}
-
 fn status_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
   use tauri::Manager;
   Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("agent-status"))
@@ -484,11 +722,19 @@ pub async fn agent_status_hooks_install(app: tauri::AppHandle, agent: String, pr
     return Ok(Some(d.to_str().ok_or("path is not UTF-8")?.to_owned()));
   }
   let Some(a) = Agent::of_id(&agent) else { return Ok(None) };
+  if a == Agent::Claude {
+    // Orca's version gate: only a claude that knows every event Kingu adds (else nothing is written).
+    let prog = program.clone();
+    let version = tauri::async_runtime::spawn_blocking(move || super::hooks::claude_version(if prog.is_empty() { "claude" } else { &prog })).await.map_err(|e| e.to_string())?;
+    if !version.is_some_and(|v| v >= CLAUDE_GLOBAL_FLOOR) {
+      return Ok(None);
+    }
+  }
   let homes = trust::launch_homes(&app, &program)?;
   tauri::async_runtime::spawn_blocking(move || {
     let _one = trust::WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let script = ensure_script(&dir)?;
-    let file = a.file(&homes, copilot_home().as_deref());
+    let file = a.file(&homes, &process_env_dir);
     if apply(a, &file, &script, true)? {
       log::info!("agent status hooks for {agent} written to {}", file.display());
     }
@@ -510,9 +756,9 @@ pub async fn agent_status_hooks_remove(app: tauri::AppHandle) -> Result<(), Stri
     let script = dir.join("agent-hook.sh");
     let mut errors = Vec::new();
     for a in Agent::ALL {
-      let mut files = vec![a.file(&own, copilot_home().as_deref())];
+      let mut files = vec![a.file(&own, &process_env_dir)];
       if a == Agent::Codex {
-        files.push(a.file(&account, None));
+        files.push(a.file(&account, &no_env_dir));
         files.dedup();
       }
       for f in files {
@@ -592,7 +838,7 @@ mod tests {
     let script = home.join("data/agent-status/agent-hook.sh");
     let h = homes(&home);
     // gemini: merged into an existing settings file.
-    let gemini = Agent::Gemini.file(&h, None);
+    let gemini = Agent::Gemini.file(&h, &no_env_dir);
     fs::create_dir_all(gemini.parent().unwrap()).unwrap();
     fs::write(&gemini, r#"{"selectedAuthType":"oauth","hooks":{"AfterAgent":[{"hooks":[{"type":"command","command":"notify-me"}]}]}}"#).unwrap();
     assert!(apply(Agent::Gemini, &gemini, &script, true).unwrap());
@@ -605,21 +851,21 @@ mod tests {
     assert!(apply(Agent::Gemini, &gemini, &script, false).unwrap());
     assert_eq!(json_of(&gemini), json!({ "selectedAuthType": "oauth", "hooks": { "AfterAgent": [{ "hooks": [{ "type": "command", "command": "notify-me" }] }] } }));
     // cursor: flat definitions and a version.
-    let cursor = Agent::Cursor.file(&h, None);
+    let cursor = Agent::Cursor.file(&h, &no_env_dir);
     assert!(apply(Agent::Cursor, &cursor, &script, true).unwrap());
     let v = json_of(&cursor);
     assert_eq!(v["version"], 1);
     assert_eq!(v["hooks"]["stop"][0]["timeout"], 10);
     assert!(v["hooks"]["beforeShellExecution"][0]["command"].as_str().unwrap().ends_with(r#"printf '%s\n' '{"permission":"allow"}'; fi"#));
     // copilot: a file of Kingu's own, gone again on remove.
-    let copilot = Agent::Copilot.file(&h, None);
+    let copilot = Agent::Copilot.file(&h, &no_env_dir);
     assert!(copilot.ends_with(".copilot/hooks/kingu-desktop.json"));
     assert!(apply(Agent::Copilot, &copilot, &script, true).unwrap());
     assert_eq!(json_of(&copilot)["hooks"]["Notification"][0]["timeoutSec"], 5);
     assert!(apply(Agent::Copilot, &copilot, &script, false).unwrap());
     assert!(!copilot.exists());
     // droid: tool events with the `*` matcher.
-    let droid = Agent::Droid.file(&h, None);
+    let droid = Agent::Droid.file(&h, &no_env_dir);
     assert!(apply(Agent::Droid, &droid, &script, true).unwrap());
     let v = json_of(&droid);
     assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "*");
@@ -628,6 +874,38 @@ mod tests {
     fs::write(&droid, "{oops").unwrap();
     assert!(apply(Agent::Droid, &droid, &script, true).is_err());
     assert_eq!(fs::read_to_string(&droid).unwrap(), "{oops");
+  }
+
+  #[test]
+  fn claude_user_settings_get_entries_next_to_the_users() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = Homes { home: dir.path().to_path_buf(), claude_config_dir: None, codex_home: None };
+    let script = dir.path().join("agent-status/agent-hook.sh");
+    let file = Agent::Claude.file(&h, &no_env_dir);
+    assert_eq!(file, dir.path().join(".claude/settings.json"));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, r#"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#).unwrap();
+    assert!(apply(Agent::Claude, &file, &script, true).unwrap());
+    let v = json_of(&file);
+    assert_eq!(v["model"], "opus");
+    assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "say done");
+    assert!(v["hooks"]["Stop"][1]["hooks"][0]["command"].as_str().unwrap().contains("agent-hook.sh' claude Stop"));
+    assert_eq!(v["hooks"]["PreToolUse"][0]["matcher"], "*");
+    assert!(v["hooks"]["SessionStart"][0].get("matcher").is_none());
+    assert!(!apply(Agent::Claude, &file, &script, true).unwrap(), "idempotent");
+    assert!(apply(Agent::Claude, &file, &script, false).unwrap());
+    let v = json_of(&file);
+    assert_eq!(v, serde_json::from_str::<Value>(r#"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#).unwrap(), "back to the user's own file");
+    assert!(!apply(Agent::Claude, &file, &script, false).unwrap(), "removing twice changes nothing");
+    // A file that had no hooks of its own comes back without a `hooks` key; key order is kept.
+    std::fs::write(&file, r#"{"theme":"dark","model":"opus"}"#).unwrap();
+    apply(Agent::Claude, &file, &script, true).unwrap();
+    apply(Agent::Claude, &file, &script, false).unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), "{\n  \"theme\": \"dark\",\n  \"model\": \"opus\"\n}");
+    // A file that is not JSON is left alone.
+    std::fs::write(&file, "{ not json").unwrap();
+    assert!(apply(Agent::Claude, &file, &script, true).is_err());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ not json");
   }
 
   #[test]
@@ -640,7 +918,7 @@ mod tests {
     fs::write(codex_home.join("hooks.json"), r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#).unwrap();
     let h = Homes { codex_home: Some(codex_home.clone()), ..homes(&home) };
     let script = home.join("data/agent-status/agent-hook.sh");
-    let file = Agent::Codex.file(&h, None);
+    let file = Agent::Codex.file(&h, &no_env_dir);
     assert!(apply(Agent::Codex, &file, &script, true).unwrap());
     let v = json_of(&file);
     assert_eq!(v["hooks"]["Stop"][0]["hooks"][0]["command"], "say done", "the user's group keeps index 0 (and its trust)");

@@ -94,6 +94,15 @@ const EXCLUSIVE: [string, string][] = [
 	// The Search Editor's Match Case / Regex (⌥⌘C / ⌥⌘R) act with focus in it, where Copy Path / Reveal in Finder do not.
 	['toggleSearchEditorCaseSensitive', 'copyFilePath'],
 	['toggleSearchEditorRegex', 'revealFileInOS'],
+	// The Search view's toggles (⌥⌘C / ⌥⌘W / ⌥⌘R) act with focus in the view, the Search Editor's in
+	// the editor, Copy Path / Reveal in Finder in neither.
+	['toggleSearchCaseSensitive', 'copyFilePath'],
+	['toggleSearchCaseSensitive', 'toggleSearchEditorCaseSensitive'],
+	['toggleSearchWholeWord', 'toggleSearchEditorWholeWord'],
+	['toggleSearchRegex', 'revealFileInOS'],
+	['toggleSearchRegex', 'toggleSearchEditorRegex'],
+	// ⇧⌘J toggles the search details with focus in the Search view (higher weight), jumps to a worktree elsewhere.
+	['workbench.action.search.toggleQueryDetails', 'kingu.agents.jumpWorktree'],
 	// ⌘F finds in a focused terminal, or focuses the Problems filter while the Problems view has focus.
 	['workbench.action.terminal.focusFind', 'problems.action.focusFilter'],
 	// Escape in the Problems filter box clears it; the toasts' Escape never acts from a text input.
@@ -110,7 +119,24 @@ const EXCLUSIVE: [string, string][] = [
 	['workbench.action.chat.find', 'problems.action.focusFilter'],
 	['workbench.action.chat.findNext', 'workbench.action.terminal.goToRecentDirectory'],
 	// ⌘W restores a maximized secondary side bar (VS Code's Restore Secondary Side Bar), closes the editor otherwise.
-	['workbench.action.restoreAuxiliaryBar', 'workbench.action.closeActiveEditor']
+	['workbench.action.restoreAuxiliaryBar', 'workbench.action.closeActiveEditor'],
+	// ⌘K on macOS clears the focused panel terminal or the focused Debug Console (VS Code's terminalFocus / inDebugRepl).
+	['workbench.debug.panel.action.clearReplAction', 'workbench.action.terminal.clear'],
+	// ⇧⌘1 in the Search results: Replace on a focused match, Replace All in File / Folder on a focused file / folder.
+	['search.action.replace', 'search.action.replaceAllInFile'],
+	['search.action.replace', 'search.action.replaceAllInFolder'],
+	['search.action.replaceAllInFile', 'search.action.replaceAllInFolder'],
+	// ⌃- / Alt+←: Back in an open quick input (higher weight), Go Back elsewhere.
+	['workbench.action.quickInputBack', 'workbench.action.navigateBack'],
+	['workbench.action.quickInputBack', 'workbench.action.terminal.focusPreviousPane'],
+	// ⌃⌘← / → resize a focused terminal (macOS and Linux keys), move the editor to another group elsewhere.
+	['workbench.action.terminal.resizePaneLeft', 'workbench.action.moveEditorToPreviousGroup'],
+	['workbench.action.terminal.resizePaneRight', 'workbench.action.moveEditorToNextGroup'],
+	// F6 pauses a running debug session, else focuses the next part (VS Code's keys, the debugger's when first).
+	['workbench.action.debug.pause', 'workbench.action.focusNextPart'],
+	// Escape with focus on a status bar item clears that focus (higher weight than hiding the toasts); the Problems filter box is elsewhere.
+	['workbench.statusBar.clearFocus', 'notifications.hideToasts'],
+	['workbench.statusBar.clearFocus', 'problems.action.clearFilterText']
 ];
 
 /** VS Code's `terminalFocus` / `!terminalFocus`: one command's key acts only in a focused panel

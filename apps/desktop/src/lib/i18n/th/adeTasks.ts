@@ -223,5 +223,21 @@ export const adeTasks = {
 	'adeTasks.worktree.copiedBranch': 'คัดลอกชื่อ branch แล้ว',
 	'adeTasks.worktree.copyBranchFailed': 'คัดลอกชื่อ branch ไม่ได้',
 	'adeTasks.worktree.openFolderFirst': 'เปิดโฟลเดอร์ก่อน',
-	'adeTasks.worktree.jumpPlaceholder': 'ไปที่ worktree'
+	'adeTasks.worktree.jumpPlaceholder': 'ไปที่ worktree',
+	'adeTasks.jump.needsYou': 'รอคุณ',
+	'adeTasks.jump.recent': 'ล่าสุด',
+	'adeTasks.jump.matches': 'Worktree',
+	'adeTasks.jump.create': 'สร้าง worktree "{name}"',
+	'adeTasks.jump.createHint': 'เปิดช่องเขียนงานพร้อมชื่อนี้',
+	'adeTasks.details.menu': 'แก้ไขรายละเอียด…',
+	'adeTasks.details.title': 'แก้ไขรายละเอียด worktree',
+	'adeTasks.details.name': 'ชื่อ',
+	'adeTasks.details.comment': 'หมายเหตุ',
+	'adeTasks.details.commentPlaceholder': 'หมายเหตุที่แสดงบนการ์ด',
+	'adeTasks.details.issue': 'issue ที่ผูกไว้',
+	'adeTasks.details.issuePlaceholder': 'วาง URL ของ issue บน GitHub หรือ Linear',
+	'adeTasks.details.badIssue': 'ไม่ใช่ URL ของ issue บน GitHub หรือ Linear',
+	'adeTasks.details.longComment': 'หมายเหตุยาวได้ไม่เกิน {max} ตัวอักษร',
+	'adeTasks.details.save': 'บันทึก',
+	'adeTasks.details.saveFailed': 'บันทึกไม่ได้: {error}'
 } satisfies Record<keyof typeof en, string>;

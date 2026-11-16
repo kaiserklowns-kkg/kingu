@@ -11,6 +11,26 @@ export const EXPLORER_SETTINGS: SettingSchema[] = [
 		description: 'ถามก่อนย้ายไฟล์ไปถังขยะ (Controls whether the Explorer should ask for confirmation when deleting files and folders.)'
 	},
 	{
+		id: 'explorer.enableUndo',
+		group: 'Explorer',
+		type: 'boolean',
+		default: true,
+		description: 'ให้ Explorer ย้อนกลับ (⌘Z) และทำซ้ำ (⇧⌘Z) การสร้าง เปลี่ยนชื่อ ย้าย คัดลอก และลบไฟล์ได้ (Controls whether the Explorer should support undoing file and folder operations.)'
+	},
+	{
+		id: 'explorer.confirmUndo',
+		group: 'Explorer',
+		type: 'string',
+		default: 'default',
+		enum: ['verbose', 'default', 'light'],
+		enumDescriptions: [
+			'ถามก่อนย้อนกลับทุกครั้ง (Explorer will prompt before all undo operations.)',
+			'ถามก่อนย้อนกลับการสร้างไฟล์และการวาง/คัดลอก (Explorer will prompt before destructive undo operations.)',
+			'ไม่ถามก่อนย้อนกลับขณะ Explorer มีโฟกัส ยกเว้นการสร้างไฟล์ (Explorer will not prompt before undo operations when focused.)'
+		],
+		description: 'ให้ Explorer ถามก่อนย้อนกลับการทำงานกับไฟล์ (Controls whether the Explorer should ask for confirmation when undoing.)'
+	},
+	{
 		id: 'explorer.sortOrder',
 		group: 'Explorer',
 		type: 'string',

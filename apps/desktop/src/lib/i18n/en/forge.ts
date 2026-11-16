@@ -300,5 +300,18 @@ export const forge = {
 	'forge.mergeLine.ableToMerge': 'Able to merge',
 
 	// Starting a task from a pull request
-	'forge.prStart.notOnGitlab': 'Starting a task from a merge request is not available on GitLab yet'
+	'forge.prStart.notOnGitlab': 'Starting a task from a merge request is not available on GitLab yet',
+	// Bitbucket: Connect… (bitbucket.svelte.ts)
+	'forge.bitbucket.mode': 'How to sign in to Bitbucket',
+	'forge.bitbucket.modeBasic': 'Email and API token',
+	'forge.bitbucket.modeBasicHint': 'Your Atlassian email with an API token that has repository and pull request access',
+	'forge.bitbucket.modeToken': 'Access token',
+	'forge.bitbucket.modeTokenHint': 'A repository, project or workspace access token',
+	'forge.bitbucket.accessToken': 'Bitbucket access token',
+	'forge.bitbucket.email': 'Bitbucket email',
+	'forge.bitbucket.apiToken': 'Bitbucket API token',
+	'forge.bitbucket.next': 'Press Enter to continue',
+	'forge.bitbucket.connectHint': 'Press Enter to check it with Bitbucket and connect',
+	'forge.bitbucket.connected': 'Bitbucket connected as {account}',
+	'forge.bitbucket.disconnected': 'Bitbucket disconnected'
 } as const;

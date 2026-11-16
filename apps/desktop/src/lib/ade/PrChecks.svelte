@@ -45,7 +45,7 @@
 		<span class="flex-1">{title ? 'Checks' : ''}</span>
 		<button class={ICON_BUTTON} aria-label={t('forge.status.refreshChecks')} title={t('forge.status.refresh')} disabled={entry?.loading || !adeTasks.gh?.authenticated} onclick={() => prStatuses.refresh(slug)}><Icon name="refresh" size={14} /></button>
 	</div>
-	{#if adeTasks.gh?.provider === 'gitlab' && !adeTasks.gh.authenticated}
+	{#if (adeTasks.gh?.provider === 'gitlab' || adeTasks.gh?.provider === 'bitbucket') && !adeTasks.gh.authenticated}
 		<p class="text-(--vscode-descriptionForeground)">{adeTasks.gh.detail}</p>
 	{:else if adeTasks.gh && !adeTasks.gh.installed}
 		<p class="text-(--vscode-descriptionForeground)">{t('forge.status.ghMissing')}</p>

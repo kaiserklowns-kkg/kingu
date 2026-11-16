@@ -100,6 +100,11 @@ const taskName = (ref: unknown) => (typeof ref === 'string' ? ref : JSON.stringi
 
 const isWorkspaceFile = (p: string | null): p is string => !!p && !p.includes('://') && !isDiffKey(p);
 
+/** Focus is in the Debug Console panel (VS Code's `inDebugRepl`). */
+const debugConsoleFocus = () => !!document.activeElement?.closest('[data-debug-console]');
+/** Moves focus to the Debug Console's input once the panel has rendered it. */
+const focusConsoleInput = () => requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-debug-console] input')?.focus());
+
 function load(key: string): string | null {
 	try {
 		return localStorage.getItem(key);
@@ -619,13 +624,14 @@ class Debug {
 	// --- Starting ----------------------------------------------------------------------------------
 
 	/** F5: continue when stopped, else start a session (VS Code: Start Debugging / Continue). */
-	async start({ noDebug = false, pick = false } = {}) {
+	async start({ noDebug = false, pick = false, name }: { noDebug?: boolean; pick?: boolean; name?: string } = {}) {
 		if (this.stopped && !pick) return this.continue();
 		const root = await this.#ensureRoot();
 		if (!root) return status.flash(t('tools.debug.openFolderFirst'));
 		// Restricted Mode does not debug (VS Code asks to trust the workspace first).
 		if (!(await workspaceTrust.request(t('trust.feature.debug')))) return;
-		const picked = await this.#pickConfig(pick);
+		// `name`: the configuration picked in quick access (`debug `), no further question.
+		const picked = name !== undefined ? await this.#pickNamed(name) : await this.#pickConfig(pick);
 		if (!picked) return;
 		// debug.saveBeforeStart: the dirty editors of the active group (untitled ones ask where to save).
 		const toSave = editorsToSave(settings.get<string>('debug.saveBeforeStart'), editors.tabs.map((t) => t.path), (p) => editors.isDirty(p), isUntitled);
@@ -754,6 +760,21 @@ class Debug {
 		if (this.#folderNames.size < 2) return what;
 		const folder = this.#configFolder.get(config);
 		return `${folder === undefined ? t('ideTasks.pick.workspace') : (this.#folderNames.get(folder) ?? folder)} · ${what}`;
+	}
+
+	/** The `debug ` quick access rows (VS Code's StartDebugQuickAccessProvider): each launch configuration, then each compound. */
+	async launchItems(): Promise<{ name: string; description: string }[]> {
+		const { configs, compounds } = await this.#readLaunchFiles();
+		return [...configs.map((c) => ({ name: c.name, description: this.#describe(c, c.type) })), ...compounds.map((c) => ({ name: c.name, description: this.#describe(c, t('debugger.compound')) }))];
+	}
+
+	async #pickNamed(name: string): Promise<Picked | undefined> {
+		const { configs, compounds } = await this.#readLaunchFiles();
+		save(`${LAST_CONFIG}:${this.root}`, name);
+		const config = configs.find((c) => c.name === name);
+		if (config) return { kind: 'config', config };
+		const compound = compounds.find((c) => c.name === name);
+		return compound ? this.#compound(compound, configs) : undefined;
 	}
 
 	async #pickConfig(always = false): Promise<Picked | undefined> {
@@ -1281,6 +1302,18 @@ class Debug {
 		save(`${WATCHES}:${this.root}`, JSON.stringify(this.watches));
 	}
 
+	/** Edit Expression (watchExpressionsView.ts, F2 / ↵ on macOS): replaces it in place; empty removes it. */
+	async editWatch(expr: string) {
+		const next = await quick.input({ placeholder: t('debugger.editWatch'), value: expr, hint: (v) => v.trim() || expr });
+		if (next === undefined) return;
+		const e = next.trim();
+		if (!e) return this.removeWatch(expr);
+		if (e === expr) return;
+		this.watches = this.watches.flatMap((w) => (w === expr ? (this.watches.includes(e) ? [] : [e]) : [w]));
+		save(`${WATCHES}:${this.root}`, JSON.stringify(this.watches));
+		void this.#evaluateWatches();
+	}
+
 	removeAllWatches() {
 		this.watches = [];
 		save(`${WATCHES}:${this.root}`, '[]');
@@ -1612,7 +1645,27 @@ export function installDebug(): () => void {
 		commands.register({ id: 'debug.addConfiguration', title: 'Add Configuration...', category: 'Debug', run: () => debug.addConfiguration() }),
 		commands.register({ id: 'debug.installAdditionalDebuggers', title: 'Install Additional Debuggers...', category: 'Debug', run: () => debug.installAdditional() }),
 		commands.register({ id: 'workbench.view.debug', title: 'Show Run and Debug', category: 'View', key: 'cmd+shift+d', scope: 'ide', run: () => ((layout.sideView = 'debug'), (layout.sidebarVisible = true)) }),
-		commands.register({ id: 'workbench.debug.action.toggleRepl', title: 'Focus on Debug Console View', category: 'View', run: () => layout.showPanel('debugConsole') })
+		// ⇧⌘Y (debug.contribution.ts: the view's toggle keybinding): shows the Debug Console, hides the
+		// panel when the console is already in front. Lower weight, so Keep Chat Edits keeps ⇧⌘Y while a
+		// file has pending chat edits (VS Code's chat editing weight wins there too).
+		commands.register({
+			id: 'workbench.debug.action.toggleRepl',
+			title: 'Focus on Debug Console View',
+			category: 'View',
+			key: 'cmd+shift+y',
+			weight: -1,
+			run: () => (layout.panelVisible && layout.panelTab === 'debugConsole' ? (layout.panelVisible = false) : (layout.showPanel('debugConsole'), focusConsoleInput()))
+		}),
+		// Clear Console (repl.ts `workbench.debug.panel.action.clearReplAction`): ⌘K on macOS with
+		// focus in the Debug Console, no key elsewhere (like the terminal's Clear).
+		commands.register({
+			id: 'workbench.debug.panel.action.clearReplAction',
+			title: 'Clear Console',
+			category: 'Debug',
+			mac: 'cmd+k',
+			keyWhen: debugConsoleFocus,
+			run: () => debug.clearConsole()
+		})
 	];
 	return () => {
 		disposeEffects();

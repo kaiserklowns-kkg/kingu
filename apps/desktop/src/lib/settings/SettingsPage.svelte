@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	// System settings: one page for the IDE and the ADE, over the content area of either mode
 	// (the title bar and status bar stay). Left, laid out like Orca's settings sidebar: Back, the
 	// search, then the table of contents by section (AI Capabilities / System / IDE / ADE / Snaps)
@@ -172,6 +172,15 @@
 	}
 
 	let searchInput = $state<HTMLInputElement>();
+	// A command's search (workbench.action.openSettings with a query) fills the box once.
+	$effect(() => {
+		const q = systemSettings.request?.query;
+		if (q === undefined) return;
+		untrack(() => {
+			query = q;
+			systemSettings.request = { ...systemSettings.request, query: undefined };
+		});
+	});
 	let navList = $state<HTMLDivElement>();
 	// Opening Settings starts the table of contents at the top (AI Capabilities first, like Orca);
 	// without this it could open scrolled past the first items.
@@ -387,6 +396,7 @@
 			{:else if page === 'skills'}<SkillsPage />
 			{:else if page === 'memories'}<MemoriesPage />
 			{:else if page === 'voice'}<VoicePage />
+			{:else if page === 'workspaceCleanup'}<WorkspaceCleanupPage />
 			{:else if page === 'about'}<AboutPage />
 			{:else if showSnaps}<SnapsView />
 			{:else if orcaPane}<OrcaPane spec={orcaPane} {query} />
@@ -396,7 +406,6 @@
 				</SettingsEditor>
 			{:else if paneGroup}<SettingsEditor pane={{ title: paneGroup, description: t(PANES[paneGroup].description), groups: [paneGroup], scope: 'user' }} bind:query />
 			{:else if projectPane}<OrcaPane spec={PROJECT} scope="repo" title={projectName} description={t('settings.pane.project', { name: projectName })} {query} />
-			{:else if page === 'workspaceCleanup'}<WorkspaceCleanupPage />
 			{:else if commonlyUsed}<SettingsEditor ids={COMMONLY_USED} heading="Commonly Used" bind:query hideSearch />
 			{:else if vsNode}<SettingsEditor groups={nodeGroups(vsNode, settingSchemas.all)} bind:query hideSearch />
 			{:else}<SettingsEditor group={selected} bind:query hideSearch />{/if}

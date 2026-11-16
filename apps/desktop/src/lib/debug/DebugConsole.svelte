@@ -11,6 +11,7 @@
 	import { collapseLines, consoleFont, historyMatches } from './debugSettings.ts';
 	import type { CompletionItem } from './protocol.ts';
 	import { applyCompletion, rankCompletions, wordBefore } from './replCompletion.ts';
+	import { replFilter } from './debugViewKeys.ts';
 	import { t } from '#lib/i18n/index.ts';
 
 	let input = $state('');
@@ -20,7 +21,22 @@
 	let suggestionAt = $state(0);
 	let browsing = $state(false);
 
-	const output = $derived(collapseLines(debug.model?.output ?? [], settings.get<boolean>('debug.console.collapseIdenticalLines')));
+	// The filter (VS Code's repl filter, ⌘F with focus in the console): `text, !exclude`.
+	let filter = $state('');
+	let filterEl: HTMLInputElement | undefined = $state();
+	const allOutput = $derived(collapseLines(debug.model?.output ?? [], settings.get<boolean>('debug.console.collapseIdenticalLines')));
+	const output = $derived.by(() => {
+		const keep = replFilter(filter);
+		return filter.trim() ? allOutput.filter((l) => keep(l.text)) : allOutput;
+	});
+	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+	function onConsoleKey(e: KeyboardEvent) {
+		if (e.key.toLowerCase() !== 'f' || !(MAC ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey) return;
+		filterEl?.focus();
+		filterEl?.select();
+		e.preventDefault();
+		e.stopPropagation();
+	}
 	const font = $derived(consoleFont(settings.get<string>('debug.console.fontFamily'), settings.get<number>('debug.console.fontSize'), settings.get<number>('debug.console.lineHeight')));
 	const wrap = $derived(settings.get<boolean>('debug.console.wordWrap'));
 	let completions = $state<CompletionItem[]>([]);
@@ -122,7 +138,21 @@
 	};
 </script>
 
-<div class="flex h-full flex-col">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex h-full flex-col" data-debug-console onkeydown={onConsoleKey}>
+	{#if allOutput.length || filter}
+		<div class="flex shrink-0 justify-end px-2 pt-1">
+			<input
+				bind:this={filterEl}
+				bind:value={filter}
+				aria-label={t('debugger.console.filter')}
+				placeholder={t('debugger.console.filter')}
+				spellcheck="false"
+				onkeydown={(e) => e.key === 'Escape' && filter && ((filter = ''), e.stopPropagation())}
+				class="h-[22px] w-56 max-w-full rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-1.5 text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
+			/>
+		</div>
+	{/if}
 	<div
 		bind:this={scroller}
 		class={['relative min-h-0 flex-1 overflow-auto px-5 py-1', !font.family && 'font-mono', wrap ? 'whitespace-pre-wrap' : 'whitespace-pre']}
@@ -140,7 +170,7 @@
 						>{/if}{line.text}</span
 				>{/each}
 		{:else}
-			<span class="text-(--vscode-descriptionForeground)">{debug.active ? '' : t('legacySettings.debugConsole.empty')}</span>
+			<span class="text-(--vscode-descriptionForeground)">{filter.trim() && allOutput.length ? t('debugger.console.filterNone') : debug.active ? '' : t('legacySettings.debugConsole.empty')}</span>
 		{/if}
 	</div>
 	<div class="relative flex shrink-0 items-center gap-1 border-t border-(--vscode-panel-border) px-2">

@@ -19,6 +19,7 @@ import { openChat } from '#lib/agent/chatCommands.svelte.ts';
 import { chatNotifies } from '#lib/agent/chatSettings.ts';
 import { requestAttention } from '#lib/agent/chatSettings.svelte.ts';
 import { adeTasks } from './tasks.svelte';
+import { agentInbox } from './agentInbox.svelte.ts';
 import { hiddenInSidebar, sidebarPrefs } from './sidebarState.svelte';
 import { projects } from './projects.svelte';
 import { noticeKey, noticeRoot, projectName, projectSidebarTask } from './projects';
@@ -114,9 +115,13 @@ export function installAgentNotifications(): () => void {
 				// kingu.agent.notifications.hiddenWorkspaces off: tasks the side bar's filters hide stay quiet (Orca's notifyHiddenWorkspaces).
 				const quietHidden = settings.get<boolean>('kingu.agent.notifications.hiddenWorkspaces') === false;
 				for (const v of views) {
-					const notice = agentNotifyAllowed(v.slug) && !(quietHidden && hiddenInSidebar(v.slug)) ? noticeFor(seen.get(v.slug), v.state, v, events) : null;
+					const notice = noticeFor(seen.get(v.slug), v.state, v, events);
 					seen.set(v.slug, v.state);
-					if (notice) void notify(notice.title, notice.body, v.slug);
+					if (!notice) continue;
+					// Orca's inbox keeps every notice; one for the task on screen is read already.
+					const viewing = appMode.isAgents && appMode.activeSession === v.slug && document.hasFocus();
+					agentInbox.add({ title: notice.title, body: notice.body, slug: v.slug, root: null }, viewing);
+					if (agentNotifyAllowed(v.slug) && !(quietHidden && hiddenInSidebar(v.slug))) void notify(notice.title, notice.body, v.slug);
 				}
 			});
 		});
@@ -141,9 +146,11 @@ export function installAgentNotifications(): () => void {
 				const prefs = sidebarPrefs();
 				for (const v of views) {
 					const key = noticeKey(v.root, v.slug);
-					const notice = enabled && !(quietHidden && hiddenBy(v.task, prefs)) ? noticeFor(seenOther.get(key), v.state, v, events) : null;
+					const notice = noticeFor(seenOther.get(key), v.state, v, events);
 					seenOther.set(key, v.state);
-					if (notice) void notify(notice.title, notice.body, v.slug, undefined, v.root);
+					if (!notice) continue;
+					agentInbox.add({ title: notice.title, body: notice.body, slug: v.slug, root: v.root });
+					if (enabled && !(quietHidden && hiddenBy(v.task, prefs))) void notify(notice.title, notice.body, v.slug, undefined, v.root);
 				}
 			});
 		});

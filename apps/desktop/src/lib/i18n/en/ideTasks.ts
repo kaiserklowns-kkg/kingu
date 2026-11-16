@@ -6,6 +6,8 @@ export const ideTasks = {
 	'ideTasks.closeTerminal': 'Press any key to close the terminal.',
 	'ideTasks.openFolder': 'Open a folder to run tasks',
 	'ideTasks.loadErrors': 'There are task errors. See the output for details.',
+	'ideTasks.user.file': 'User tasks.json',
+	'ideTasks.byName.notFound': 'There is no task named "{name}".',
 	'ideTasks.showOutput': 'Show Output',
 	'ideTasks.alreadyActive': "The task '{label}' is already active.",
 	'ideTasks.terminateTask': 'Terminate Task',

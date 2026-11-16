@@ -30,6 +30,11 @@ export class FileUndo {
 		return this.#future.length > 0;
 	}
 
+	/** The step `undo` / `redo` would run next (to ask before it, VS Code's confirmBeforeUndo). */
+	peek(how: 'undo' | 'redo'): FileStep | undefined {
+		return (how === 'undo' ? this.#past : this.#future).at(-1);
+	}
+
 	/** A new step: the oldest falls off past `max`, and anything undone can no longer be redone. */
 	push(step: FileStep) {
 		this.#past.push(step);

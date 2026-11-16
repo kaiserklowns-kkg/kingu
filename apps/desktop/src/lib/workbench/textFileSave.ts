@@ -44,7 +44,32 @@ function inStringOrRegex(model: Monaco.editor.ITextModel): (line: number, column
 	};
 }
 
-export async function runSaveParticipants(monaco: typeof Monaco, model: Monaco.editor.ITextModel, reason: SaveReason) {
+/** The lines of `model` that differ from `path`'s index version (VS Code's quick diff original); null without source control. */
+async function changedLineRanges(path: string, model: Monaco.editor.ITextModel): Promise<{ start: number; end: number }[] | null> {
+	const [{ versions, isRepoFile }, { diffLines, splitLines }] = await Promise.all([import('#lib/scm/scmViews.svelte.ts'), import('#lib/scm/lineDiff.ts')]);
+	if (!isRepoFile(path)) return null;
+	const original = await versions.loadIndex(path).catch(() => null);
+	if (original === null || model.isDisposed()) return null;
+	return diffLines(splitLines(original), splitLines(model.getValue()))
+		.filter((c) => c.modifiedEndLineNumber >= c.modifiedStartLineNumber && c.modifiedStartLineNumber > 0)
+		.map((c) => ({ start: c.modifiedStartLineNumber, end: c.modifiedEndLineNumber }));
+}
+
+/** Formats those lines with the range formatter (Monaco's Format Selection over one selection per range), keeping the selections. */
+async function formatRanges(editor: Monaco.editor.ICodeEditor, ranges: { start: number; end: number }[]) {
+	const model = editor.getModel();
+	const action = editor.getAction('editor.action.formatSelection');
+	if (!model || !ranges.length || !action?.isSupported()) return;
+	const before = editor.getSelections();
+	editor.setSelections(ranges.map((r) => ({ selectionStartLineNumber: r.start, selectionStartColumn: 1, positionLineNumber: r.end, positionColumn: model.getLineMaxColumn(Math.min(r.end, model.getLineCount())) })));
+	try {
+		await action.run();
+	} finally {
+		if (before && !model.isDisposed()) editor.setSelections(before);
+	}
+}
+
+export async function runSaveParticipants(monaco: typeof Monaco, model: Monaco.editor.ITextModel, reason: SaveReason, path?: string) {
 	// `[language]` blocks apply to the file being saved.
 	const get = settings.getterFor(model.getLanguageId());
 	const shown = monaco.editor.getEditors().filter((e) => e.getModel() === model);
@@ -54,8 +79,14 @@ export async function runSaveParticipants(monaco: typeof Monaco, model: Monaco.e
 	if (kinds.length) await withTimeout(lsp.codeActionsOnSave(model, kinds));
 
 	if (editor && formatsOnSave(get<boolean>('editor.formatOnSave'), reason)) {
-		const format = editor.getAction('editor.action.formatDocument');
-		if (format?.isSupported()) await withTimeout(format.run());
+		// editor.formatOnSaveMode: the whole file, or only the lines changed against git's index version.
+		const mode = get<string>('editor.formatOnSaveMode');
+		const ranges = mode === 'file' || !path ? null : await changedLineRanges(path, model);
+		if (ranges) await withTimeout(formatRanges(editor, ranges));
+		else if (mode === 'file' || mode === 'modificationsIfAvailable') {
+			const format = editor.getAction('editor.action.formatDocument');
+			if (format?.isSupported()) await withTimeout(format.run());
+		}
 	}
 	if (model.isDisposed()) return;
 
