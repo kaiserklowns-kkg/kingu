@@ -1,7 +1,9 @@
 # AI surfaces: shared core, IDE chat, ADE agents
 
 - **วันที่:** 2026-11-13
-- **สถานะ:** design contract (Phase 0) — ยังไม่เปลี่ยนพฤติกรรม
+- **สถานะ:** implemented ถึง Phase 4 และ continuity (§9); catalog แสดงในหน้า Settings › Agents แล้ว;
+  Workspace Cleanup (Orca 1.4.259) wired ครบทั้ง settings, scanner, dialog, CLI และ auto-run
+  (ที่เหลือดู §13)
 - **ขอบเขต:** เอกสารนี้กำหนดเส้นแบ่งระหว่าง AI core ที่ใช้ร่วมกัน, IDE surface และ ADE surface
   เพื่อไม่ให้สองฝั่งแตกเป็นระบบคนละชุด
 
@@ -40,8 +42,8 @@ UI
 Shared TypeScript
 ├─ agent/events, normalize, policy UI, Composer, Ask/Question cards
 ├─ settings (registry + Orca pane)
-├─ agentCatalog (planned: รวม CLI profiles + chat runtimes)
-└─ launchSpec (planned: settings → spec กลาง)
+├─ agentCatalog (รวม CLI profiles + chat runtimes; Settings › Agents, sessionHandoff)
+└─ launchSpec (settings → spec กลาง; tasks, chats, AgentPanel)
 
 Rust core
 ├─ agent host supervisor (agent/host.rs)
@@ -135,7 +137,14 @@ External
 - รวม `PROFILES` (ADE) กับ `runtimes` (chat) เป็นรายการเดียว โดย join ด้วย id (`claude`, `codex`, `gemini`, …)
 - แต่ละรายการมี: `id`, `cliProfile?`, `chatRuntime?`, `surfaces`, `capabilities`
 - capabilities: `structured`, `terminal`, `resume`, `fork`, `models`, `effort`
-- เป็น read-only; ไม่เปลี่ยน UI หรือพฤติกรรมใน Phase 2
+- เป็น read-only; ไม่เปลี่ยนพฤติกรรมการรัน
+- **แสดงใน UI แล้ว:** หน้า Settings › Agents (`settings/pages/AgentCatalog.svelte`) โหลด
+  `agentRuntimes` แล้วติด badge "IDE chat" ให้ CLI profile ที่มี chat runtime id เดียวกัน
+  (Claude เสมอ; codex/gemini/qwen/opencode/goose/grok/omp เมื่อพบบน PATH) — agent ตัวเดียวกันรันได้ทั้ง
+  IDE chat และ ADE terminal; ค่า default ยังแยก (`kingu.agent.cli` / `kingu.agent.runtime`) ไม่ migrate
+- entry ที่มีแต่ chat (Arkai, ACP agent ที่ตั้งเอง) แสดงในส่วน "Chat" ของหน้าเดียวกัน โดยไม่มี
+  control ของ ADE (ไม่มี enable/default/args) — ใช้ `panes.chat.title` เดิม ไม่เพิ่ม i18n key
+- ผู้อ่านอื่น: `agent/sessionHandoff.ts` (เลือก chat runtime ที่ต่อ session ของ CLI ได้)
 
 ### 8.2 `launchSpec.ts` (`apps/desktop/src/lib/agent/launchSpec.ts`)
 
@@ -193,10 +202,32 @@ External
 - `apps/desktop/src-tauri/src/pty.rs` — PTY backend
 - `crates/kingu-ptyd/src/session.rs` — scrollback/re-attach
 
-## 12. Definition of done (Phase 0–3)
+## 12. Definition of done (Phase 0–4)
 
 - เอกสารนี้อยู่ใน repo และตรงกับโค้ดปัจจุบัน
 - `agentCatalog.ts` + test ผ่าน
 - `launchSpec.ts` + golden test ผ่าน
 - ไม่มีไฟล์เดิมที่ dirty ถูกแก้
 - `bun run check` ไม่สร้าง error ใหม่
+
+## 13. สถานะ
+
+| | รายการ | หลักฐาน |
+|---|---|---|
+| done | §§1–9: core เดียว, สอง surface, launch spec wired (Phase 4), deep-link + session handoff | `launchSpec.ts`, `tasks.svelte.ts`, `chats.svelte.ts`, `AgentPanel.svelte`, `sessionHandoff.ts`, `worktreeActions.ts` |
+| done | catalog แสดงใน Settings › Agents (badge "IDE chat") | `settings/pages/AgentCatalog.svelte` |
+| done | entry ที่มีแต่ chat (Arkai, ACP agent ที่ตั้งเอง) แสดงในส่วน "Chat" ของ Settings › Agents โดยไม่เพิ่ม i18n key | `settings/pages/AgentCatalog.svelte` (`chatOnly`) |
+| done | เจ้าของ setting บังคับด้วย test (§4) | `settingOwners.ts` + `settingOwners.test.ts` |
+| done | tests + `bun run check` ผ่าน | `agentCatalog`, `launchSpec`, `sessionHandoff`, `settingOwners` `.test.ts` |
+| done | Workspace Cleanup: กฎ (merged / unchanged / inactive / automationRuns / orchestrationWorkers + keepWhen) ปิดทั้งหมดเป็นค่าเริ่มต้น ตั้งได้ทั้งส่วนกลางและรายโปรเจกต์ (inherit / off / own) ใน Settings › Workspace Cleanup; ไม่อ่านจาก `.kingu/settings.json` ของ repo เพราะกฎลบ worktree ได้ | `settings/ade/cleanup.ts`, `settings/pages/WorkspaceCleanupPage.svelte`, `ade/workspaceCleanupPolicy.ts` |
+| done | scanner (Rust, อ่านอย่างเดียว) อ่านข้อเท็จจริงจาก Git ต่อ worktree: clean, ignored files, unpushed, merged/unchanged, last activity; ตัวตัดสินเป็น evaluator ตัวเดียวที่ port จาก Orca ใช้ร่วมกันทั้ง dialog, CLI และ auto-run | `src-tauri/src/workspace_cleanup.rs`, `ade/workspaceCleanupScan.ts`, `ade/workspaceCleanupEvaluation.ts` |
+| done | dialog Clean Up Tasks: สแกนตอนเปิด, ป้าย "พร้อมลบ" / เหตุผลที่เก็บไว้, filter bar + applied-filter chips (เฉพาะ facet ที่ Kingu มีข้อมูล: ค้นหา, idle days, Git, สถานะงาน, agent, blockers, branch) | `ade/CleanupDialog.svelte`, `ade/CleanupFilterBar.svelte`, `ade/workspaceCleanupBrowse.ts` |
+| done | CLI: `kingu cleanup preview | run [--request-id] | receipt`; `run` มี request-id ledger กันรันซ้ำ (id เดิมได้ใบเสร็จครั้งแรก) | `crates/kingu-cli/src/args.rs`, `src-tauri/src/cli_server.rs`, `src-tauri/src/cli_ledger.rs`, `ade/cliBridge.svelte.ts` |
+| done | auto-run (opt-in `kingu.workspaceCleanup.auto`): ตรวจหลังเปิดหน้าต่าง 2 นาทีแล้วทุกชั่วโมง ไม่รันตอน dialog เปิดหรือมี run อยู่; รายการ Activity ในหน้า settings | `ade/autoCleanup.ts`, `ade/autoCleanup.svelte.ts` |
+| open | ยังไม่ได้ลองกับแอปที่รันจริง: ผ่านเฉพาะ unit test, `bun run check` และ test ใน worktree สะอาด (UI, ตัวตั้งเวลา, `kingu cleanup` ผ่าน socket ยังไม่เคยเห็นของจริง) | — |
+| open | ledger ของ request id อยู่ในหน่วยความจำ (หายเมื่อ restart); มี `agent/op_ledger.rs` ที่ port จาก Orca อยู่แล้ว ควรตัดสินใจว่ารวมเป็นตัวเดียวหรือไม่ | `cli_ledger.rs` vs `agent/op_ledger.rs` |
+| open | คำขอผ่าน window มี timeout 30 วินาที: `kingu cleanup run` ที่ลบหลาย task อาจหมดเวลาทั้งที่ window ยังลบอยู่ (ledger ถูกยกเลิก ลองใหม่ด้วย id เดิมได้แต่ไม่ได้ใบเสร็จครั้งแรก) | `cli_server.rs` `cleanup_run` |
+| open | facet ที่ยังไม่เปิดใน dialog: ขนาด (ต้องต่อผล Workspace Space), สถานะ PR/review, ticket, host/repo, pinned/archived; ตรรกะ port ไว้แล้วใน `workspaceCleanupFilters.ts` | `ade/workspaceCleanupFilters.ts` |
+| open | กฎ `automationRuns` / `orchestrationWorkers` ยังไม่มีข้อมูลป้อน จึงไม่ match; กฎ `inactive` แบบ archive ยังไม่รองรับ (เก็บไว้ ไม่ลบ); squash merge ตรวจจาก Git อย่างเดียวไม่ได้ | `ade/workspaceCleanupScan.ts` |
+| open | Activity อยู่ในหน่วยความจำ (หายเมื่อปิดหน้าต่าง); หลายหน้าต่างบนโฟลเดอร์เดียวกันต่างคนต่างรัน (task ที่ลบแล้วไม่ถูกเห็นอีก จึงไม่ลบซ้ำ) | `ade/cleanup.svelte.ts` |
+| open | idempotency ของ control plane (`cli_server`) นอกเหนือจาก `workspaceCleanup.run` (เช่น `task.create`) ยังไม่มี | `cli_server.rs` |
