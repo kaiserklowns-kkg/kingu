@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::peer;
-use crate::protocol::{ClientFrame, Hello, PROTOCOL, Request, ServerFrame, compatible, encode, read_frame, socket_name};
+use crate::protocol::{ClientFrame, DaemonStatus, Hello, PROTOCOL, Request, STALE_ATTACH, ServerFrame, compatible, encode, read_frame, socket_name};
 use crate::session::{Attached, SessionInfo, ShellSpec, Sink, is_agent_session_marker};
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(15);
@@ -161,8 +161,18 @@ impl Client {
   }
 
   pub fn attach(&self, key: &str, size: Option<(u16, u16)>, sink: Sink) -> Result<Option<Attached>, String> {
+    self.attach_in(key, size, sink, None)
+  }
+
+  /// [`attach`](Self::attach) to a session last seen in daemon generation `epoch`: a different
+  /// daemon refuses with an error starting with [`STALE_ATTACH`] (see [`is_stale`]).
+  pub fn attach_in(&self, key: &str, size: Option<(u16, u16)>, sink: Sink, epoch: Option<u64>) -> Result<Option<Attached>, String> {
+    // Checked here too: a daemon from before generations (epoch 0) would attach to anything.
+    if let Some(seen) = epoch.filter(|e| *e != 0 && self.daemon.epoch != 0 && *e != self.daemon.epoch) {
+      return Err(format!("{STALE_ATTACH} {key} was in terminal daemon generation {seen}; this is generation {}", self.daemon.epoch));
+    }
     let stream = self.register(key, sink);
-    let r = self.call_as::<Option<Attached>>(Request::Attach { key: key.into(), cols: size.map(|s| s.0), rows: size.map(|s| s.1), stream });
+    let r = self.call_as::<Option<Attached>>(Request::Attach { key: key.into(), cols: size.map(|s| s.0), rows: size.map(|s| s.1), stream, epoch: epoch.filter(|e| *e != 0) });
     if !matches!(r, Ok(Some(_))) {
       self.unregister(stream);
     }
@@ -193,6 +203,50 @@ impl Client {
   pub fn list(&self) -> Result<Vec<SessionInfo>, String> {
     self.call_as(Request::List {})
   }
+
+  /// The daemon's status. A daemon from before generations has no `status` request (it would
+  /// drop the connection), so its answer is made from its hello and its session list.
+  pub fn status(&self) -> Result<DaemonStatus, String> {
+    if self.daemon.epoch != 0 {
+      return self.call_as(Request::Status {});
+    }
+    let list = self.list()?;
+    Ok(DaemonStatus {
+      pid: self.daemon.pid,
+      epoch: 0,
+      protocol: self.daemon.protocol,
+      app_version: self.daemon.app_version.clone(),
+      started_at: 0,
+      sessions: list.len(),
+      alive: list.iter().filter(|s| s.alive).count(),
+      clients: 0,
+    })
+  }
+
+  /// Ends every session and stops the daemon, if it is still generation `epoch`; returns how
+  /// many sessions it ended. A daemon from before generations is stopped with SIGTERM after
+  /// `kill_all` (it has no `shutdown` request).
+  pub fn shutdown(&self, epoch: u64) -> Result<usize, String> {
+    if epoch != self.daemon.epoch {
+      return Err(format!("{STALE_ATTACH} shutdown was for generation {epoch}; this daemon is generation {}", self.daemon.epoch));
+    }
+    if self.daemon.epoch != 0 {
+      return self.call_as(Request::Shutdown { epoch });
+    }
+    let n = self.kill_all()?;
+    if self.daemon.pid > 1 {
+      // SAFETY: plain signal to the pid the daemon reported over its own socket.
+      unsafe {
+        libc::kill(self.daemon.pid as i32, libc::SIGTERM);
+      }
+    }
+    Ok(n)
+  }
+}
+
+/// An error from a stale attach or shutdown (the daemon is another generation than expected).
+pub fn is_stale(error: &str) -> bool {
+  error.starts_with(STALE_ATTACH)
 }
 
 impl Drop for Client {
@@ -283,6 +337,27 @@ pub fn connect_or_start(launch: &Launch) -> Result<Client, String> {
     }
   }
   Err(format!("the terminal daemon is unavailable: {last}"))
+}
+
+/// `kingu terminal-daemon restart`: stops the daemon `client` is connected to (ending every
+/// session in it), if it is still generation `epoch`, then starts a fresh one. Returns how many
+/// sessions ended and a client of the new daemon. Shells and the jobs in them are gone for good;
+/// agent CLIs that can resume are started again by the app (`--resume`), not here.
+pub fn restart(client: &Client, launch: &Launch, epoch: u64) -> Result<(usize, Client), String> {
+  let ended = client.shutdown(epoch)?;
+  // The connection closes when the old daemon's process ends, which also frees its socket lock.
+  let until = Instant::now() + START_TIMEOUT;
+  while client.is_connected() && Instant::now() < until {
+    std::thread::sleep(Duration::from_millis(25));
+  }
+  if client.is_connected() {
+    return Err("the terminal daemon did not stop".into());
+  }
+  let fresh = connect_or_start(launch)?;
+  if fresh.daemon().epoch != 0 && fresh.daemon().epoch == epoch {
+    return Err("the terminal daemon did not restart".into());
+  }
+  Ok((ended, fresh))
 }
 
 /// Starts the daemon in its own session (no controlling terminal, not in the app's process group,

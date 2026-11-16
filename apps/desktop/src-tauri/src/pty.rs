@@ -32,6 +32,46 @@ pub struct PtyInfo {
 #[cfg(unix)]
 const DAEMON_NAME: &str = "kingu-ptyd";
 
+/// What the webview hears as `pty-daemon` after the app's daemon connection came back: the
+/// generation it is connected to now and the one before. `restarted` (a different daemon: the
+/// earlier sessions are gone) makes terminals that showed the old generation start over;
+/// otherwise they re-attach (their output stopped when the connection dropped).
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonEvent {
+  pub epoch: u64,
+  pub previous: Option<u64>,
+  pub restarted: bool,
+}
+
+pub const DAEMON_EVENT: &str = "pty-daemon";
+
+/// `kingu terminal-daemon status` and the UI's Terminal Daemon Status (Orca's
+/// `terminalDaemon.severedStatus`, reduced to what Kingu's daemon has).
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DaemonStatusReport {
+  /// `"daemon"` (sessions outlive the app) or `"local"` (in-process: nothing to restart).
+  pub backend: &'static str,
+  pub connected: bool,
+  pub daemon: Option<kingu_ptyd::protocol::DaemonStatus>,
+  /// Live agent CLI terminals (`cli:` keys): a restart ends them, those that support resume can
+  /// be resumed from their task afterwards.
+  pub agents: usize,
+  /// Every live terminal, agents included.
+  pub terminals: usize,
+}
+
+/// What `restart` did.
+#[derive(serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RestartReport {
+  /// Sessions that ended with the old daemon.
+  pub ended: usize,
+  pub epoch: u64,
+  pub pid: u32,
+}
+
 #[cfg(unix)]
 struct Daemon {
   launch: kingu_ptyd::client::Launch,
@@ -39,24 +79,62 @@ struct Daemon {
   client: Mutex<Option<Arc<kingu_ptyd::client::Client>>>,
   /// Held while (re)connecting, which can take seconds when the daemon has to start.
   connecting: Mutex<()>,
+  /// The generation of the last connection (to tell a reconnect from a restarted daemon).
+  epoch: Mutex<Option<u64>>,
 }
 
 #[cfg(unix)]
 impl Daemon {
   fn new(launch: kingu_ptyd::client::Launch) -> Self {
-    Self { launch, client: Mutex::new(None), connecting: Mutex::new(()) }
+    Self { launch, client: Mutex::new(None), connecting: Mutex::new(()), epoch: Mutex::new(None) }
   }
 
-  /// The connection, made again (starting the daemon if it has exited) when it dropped.
-  fn client(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+  /// The connection, made again (starting the daemon if it has exited) when it dropped. A
+  /// reconnect is announced through `notify` (not the first connection).
+  fn client_with(&self, notify: &dyn Fn(DaemonEvent)) -> Result<Arc<kingu_ptyd::client::Client>, String> {
     let _one = self.connecting.lock().unwrap();
     if let Some(c) = self.client.lock().unwrap().as_ref().filter(|c| c.is_connected()) {
       return Ok(c.clone());
     }
     let c = Arc::new(kingu_ptyd::client::connect_or_start(&self.launch)?);
-    log::info!("terminal daemon: connected (pid {}, version {})", c.daemon().pid, c.daemon().app_version);
-    *self.client.lock().unwrap() = Some(c.clone());
+    log::info!("terminal daemon: connected (pid {}, version {}, generation {})", c.daemon().pid, c.daemon().app_version, c.daemon().epoch);
+    self.adopt(c.clone(), notify);
     Ok(c)
+  }
+
+  fn adopt(&self, c: Arc<kingu_ptyd::client::Client>, notify: &dyn Fn(DaemonEvent)) {
+    let epoch = c.daemon().epoch;
+    let previous = self.epoch.lock().unwrap().replace(epoch);
+    *self.client.lock().unwrap() = Some(c);
+    if let Some(prev) = previous {
+      let restarted = prev != epoch || epoch == 0;
+      if restarted {
+        log::warn!("terminal daemon: now generation {epoch} (was {prev}); sessions of the old one are gone");
+      }
+      notify(DaemonEvent { epoch, previous: Some(prev), restarted });
+    }
+  }
+
+  fn client(&self) -> Result<Arc<kingu_ptyd::client::Client>, String> {
+    self.client_with(&|_| {})
+  }
+
+  /// Whether the connection dropped since it was made.
+  fn dropped(&self) -> bool {
+    self.client.lock().unwrap().as_ref().is_some_and(|c| !c.is_connected())
+  }
+
+  fn restart(&self, epoch: u64, notify: &dyn Fn(DaemonEvent)) -> Result<RestartReport, String> {
+    let current = self.client()?;
+    let _one = self.connecting.lock().unwrap();
+    let (ended, fresh) = kingu_ptyd::client::restart(&current, &self.launch, epoch).map_err(|e| {
+      if kingu_ptyd::client::is_stale(&e) { tr!(CoreMsg::DaemonRestartStale) } else { e }
+    })?;
+    let fresh = Arc::new(fresh);
+    log::warn!("terminal daemon: restarted on request; {ended} sessions ended (generation {epoch} -> {})", fresh.daemon().epoch);
+    let report = RestartReport { ended, epoch: fresh.daemon().epoch, pid: fresh.daemon().pid };
+    self.adopt(fresh, notify);
+    Ok(report)
   }
 
   /// The connection as it is, without reconnecting: keystrokes and resizes run on the main
@@ -76,6 +154,8 @@ enum Backend {
 pub struct Ptys {
   /// Private per-user directory for the daemon's socket, lock and log (set at startup).
   dir: OnceLock<PathBuf>,
+  /// Emits [`DAEMON_EVENT`] (set at startup).
+  app: OnceLock<tauri::AppHandle>,
   backend: OnceLock<Backend>,
   /// The window showing each session (the last one to start or attach to it), so one window's
   /// "Kill All Background Sessions" and orphan cleanup leave another window's terminals alone.
@@ -131,11 +211,39 @@ impl Ptys {
   /// Records the daemon directory and connects in the background, so the first terminal rarely waits.
   pub fn init(app: &tauri::AppHandle, dir: PathBuf) {
     use tauri::Manager;
-    let _ = app.state::<Ptys>().dir.set(dir);
+    let ptys = app.state::<Ptys>();
+    let _ = ptys.dir.set(dir);
+    let _ = ptys.app.set(app.clone());
     let handle = app.clone();
     std::thread::spawn(move || {
-      let _ = handle.state::<Ptys>().backend();
+      let ptys = handle.state::<Ptys>();
+      let _ = ptys.backend();
+      // A dropped daemon connection (the daemon crashed or was killed) is made again here, not
+      // only on the next terminal call, so terminals re-attach (or learn their session ended)
+      // while nobody types. **Estimated** interval.
+      #[cfg(unix)]
+      if let Backend::Daemon(d) = ptys.backend() {
+        loop {
+          std::thread::sleep(std::time::Duration::from_secs(2));
+          if d.dropped()
+            && let Err(e) = d.client_with(&|e| ptys.emit(e))
+          {
+            log::warn!("terminal daemon: reconnect failed: {e}");
+          }
+        }
+      }
     });
+  }
+
+  fn emit(&self, event: DaemonEvent) {
+    use tauri::Emitter;
+    if event.restarted {
+      // The sessions those windows showed are gone.
+      self.owners.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+    if let Some(app) = self.app.get() {
+      let _ = app.emit(DAEMON_EVENT, event);
+    }
   }
 
   fn backend(&self) -> &Backend {
@@ -178,11 +286,44 @@ impl Ptys {
     }
   }
 
-  pub fn attach(&self, key: &str, size: Option<(u16, u16)>, sink: Sink) -> Result<Option<Attached>, String> {
+  /// `epoch`: the daemon generation the caller last showed `key` in; a different daemon refuses
+  /// with an error starting with `kingu_ptyd::protocol::STALE_ATTACH`.
+  pub fn attach(&self, key: &str, size: Option<(u16, u16)>, sink: Sink, epoch: Option<u64>) -> Result<Option<Attached>, String> {
     match self.backend() {
       Backend::Local(host) => Ok(host.attach(key, size, sink)),
       #[cfg(unix)]
-      Backend::Daemon(d) => d.client()?.attach(key, size, sink),
+      Backend::Daemon(d) => d.client_with(&|e| self.emit(e))?.attach_in(key, size, sink, epoch),
+    }
+  }
+
+  /// The daemon's status (Orca's `terminal-daemon status`).
+  pub fn daemon_status(&self) -> DaemonStatusReport {
+    let live: Vec<SessionInfo> = self.list().unwrap_or_default().into_iter().filter(|s| s.alive).collect();
+    let agents = live.iter().filter(|s| s.key.starts_with("cli:")).count();
+    let (connected, daemon) = match self.backend() {
+      Backend::Local(_) => (false, None),
+      #[cfg(unix)]
+      Backend::Daemon(d) => match d.client_with(&|e| self.emit(e)).and_then(|c| c.status()) {
+        Ok(st) => (true, Some(st)),
+        Err(e) => {
+          log::warn!("terminal daemon status: {e}");
+          (false, None)
+        }
+      },
+    };
+    DaemonStatusReport { backend: self.kind(), connected, daemon, agents, terminals: live.len() }
+  }
+
+  /// Stops the daemon (ending every terminal in it) and starts a new one, if it is still
+  /// generation `epoch` (the one the user saw in the status they confirmed).
+  pub fn restart_daemon(&self, epoch: u64) -> Result<RestartReport, String> {
+    match self.backend() {
+      Backend::Local(_) => {
+        let _ = epoch;
+        Err(tr!(CoreMsg::DaemonRestartLocal))
+      }
+      #[cfg(unix)]
+      Backend::Daemon(d) => d.restart(epoch, &|e| self.emit(e)),
     }
   }
 
@@ -262,9 +403,11 @@ pub fn channel_sink(on_data: Channel<String>) -> Sink {
 /// Re-attaches to a live session without starting one (a terminal mounted hidden after a reload
 /// or restart, so an agent CLI's output keeps reaching the page). Null when `key` has no live shell.
 #[tauri::command(async)]
-pub fn pty_attach(window: tauri::WebviewWindow, ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>) -> Result<Option<Attached>, String> {
+/// `epoch`: the daemon generation this page last showed `key` in (after a `pty-daemon` event); an
+/// error starting with `stale-attach:` means that session ended with its daemon.
+pub fn pty_attach(window: tauri::WebviewWindow, ptys: State<'_, Ptys>, key: String, cols: Option<u16>, rows: Option<u16>, on_data: Channel<String>, epoch: Option<u64>) -> Result<Option<Attached>, String> {
   validate_key(&key)?;
-  let attached = ptys.attach(&key, cols.zip(rows), channel_sink(on_data))?;
+  let attached = ptys.attach(&key, cols.zip(rows), channel_sink(on_data), epoch)?;
   if attached.is_some() {
     ptys.own(&key, window.label());
   }
@@ -314,6 +457,17 @@ pub fn pty_list(window: tauri::WebviewWindow, ptys: State<'_, Ptys>) -> Result<V
 pub fn pty_foreground(ptys: State<'_, Ptys>, keys: Vec<String>) -> Result<BTreeMap<String, kingu_ptyd::Foreground>, String> {
   let wanted: std::collections::BTreeSet<String> = keys.into_iter().collect();
   Ok(ptys.list()?.into_iter().filter(|s| s.alive && wanted.contains(&s.key)).filter_map(|s| s.foreground.map(|f| (s.key, f))).collect())
+}
+
+/// Terminal: Show Terminal Daemon Status / Restart Terminal Daemon (the UI asks first).
+#[tauri::command(async)]
+pub fn pty_daemon_status(ptys: State<'_, Ptys>) -> DaemonStatusReport {
+  ptys.daemon_status()
+}
+
+#[tauri::command(async)]
+pub fn pty_daemon_restart(ptys: State<'_, Ptys>, epoch: u64) -> Result<RestartReport, String> {
+  ptys.restart_daemon(epoch)
 }
 
 /// Where sessions live: `"daemon"` (they survive quitting Kingu) or `"local"`.

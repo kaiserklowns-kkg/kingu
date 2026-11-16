@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::peer;
-use crate::protocol::{ClientFrame, Hello, Request, ServerFrame, compatible, encode, read_frame};
+use crate::protocol::{ClientFrame, DaemonStatus, Hello, Request, STALE_ATTACH, ServerFrame, compatible, encode, new_epoch, read_frame};
 use crate::session::{Host, ShellSpec, Sink, validate_key};
 
 pub struct Config {
@@ -33,6 +33,17 @@ pub enum Exit {
   Idle,
   /// Another daemon holds this socket's lock.
   AlreadyRunning,
+  /// A client asked it to stop (`kingu terminal-daemon restart`).
+  Shutdown,
+}
+
+/// What every connection shares: the sessions, this daemon's identity and its connections.
+struct Daemon {
+  host: Host,
+  hello: Hello,
+  started_at: u64,
+  clients: AtomicUsize,
+  shutdown: AtomicBool,
 }
 
 pub fn log(msg: impl std::fmt::Display) {
@@ -78,12 +89,12 @@ pub fn run(cfg: &Config) -> Result<Exit, String> {
   let listener = bind_private(&socket)?;
   log(format!("listening on {} (idle exit after {:?})", socket.display(), cfg.idle));
 
-  let host = Arc::new(Host::default());
-  let clients = Arc::new(AtomicUsize::new(0));
-  let hello = Hello::ours(&cfg.version);
+  let epoch = new_epoch();
+  let started_at = epoch / 1_000_000;
+  let daemon = Arc::new(Daemon { host: Host::default(), hello: Hello { epoch, ..Hello::ours(&cfg.version) }, started_at, clients: AtomicUsize::new(0), shutdown: AtomicBool::new(false) });
+  log(format!("generation {epoch}"));
   {
-    let host = host.clone();
-    let clients = clients.clone();
+    let daemon = daemon.clone();
     std::thread::spawn(move || {
       for conn in listener.incoming() {
         let Ok(stream) = conn else { continue };
@@ -91,21 +102,36 @@ pub fn run(cfg: &Config) -> Result<Exit, String> {
           log(e);
           continue;
         }
-        clients.fetch_add(1, Ordering::SeqCst);
-        let (host, clients, hello) = (host.clone(), clients.clone(), hello.clone());
+        daemon.clients.fetch_add(1, Ordering::SeqCst);
+        let daemon = daemon.clone();
         std::thread::spawn(move || {
-          serve(stream, &host, &hello);
-          clients.fetch_sub(1, Ordering::SeqCst);
+          serve(stream, &daemon);
+          daemon.clients.fetch_sub(1, Ordering::SeqCst);
         });
       }
     });
   }
 
   let tick = (cfg.idle / 4).clamp(Duration::from_millis(50), Duration::from_secs(5));
+  // A shutdown request is noticed within this, whatever the idle tick.
+  let step = tick.min(Duration::from_millis(100));
   let mut idle_since: Option<Instant> = None;
+  let mut slept = Duration::ZERO;
   loop {
-    std::thread::sleep(tick);
-    if host.is_empty() && clients.load(Ordering::SeqCst) == 0 {
+    std::thread::sleep(step);
+    if daemon.shutdown.load(Ordering::SeqCst) {
+      let _ = fs::remove_file(&socket);
+      // Lets the writer threads deliver the shutdown reply before the process ends.
+      std::thread::sleep(Duration::from_millis(200));
+      log("shutdown requested: sessions ended; exiting");
+      return Ok(Exit::Shutdown);
+    }
+    slept += step;
+    if slept < tick {
+      continue;
+    }
+    slept = Duration::ZERO;
+    if daemon.host.is_empty() && daemon.clients.load(Ordering::SeqCst) == 0 {
       if idle_since.get_or_insert_with(Instant::now).elapsed() >= cfg.idle {
         break;
       }
@@ -120,7 +146,8 @@ pub fn run(cfg: &Config) -> Result<Exit, String> {
 
 /// One client connection: handshake, then requests until it closes. Output of the sessions it
 /// attached to goes through the same writer queue as the replies.
-fn serve(stream: UnixStream, host: &Host, hello: &Hello) {
+fn serve(stream: UnixStream, daemon: &Daemon) {
+  let hello = &daemon.hello;
   let Ok(mut out) = stream.try_clone() else { return };
   // Bounded: a client that stops reading slows its terminals down instead of growing this queue.
   let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(1024);
@@ -177,7 +204,7 @@ fn serve(stream: UnixStream, host: &Host, hello: &Hello) {
         break;
       }
     };
-    let result = handle(host, frame.request, &tx, &closed);
+    let result = handle(daemon, frame.request, &tx, &closed);
     reply(frame.id, result);
   }
   finish(tx, &closed, writer);
@@ -194,22 +221,30 @@ fn sink(tx: &SyncSender<Vec<u8>>, closed: &Arc<AtomicBool>, key: &str, stream: u
   Box::new(move |data| !closed.load(Ordering::SeqCst) && tx.send(encode(&ServerFrame::Output { key: key.clone(), stream, data })).is_ok())
 }
 
-fn handle(host: &Host, request: Request, tx: &SyncSender<Vec<u8>>, closed: &Arc<AtomicBool>) -> Result<Value, String> {
+fn handle(daemon: &Daemon, request: Request, tx: &SyncSender<Vec<u8>>, closed: &Arc<AtomicBool>) -> Result<Value, String> {
+  let host = &daemon.host;
+  let epoch = daemon.hello.epoch;
   let json = |v: Result<Value, serde_json::Error>| v.map_err(|e| e.to_string());
   match request {
     Request::Hello(_) => Err("duplicate hello".into()),
     Request::Spawn { key, cwd, cols, rows, run, env, shell, args, unset, clean_env, stream } => {
       let env = env.unwrap_or_default();
       let spec = ShellSpec { cwd: Path::new(&cwd), cols, rows, run: run.as_deref(), env: &env, shell: shell.as_deref(), args: args.as_deref(), unset: &unset, clean_env };
-      let attached = host.open(&key, &spec, sink(tx, closed, &key, stream))?;
+      let attached = crate::session::Attached { epoch, ..host.open(&key, &spec, sink(tx, closed, &key, stream))? };
       if attached.spawned {
         log(format!("terminal {key} started in {cwd}"));
       }
       json(serde_json::to_value(attached))
     }
-    Request::Attach { key, cols, rows, stream } => {
+    Request::Attach { key, cols, rows, stream, epoch: seen } => {
       validate_key(&key)?;
-      json(serde_json::to_value(host.attach(&key, cols.zip(rows), sink(tx, closed, &key, stream))))
+      // The client showed this key in another daemon generation: whatever runs here under that
+      // key is a different shell, so it must not be shown as the old one continuing.
+      if let Some(seen) = seen.filter(|s| *s != 0 && *s != epoch) {
+        return Err(format!("{STALE_ATTACH} {key} was in terminal daemon generation {seen}; this is generation {epoch}"));
+      }
+      let attached = host.attach(&key, cols.zip(rows), sink(tx, closed, &key, stream)).map(|a| crate::session::Attached { epoch, ..a });
+      json(serde_json::to_value(attached))
     }
     Request::Write { key, data } => host.write(&key, data.as_bytes()).map(|()| Value::Null),
     Request::Resize { key, cols, rows } => host.resize(&key, cols, rows).map(|()| Value::Null),
@@ -226,6 +261,29 @@ fn handle(host: &Host, request: Request, tx: &SyncSender<Vec<u8>>, closed: &Arc<
       Ok(Value::from(n))
     }
     Request::List {} => json(serde_json::to_value(host.list())),
+    Request::Status {} => {
+      let list = host.list();
+      let status = DaemonStatus {
+        pid: daemon.hello.pid,
+        epoch,
+        protocol: daemon.hello.protocol,
+        app_version: daemon.hello.app_version.clone(),
+        started_at: daemon.started_at,
+        sessions: list.len(),
+        alive: list.iter().filter(|s| s.alive).count(),
+        clients: daemon.clients.load(Ordering::SeqCst),
+      };
+      json(serde_json::to_value(status))
+    }
+    Request::Shutdown { epoch: expected } => {
+      if expected != epoch {
+        return Err(format!("{STALE_ATTACH} shutdown was for generation {expected}; this daemon is generation {epoch}"));
+      }
+      let n = host.kill_all();
+      log(format!("shutdown: killed all {n} terminals"));
+      daemon.shutdown.store(true, Ordering::SeqCst);
+      Ok(Value::from(n))
+    }
   }
 }
 

@@ -39,6 +39,8 @@ class ChatSignals {
 	importChat = $state(0);
 	/** A chat to show (a clicked notification); `n` tells two requests for the same chat apart. */
 	open = $state<{ id: string; n: number } | null>(null);
+	/** A new chat to start in a task's worktree (ADE → IDE deep-link, docs/AI-SURFACES.md §9). */
+	newChatIn = $state<{ slug: string; n: number } | null>(null);
 	/** The panel's root element, to tell whether the chat has focus. */
 	el: HTMLElement | null = null;
 
@@ -59,6 +61,15 @@ function show() {
 export function openChat(id: string) {
 	show();
 	chatSignals.open = { id, n: (chatSignals.open?.n ?? 0) + 1 };
+}
+
+/**
+ * Shows the chat panel composing a new chat that runs in task `slug`'s worktree. Only a deep-link:
+ * the task's CLI session and the chats stay apart (no session or transcript moves).
+ */
+export function newChatInTask(slug: string) {
+	show();
+	chatSignals.newChatIn = { slug, n: (chatSignals.newChatIn?.n ?? 0) + 1 };
 }
 
 export function registerChatCommands(): () => void {

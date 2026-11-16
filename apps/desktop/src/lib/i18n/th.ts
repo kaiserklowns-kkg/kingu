@@ -53,6 +53,8 @@ import { chatCustomize } from './th/chatCustomize';
 import { chatToolRules } from './th/chatToolRules';
 import { composer } from './th/composer';
 import { voice } from './th/voice';
+import { workspaceCleanup } from './th/workspaceCleanup';
+import { terminalDaemon } from './th/terminalDaemon';
 import { usage } from './th/usage';
 import { keybindings } from './th/keybindings';
 import { markdownPreview } from './th/markdownPreview';
@@ -78,4 +80,4 @@ import { legacySettings } from './th/legacySettings';
 import { legacyMisc } from './th/legacyMisc';
 
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...workspaceCleanup, ...terminalDaemon, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome } satisfies Record<keyof typeof en, string>;

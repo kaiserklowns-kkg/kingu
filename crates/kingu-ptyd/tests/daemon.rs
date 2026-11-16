@@ -10,7 +10,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use kingu_ptyd::client::{Client, Launch, connect_or_start};
+use kingu_ptyd::client::{Client, Launch, connect_or_start, is_stale, restart};
 use kingu_ptyd::protocol::{ClientFrame, Hello, Request, encode, socket_name};
 use kingu_ptyd::{ShellSpec, Sink};
 
@@ -113,7 +113,7 @@ fn second_daemon_leaves_and_incompatible_clients_are_refused() {
   // A client from a future protocol gets the daemon's hello and then the connection closes.
   let mut raw = UnixStream::connect(dir.join(socket_name())).unwrap();
   raw.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-  let future = Hello { protocol: 99, min_compatible: 99, app_version: "future".into(), pid: 0 };
+  let future = Hello { protocol: 99, min_compatible: 99, app_version: "future".into(), pid: 0, epoch: 0 };
   raw.write_all(&encode(&ClientFrame { id: 1, request: Request::Hello(future) })).unwrap();
   let mut reader = BufReader::new(raw);
   let mut line = String::new();
@@ -131,4 +131,64 @@ fn second_daemon_leaves_and_incompatible_clients_are_refused() {
 
   assert!(Client::connect(&dir.join(socket_name()), "test").is_ok());
   drop(client);
+}
+
+#[test]
+fn a_restarted_daemon_is_a_new_generation_and_refuses_stale_attaches() {
+  if !Path::new("/bin/sh").exists() {
+    eprintln!("skipped: no /bin/sh");
+    return;
+  }
+  let tmp = short_tempdir();
+  let dir = tmp.path().join("ptyd");
+  let key = "panel:test0002:1";
+  let launch = launch(&dir);
+  let first = connect_or_start(&launch).unwrap();
+  let epoch = first.daemon().epoch;
+  assert_ne!(epoch, 0, "a daemon announces its generation");
+  let env = [("PS1".to_string(), "$ ".to_string())].into();
+  let spec = ShellSpec { cwd: tmp.path(), cols: 80, rows: 24, run: None, env: &env, shell: None, args: None, unset: &[], clean_env: false };
+  let attached = first.spawn(key, &spec, collecting().0).unwrap();
+  assert_eq!(attached.epoch, epoch, "spawn replies carry the generation");
+
+  // Same generation: a re-attach (another connection, as after a dropped socket) works.
+  let other = Client::connect(&dir.join(socket_name()), "test").unwrap();
+  assert_eq!(other.attach_in(key, None, collecting().0, Some(epoch)).unwrap().unwrap().epoch, epoch);
+  let status = other.status().unwrap();
+  assert_eq!((status.epoch, status.sessions, status.alive, status.pid), (epoch, 1, 1, first.daemon().pid));
+  assert!(status.clients >= 2, "{status:?}");
+  drop(other);
+
+  // A restart for another generation is refused and stops nothing.
+  let err = first.shutdown(epoch + 1).unwrap_err();
+  assert!(is_stale(&err), "{err}");
+  assert_eq!(first.list().unwrap().len(), 1);
+
+  let (ended, fresh) = restart(&first, &launch, epoch).unwrap();
+  assert_eq!(ended, 1);
+  assert!(!first.is_connected());
+  let new_epoch = fresh.daemon().epoch;
+  assert!(new_epoch > epoch, "{new_epoch} after {epoch}");
+  assert_ne!(fresh.daemon().pid, status.pid);
+  assert!(fresh.list().unwrap().is_empty(), "the old sessions ended with their daemon");
+
+  // A new shell under the same key is not the old session: a client that saw the old generation
+  // is told so instead of showing it as if it continued.
+  fresh.spawn(key, &spec, collecting().0).unwrap();
+  let err = fresh.attach_in(key, None, collecting().0, Some(epoch)).unwrap_err();
+  assert!(is_stale(&err), "{err}");
+  // The daemon checks too (a client that skips its own check).
+  let mut raw = UnixStream::connect(dir.join(socket_name())).unwrap();
+  raw.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+  raw.write_all(&encode(&ClientFrame { id: 1, request: Request::Hello(Hello::ours("test")) })).unwrap();
+  raw.write_all(&encode(&ClientFrame { id: 2, request: Request::Attach { key: key.into(), cols: None, rows: None, stream: 1, epoch: Some(epoch) } })).unwrap();
+  let mut reader = BufReader::new(raw);
+  let mut line = String::new();
+  reader.read_line(&mut line).unwrap();
+  line.clear();
+  reader.read_line(&mut line).unwrap();
+  assert!(line.contains("stale-attach:"), "{line}");
+  // Attaching without a generation (a first attach after the app started) still works.
+  assert!(fresh.attach(key, None, collecting().0).unwrap().is_some());
+  assert!(fresh.kill(key).unwrap());
 }

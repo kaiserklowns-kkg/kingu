@@ -97,8 +97,12 @@ fn main() {
     _ => client::request_of(&command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)),
   };
   let Some((method, params)) = request else { return };
+  // A durable change: the id goes out first, so a lost answer can be retried (`--request-id`) or read back (`receipt`).
+  if method == protocol::METHOD_CLEANUP_RUN && !inv.json {
+    eprintln!("kingu: {}", tr(Msg::CleanupRequestId, &[("id", &params["requestId"].as_str().unwrap_or(""))]));
+  }
   let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, tr(Msg::NoDataFolder, &[])));
-  let res = match send(&path, method, params.clone(), Some(client::ANSWER_TIMEOUT)) {
+  let res = match send(&path, method, params.clone(), Some(client::answer_timeout(method))) {
     Ok(res) => res,
     // Not running (or a runtime file left by an app that is gone): `kingu <paths>` and
     // `kingu open` start Kingu with them (VS Code's `code <path>`); what launch arguments cannot
@@ -119,7 +123,7 @@ fn main() {
         std::process::exit(0);
       }
       wait_until_running(&path).unwrap_or_else(|e| fail(EXIT_UNAVAILABLE, e));
-      send(&path, method, params.clone(), Some(client::ANSWER_TIMEOUT)).unwrap_or_else(|(code, e)| fail(code, e))
+      send(&path, method, params.clone(), Some(client::answer_timeout(method))).unwrap_or_else(|(code, e)| fail(code, e))
     }
     Err((code, e)) => fail(code, e),
   };

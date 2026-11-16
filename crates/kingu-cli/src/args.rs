@@ -26,6 +26,21 @@ pub enum Command {
   TaskOpen {
     slug: String,
   },
+  /// `kingu task set [<slug>] --comment <text>`: no slug means the task whose worktree it runs in.
+  TaskSet {
+    slug: Option<String>,
+    comment: String,
+  },
+  /// `kingu cleanup preview`: what the cleanup rules would remove, and why the rest stays.
+  CleanupPreview,
+  /// `kingu cleanup run [--request-id <id>]`: removes it; the same id again replays the first receipt.
+  CleanupRun {
+    request_id: Option<String>,
+  },
+  /// `kingu cleanup receipt <id>`: the receipt of an earlier run (recovery after a lost answer).
+  CleanupReceipt {
+    request_id: String,
+  },
   Open {
     path: String,
     line: Option<u32>,
@@ -180,6 +195,7 @@ fn command(args: &[String]) -> Result<Command, String> {
     "version" => Ok(Command::Version),
     "status" => no_more(&args[1..], Command::Status),
     "task" | "tasks" => task(&args[1..]),
+    "cleanup" => cleanup(&args[1..]),
     "open" => open(&args[1..]),
     "notify" => notify(&args[1..]),
     "artifact" | "artifacts" => artifact(&args[1..]),
@@ -343,7 +359,44 @@ fn task(args: &[String]) -> Result<Command, String> {
         _ => Err(tr(Msg::TaskOpenOneSlug, &[])),
       }
     }
+    "set" => {
+      let (pos, flags) = split(rest, &["--comment", "-c"], &[])?;
+      let Some(comment) = flag(&flags, &["--comment", "-c"]) else { return Err(tr(Msg::TaskSetNeedsComment, &[])) };
+      match pos.as_slice() {
+        [] => Ok(Command::TaskSet { slug: None, comment }),
+        [slug] => Ok(Command::TaskSet { slug: Some(slug.to_string()), comment }),
+        _ => Err(tr(Msg::TaskOpenOneSlug, &[])),
+      }
+    }
     other => Err(tr(Msg::UnknownTaskCommand, &[("command", &other)])),
+  }
+}
+
+fn cleanup(args: &[String]) -> Result<Command, String> {
+  let Some(sub) = args.first() else { return Err(tr(Msg::CleanupNeedsSubcommand, &[])) };
+  let rest = &args[1..];
+  match sub.as_str() {
+    "preview" => no_more(rest, Command::CleanupPreview),
+    "run" => {
+      let (pos, flags) = split(rest, &["--request-id"], &[])?;
+      if let Some(extra) = pos.first() {
+        return Err(tr(Msg::UnexpectedArgument, &[("arg", extra)]));
+      }
+      let request_id = flag(&flags, &["--request-id"]);
+      if let Some(id) = request_id.as_deref().filter(|id| !crate::protocol::valid_request_id(id)) {
+        return Err(tr(Msg::CleanupBadRequestId, &[("id", &id)]));
+      }
+      Ok(Command::CleanupRun { request_id })
+    }
+    "receipt" => {
+      let (pos, _) = split(rest, &[], &[])?;
+      match pos.as_slice() {
+        [id] if crate::protocol::valid_request_id(id) => Ok(Command::CleanupReceipt { request_id: id.to_string() }),
+        [id] => Err(tr(Msg::CleanupBadRequestId, &[("id", id)])),
+        _ => Err(tr(Msg::CleanupReceiptNeedsId, &[])),
+      }
+    }
+    other => Err(tr(Msg::UnknownCleanupCommand, &[("command", &other)])),
   }
 }
 
@@ -561,7 +614,17 @@ mod tests {
     assert!(p(&["task", "create", "x", "--force"]).unwrap_err().contains("unknown option"));
     assert_eq!(c(&["task", "open", "fix-login"]), Command::TaskOpen { slug: "fix-login".into() });
     assert!(p(&["task", "open"]).is_err() && p(&["task", "open", "a", "b"]).is_err());
+    assert_eq!(c(&["task", "set", "fix", "--comment", "waiting on review"]), Command::TaskSet { slug: Some("fix".into()), comment: "waiting on review".into() });
+    assert_eq!(c(&["task", "set", "-c", ""]), Command::TaskSet { slug: None, comment: String::new() });
+    assert!(p(&["task", "set", "fix"]).is_err() && p(&["task", "set", "a", "b", "-c", "x"]).is_err());
     assert!(p(&["task"]).is_err() && p(&["task", "delete"]).is_err());
+    assert_eq!(c(&["cleanup", "preview"]), Command::CleanupPreview);
+    assert_eq!(c(&["cleanup", "run"]), Command::CleanupRun { request_id: None });
+    assert_eq!(c(&["cleanup", "run", "--request-id", "nightly_1"]), Command::CleanupRun { request_id: Some("nightly_1".into()) });
+    assert_eq!(c(&["cleanup", "receipt", "nightly_1"]), Command::CleanupReceipt { request_id: "nightly_1".into() });
+    assert!(p(&["cleanup"]).is_err() && p(&["cleanup", "delete"]).is_err() && p(&["cleanup", "preview", "x"]).is_err());
+    assert!(p(&["cleanup", "run", "--request-id", "a b"]).is_err() && p(&["cleanup", "run", "--request-id"]).is_err());
+    assert!(p(&["cleanup", "receipt"]).is_err() && p(&["cleanup", "receipt", "../x"]).is_err());
   }
 
   #[test]

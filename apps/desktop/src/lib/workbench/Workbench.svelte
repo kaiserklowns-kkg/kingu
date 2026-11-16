@@ -21,6 +21,7 @@
 	import { welcome } from './welcomeTour.svelte';
 	import { floating } from './floating.svelte';
 	import { installSignals } from './signals.svelte';
+	import { installAutoCleanup } from '#lib/ade/autoCleanup.svelte.ts';
 	import { installAccessibilitySignals } from './accessibilitySignals.svelte';
 	import { platform } from './platform.svelte';
 	import { PROFILES, type Platform } from './platform';
@@ -145,6 +146,7 @@
 		welcome.maybeShow();
 		const unregister = [
 			installSignals(),
+			installAutoCleanup(),
 			installAccessibilitySignals(),
 			installChatExtras(),
 			// Shows another OS's chrome (window controls, fonts) on this machine; real users keep macOS's.

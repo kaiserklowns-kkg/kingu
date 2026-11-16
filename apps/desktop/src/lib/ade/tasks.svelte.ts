@@ -53,7 +53,8 @@ import { runtime } from './runtime.svelte';
 import { tabsOfTask, touchedTasks } from './agentGuard';
 import { confirmAgentIdle } from './agentGuard.svelte';
 import { adeLayout } from './adeLayout.svelte';
-import { agentCommand, cliAgent, cliOf, launchOptions, withLaunchOptions, type RunMode } from './agentCli';
+import { cliAgent, cliOf, type RunMode } from './agentCli';
+import { adeCommand, adeLaunchSpec, applyLaunchSpec } from '#lib/agent/launchSpec.ts';
 import { noDaemonProgram, withNoDaemon } from '#lib/ade/codexServer.ts';
 import { profileOf, programOf } from '#lib/ade/agentProfiles.ts';
 import { chooseAgentCli } from '#lib/ade/agentPicker.ts';
@@ -371,7 +372,7 @@ class AdeTasks {
 		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
-		const configured = agentCommand((k) => settings.get<string>(k));
+		const configured = adeCommand(null, (k) => settings.get(k));
 		// An attempt's model goes into its command, so a resume keeps it.
 		const cli = configured && input.model ? withModel(configured, input.model) : configured;
 		if (!cli) {
@@ -785,7 +786,7 @@ class AdeTasks {
 	/** After a restart: start the task's CLI again in its worktree, continuing its latest session where the CLI can. */
 	async resumeCli(slug: string, fresh = false) {
 		const meta = this.list.find((t) => t.slug === slug);
-		const cli = meta && (cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k)));
+		const cli = meta && (cliOf(meta.agent) ?? adeCommand(null, (k) => settings.get(k)));
 		if (!cli) return;
 		// ADE used to have a host-backed timeline. Let an old task continue safely in the
 		// configured terminal agent instead of reviving that UI path.
@@ -830,9 +831,9 @@ class AdeTasks {
 			await invoke('agent_trust_workspace', { slug, program: programOf(cli) }).catch((e) => clientLog('info', `trust ${slug}: ${e}`));
 		const sessionId = profile.ownsSessionId && !('resume' in how) ? crypto.randomUUID() : undefined;
 		// Orca's agentCmdOverrides / agentDefaultEnv / claudeAgentTeamsMode (user settings only).
-		const options = launchOptions(profile.id, (k) => settings.get(k));
-		if (typeof options === 'string') {
-			notifications.error(options);
+		const spec = adeLaunchSpec(cli, (k) => settings.get(k));
+		if ('error' in spec) {
+			notifications.error(spec.error);
 			return;
 		}
 		// A folder of this run (outside the worktree) for files a launch needs, e.g. gemini's MCP settings.
@@ -849,7 +850,7 @@ class AdeTasks {
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		// A hibernated CLI (hibernation.svelte.ts) is awake again.
 		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
-		let argv = withLaunchOptions(launch.argv, options);
+		let argv = applyLaunchSpec(launch.argv, spec);
 		// Orca's codexTerminalServerIsolation: this codex gets its own app-server, not the shared one.
 		const noDaemon = profile.id === 'codex' ? noDaemonProgram(argv, (k) => settings.get(k)) : null;
 		if (noDaemon && (await invoke<boolean>('codex_supports_no_daemon', { program: noDaemon }).catch(() => false))) argv = withNoDaemon(argv);
@@ -878,7 +879,7 @@ class AdeTasks {
 	async continueSession(slug: string, session: SessionRef) {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta) return;
-		const cli = cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k));
+		const cli = cliOf(meta.agent) ?? adeCommand(null, (k) => settings.get(k));
 		if (!canResumeWith(meta.agent, session.agent)) return this.handOff(slug, session, cli);
 		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
 		if (!cli) return status.flash(t('adeTasks.tasks.badCli'), 10000);
@@ -896,7 +897,7 @@ class AdeTasks {
 		if (!meta || !workspace.root) return;
 		if (runtime.isWorking(slug) || cliSessions.working(slug)) return status.flash(t('adeWorkflow.stopFirst', { title: meta.title }));
 		const prompt = handOffPrompt({ agent: session.agent, id: session.id, cwd: `${workspace.root}/${worktreeDir(slug)}`, title: meta.title, prompt: meta.prompt, summary: meta.last_run?.summary });
-		const target = cli ?? agentCommand((k) => settings.get<string>(k));
+		const target = cli ?? adeCommand(null, (k) => settings.get(k));
 		if (!target) return status.flash(t('adeTasks.tasks.badCli'), 10000);
 		await this.#patch(slug, { agent: cliAgent(target), session_id: null });
 		await this.#launchCli(slug, target, { prompt });
@@ -907,7 +908,7 @@ class AdeTasks {
 	async followUp(slug: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
 		const meta = this.list.find((t) => t.slug === slug);
 		if (!meta || !text.trim()) return false;
-		const cli = cliOf(meta.agent) ?? agentCommand((k) => settings.get<string>(k));
+		const cli = cliOf(meta.agent) ?? adeCommand(null, (k) => settings.get(k));
 		if (!cli) {
 			status.flash(t('adeTasks.tasks.badCli'), 10000);
 			return false;

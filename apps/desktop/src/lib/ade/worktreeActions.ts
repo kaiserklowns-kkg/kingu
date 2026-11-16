@@ -7,6 +7,8 @@ import { t } from '#lib/i18n/index.ts';
 export type WorktreeAction =
 	| 'open'
 	| 'openInEditor'
+	| 'openInChat'
+	| 'continueInChat'
 	| 'newTerminal'
 	| 'quickOpen'
 	| 'reveal'
@@ -42,7 +44,7 @@ export function openInLabels(setting: Readonly<Record<string, unknown>> | undefi
  * Open In app labels. `sessions`: how many agent sessions the task has saved (Continue Session…).
  * `attempts`: the task is one of a best-of-N group (Compare Attempts…).
  */
-export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[]; sessions?: number; attempts?: boolean }): ActionRow[] {
+export function worktreeActions(w: { slug: string | null; status?: TaskStatus; running?: boolean; hasWorktree?: boolean; openIn?: readonly string[]; sessions?: number; chatSessions?: number; attempts?: boolean }): ActionRow[] {
 	const task = w.slug !== null;
 	const rows: ActionRow[] = [
 		{ id: 'open', label: t('adeTasks.worktree.open') },
@@ -55,6 +57,12 @@ export function worktreeActions(w: { slug: string | null; status?: TaskStatus; r
 		{ id: 'copyPath', label: t('adeTasks.worktree.copyPath') }
 	];
 	if (!task) return rows;
+	// docs/AI-SURFACES.md §9: a new IDE agent chat in the task's worktree, and one that continues a
+	// claude session of the task there (sessionHandoff.ts) while its agent is stopped.
+	rows.push(
+		{ id: 'openInChat', label: t('adeTasks.worktree.openInChat'), enabled: w.hasWorktree !== false },
+		{ id: 'continueInChat', label: t('adeTasks.worktree.continueInChat'), enabled: (w.chatSessions ?? 0) > 0 && !w.running && w.hasWorktree !== false }
+	);
 	rows.push({ id: 'copyBranch', label: t('adeTasks.worktree.copyBranch') }, { id: 'rename', label: t('adeTasks.worktree.rename') }, 'separator');
 	rows.push(w.status === 'done' ? { id: 'reopen', label: t('adeTasks.worktree.reopen') } : { id: 'markDone', label: t('adeTasks.worktree.markDone'), enabled: !w.running });
 	// Orca's Move to Status and agent session continuation.

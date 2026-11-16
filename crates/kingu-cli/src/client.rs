@@ -37,6 +37,14 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
       (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() }))
     }
     Command::TaskOpen { slug } => (protocol::METHOD_TASK_OPEN, json!({ "slug": slug })),
+    // `cwd`: without a slug, the app finds the task whose worktree this runs in.
+    Command::TaskSet { slug, comment } => (protocol::METHOD_TASK_SET, json!({ "slug": slug, "comment": comment, "cwd": cwd.display().to_string() })),
+    Command::CleanupPreview => (protocol::METHOD_CLEANUP_PREVIEW, json!({ "cwd": cwd.display().to_string() })),
+    Command::CleanupRun { request_id } => {
+      let id = request_id.clone().unwrap_or_else(new_request_id);
+      (protocol::METHOD_CLEANUP_RUN, json!({ "cwd": cwd.display().to_string(), "requestId": id }))
+    }
+    Command::CleanupReceipt { request_id } => (protocol::METHOD_CLEANUP_RECEIPT, json!({ "cwd": cwd.display().to_string(), "requestId": request_id })),
     Command::Open { path, line, column } => {
       let p = Path::new(path);
       let abs = if p.is_absolute() { p.to_path_buf() } else { cwd.join(p) };
@@ -164,8 +172,37 @@ fn render_data_accounts(result: &Value) -> String {
 }
 
 /// What a person sees for a successful answer.
+/// `run-<ms>-<pid>`: unique enough for one machine, and printed so a lost answer can be recovered.
+fn new_request_id() -> String {
+  let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+  format!("run-{ms}-{}", std::process::id())
+}
+
+fn render_cleanup(method: &str, result: &Value) -> String {
+  let rows = |key: &str| result[key].as_array().map(Vec::as_slice).unwrap_or_default();
+  if method == protocol::METHOD_CLEANUP_PREVIEW {
+    let tasks = rows("tasks");
+    if tasks.is_empty() {
+      return tr(Msg::CleanupNothing, &[]);
+    }
+    let ready = tasks.iter().filter(|t| t["action"] == "delete").count();
+    let head = tr(Msg::CleanupPreviewHead, &[("ready", &ready), ("kept", &(tasks.len() - ready)), ("rules", &result["rules"].as_str().unwrap_or(""))]);
+    let lines = tasks.iter().map(|t| format!("{}\t{}\t{}", t["slug"].as_str().unwrap_or(""), t["action"].as_str().unwrap_or(""), t["label"].as_str().unwrap_or("")));
+    return std::iter::once(head).chain(lines).collect::<Vec<_>>().join("\n");
+  }
+  let mut out = vec![tr(Msg::CleanupRunDone, &[("removed", &rows("removed").len()), ("failed", &rows("failed").len()), ("kept", &result["kept"].as_u64().unwrap_or(0))])];
+  out.extend(rows("removed").iter().map(|s| format!("  {}", s.as_str().unwrap_or(""))));
+  out.extend(rows("failed").iter().map(|f| tr(Msg::CleanupFailedRow, &[("slug", &f["slug"].as_str().unwrap_or("")), ("error", &f["error"].as_str().unwrap_or(""))])));
+  out.push(tr(Msg::CleanupRequestId, &[("id", &result["requestId"].as_str().unwrap_or(""))]));
+  if result["replayed"] == true {
+    out.push(tr(Msg::CleanupReplayed, &[]));
+  }
+  out.join("\n")
+}
+
 pub fn render(method: &str, result: &Value) -> String {
   match method {
+    protocol::METHOD_CLEANUP_PREVIEW | protocol::METHOD_CLEANUP_RUN | protocol::METHOD_CLEANUP_RECEIPT => render_cleanup(method, result),
     protocol::METHOD_STATUS => {
       let mut out = format!("Kingu {} (pid {})", result["app_version"].as_str().unwrap_or("?"), result["pid"].as_u64().unwrap_or(0));
       match result["workspace"].as_str() {
@@ -207,6 +244,13 @@ pub fn render(method: &str, result: &Value) -> String {
 
 /// How long an answer may take: starting a task waits for the window (the app gives it 30 s).
 pub const ANSWER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+/// `workspaceCleanup.run` removes worktrees one by one: the app gives it 10 minutes, so the command waits a little longer.
+pub const CLEANUP_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(11 * 60);
+
+/// How long the command waits for `method`'s answer.
+pub fn answer_timeout(method: &str) -> std::time::Duration {
+  if method == protocol::METHOD_CLEANUP_RUN { CLEANUP_RUN_TIMEOUT } else { ANSWER_TIMEOUT }
+}
 
 /// Sends one request over the app's socket and reads its answer.
 pub fn call(socket: &Path, token: &str, method: &str, params: Value) -> Result<Response, (i32, String)> {
@@ -240,6 +284,15 @@ pub fn call_with(_socket: &Path, _token: &str, _method: &str, _params: Value, _t
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_cleanup_run_waits_longer_than_the_app_does_and_other_commands_keep_the_usual_wait() {
+    // The app answers within 10 minutes; the command must not give up before it.
+    assert!(answer_timeout(protocol::METHOD_CLEANUP_RUN) > std::time::Duration::from_secs(10 * 60));
+    for m in [protocol::METHOD_CLEANUP_PREVIEW, protocol::METHOD_TASK_CREATE, protocol::METHOD_STATUS] {
+      assert_eq!(answer_timeout(m), ANSWER_TIMEOUT, "{m}");
+    }
+  }
 
   #[test]
   fn builds_requests_with_absolute_paths_and_stdin_prompts() {

@@ -203,6 +203,9 @@ export const adeTasks = {
 	// worktreeActions.ts / worktreeMenu.svelte.ts
 	'adeTasks.worktree.open': 'เปิด',
 	'adeTasks.worktree.openInEditor': 'เปิดใน Editor',
+	'adeTasks.worktree.openInChat': 'เปิดใน Agent Chat',
+	'adeTasks.worktree.continueInChat': 'ทำต่อใน Agent Chat…',
+	'adeTasks.worktree.continueInChatPick': 'session ของ {title} ที่จะทำต่อใน Agent Chat',
 	'adeTasks.worktree.newTerminal': 'Terminal ใหม่ใน worktree นี้',
 	'adeTasks.worktree.quickOpen': 'เปิดไฟล์…',
 	'adeTasks.worktree.reveal': 'แสดงใน Finder',

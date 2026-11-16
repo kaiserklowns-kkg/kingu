@@ -23,6 +23,7 @@ import { t } from '#lib/i18n/index.ts';
 import { dirOf, editorOpens, openTarget, profileFor, waitOver, type CliRequest, type CreateParams, type EditorParams, type OpenParams } from './cliBridge.ts';
 import { setBuiltInPluginProvider } from './mcp.ts';
 import { adeTasks } from './tasks.svelte.ts';
+import { cleanup } from './cleanup.svelte.ts';
 
 async function handle(req: CliRequest): Promise<unknown> {
 	switch (req.method) {
@@ -39,6 +40,10 @@ async function handle(req: CliRequest): Promise<unknown> {
 			adeTasks.openTask(slug);
 			return null;
 		}
+		case 'workspaceCleanup.preview':
+			return cleanup.preview();
+		case 'workspaceCleanup.run':
+			return cleanup.runRules('cli');
 		case 'open': {
 			const p = req.params as OpenParams;
 			const target = openTarget(workspace.root, p);

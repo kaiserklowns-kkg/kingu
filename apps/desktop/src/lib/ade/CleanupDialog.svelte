@@ -9,27 +9,82 @@
 	import { adeTasks } from './tasks.svelte';
 	import { runtime } from './runtime.svelte';
 	import { cleanup } from './cleanup.svelte';
+	import { prStatuses } from './prStatus.svelte';
 	import { STATUS_LABEL, timeAgo } from './model';
 	import { STATUS_DOT } from './ui';
+	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
+	import { formatWorkspaceCleanupKeepCause, formatWorkspaceCleanupRuleReason } from './workspaceCleanupVerdict';
+	import { slugsToRemove } from './workspaceCleanupScan';
+	import CleanupFilterBar from './CleanupFilterBar.svelte';
+	import { cleanupBrowse } from './cleanupBrowse.svelte';
+	import { browseCleanupRows, formatBytes, reclaimable, rowFacts } from './workspaceCleanupBrowse';
 
 	const ORDER = { done: 0, review: 1, failed: 2, waiting: 3, running: 4 } as const;
 	const only = untrack(() => cleanup.only);
-	const rows = $derived([...adeTasks.views].filter((v) => !only || only.includes(v.meta.slug)).sort((a, b) => ORDER[a.status] - ORDER[b.status] || b.meta.updated_at - a.meta.updated_at));
+	const ready = $derived(new Set(slugsToRemove(cleanup.verdicts)));
+	// What the rules would remove comes first, then the filter bar's sort; its filters hide the rest
+	// (a hidden task is never picked or removed). The losing attempts of Pick winner are never filtered.
+	const candidates = $derived(new Map((cleanup.scan?.candidates ?? []).flatMap((c) => (c.slug ? [[c.slug, c] as const] : []))));
+	const base = $derived([...adeTasks.views].filter((v) => !only || only.includes(v.meta.slug)));
+	const facts = $derived(
+		base.map((v) =>
+			rowFacts(
+				{ slug: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), status: v.status, working: runtime.isWorking(v.meta.slug), createdAt: v.meta.created_at, updatedAt: v.meta.updated_at },
+				candidates.get(v.meta.slug),
+				cleanup.taskContext(v.meta.slug),
+				cleanup.sizes.get(candidates.get(v.meta.slug)?.path ?? '') ?? null,
+				{ pr: prStatuses.bySlug[v.meta.slug]?.pr, issue: v.meta.issue }
+			)
+		)
+	);
+	const order = $derived(only ? facts : browseCleanupRows(facts, cleanupBrowse.filters, cleanupBrowse.sort, adeTasks.now));
+	const byRank = $derived(new Map(order.map((r, i) => [r.slug, i])));
+	const rows = $derived(
+		base
+			.filter((v) => byRank.has(v.meta.slug))
+			.sort((a, b) => Number(ready.has(b.meta.slug)) - Number(ready.has(a.meta.slug)) || (only ? ORDER[a.status] - ORDER[b.status] || b.meta.updated_at - a.meta.updated_at : byRank.get(a.meta.slug)! - byRank.get(b.meta.slug)!))
+	);
 	let picked = $state<Record<string, boolean>>(untrack(() => Object.fromEntries(adeTasks.views.filter((v) => (only ? only.includes(v.meta.slug) : v.status === 'done')).map((v) => [v.meta.slug, true]))));
 	let deleteBranch = $state(false);
 	let progress = $state<{ done: number; total: number } | null>(null);
+	// Until the user ticks something, the rules' pick replaces the default "finished ones" pick.
+	let touched = false;
+	const selectByRules = () => (picked = Object.fromEntries(rows.map((v) => [v.meta.slug, ready.has(v.meta.slug)])));
+	// Git facts first (fast), then the sizes (`du`, slow) while the list is already usable.
+	// Pull requests in the background too (one `gh` call per task): until a task's is read its review
+	// state is `unknown`, which the review filter does not treat as "no PR".
+	const refresh = () =>
+		void cleanup.rescan().then((scan) => {
+			if (!scan) return;
+			void cleanup.readPullRequests(base.map((v) => v.meta.slug));
+			return cleanup.measureSizes();
+		});
+	$effect(() => {
+		if (!only) untrack(refresh);
+	});
+	$effect(() => {
+		if (!only && !touched && cleanup.scan && cleanup.rulesOn && ready.size) untrack(selectByRules);
+	});
 
 	const busy = (slug: string) => runtime.isWorking(slug);
 	const chosen = $derived(rows.filter((v) => picked[v.meta.slug] && !busy(v.meta.slug)).map((v) => v.meta.slug));
+	const factOf = $derived(new Map(facts.map((r) => [r.slug, r])));
+	// What removing the picked tasks frees (the measured ones; the rest are counted, not guessed).
+	const frees = $derived(reclaimable(chosen.flatMap((slug) => factOf.get(slug) ?? [])));
 
 	async function run() {
 		progress = { done: 0, total: chosen.length };
+		const removed: string[] = [];
+		const failed: { slug: string; error: string }[] = [];
 		for (const slug of chosen) {
 			// This dialog is the confirmation; the checkbox deletes merged branches (git branch -d), never
 			// unmerged work, except for the losing attempts the user chose to throw away.
-			await adeTasks.removeConfirmed(slug, { deleteBranch: deleteBranch ? (only ? 'force' : 'safe') : 'keep', force: false });
+			const ok = await adeTasks.removeConfirmed(slug, { deleteBranch: deleteBranch ? (only ? 'force' : 'safe') : 'keep', force: false });
+			if (ok) removed.push(slug);
+			else failed.push({ slug, error: 'not removed' });
 			progress = { done: progress.done + 1, total: progress.total };
 		}
+		cleanup.record('dialog', removed, failed, rows.length - chosen.length);
 		cleanup.close();
 	}
 
@@ -53,24 +108,77 @@
 			{/if}
 		</header>
 		<p class="px-5 pb-3 text-[13px] text-(--vscode-descriptionForeground)">{only ? t('adeAttempts.cleanup.hintLosers') : t('adeAttempts.cleanup.hint')}</p>
+		{#if !only}
+			<div class="flex items-center gap-2 px-5 pb-3 text-xs text-(--vscode-descriptionForeground)" role="status">
+				{#if cleanup.scanning}
+					<span>{t('workspaceCleanup.dialog.scanning', { scanned: cleanup.progress?.scanned ?? 0, total: cleanup.progress?.total ?? 0 })}</span>
+				{:else if cleanup.error}
+					<span class="text-(--vscode-errorForeground)">{t('workspaceCleanup.dialog.scanFailed', { error: cleanup.error })}</span>
+				{:else if cleanup.policy.source === 'project-off'}
+					<span>{t('workspaceCleanup.dialog.projectOff')}</span>
+				{:else if !cleanup.rulesOn}
+					<span>{t('workspaceCleanup.dialog.rulesOff')}</span>
+				{:else}
+					<span>{ready.size ? t('workspaceCleanup.dialog.readyCount', { count: ready.size }) : t('workspaceCleanup.dialog.noneReady')}</span>
+				{/if}
+				<span class="flex-1"></span>
+				{#if cleanup.rulesOn && ready.size}
+					<button class="text-(--vscode-textLink-foreground) hover:underline" disabled={!!progress} onclick={() => ((touched = true), selectByRules())}>{t('workspaceCleanup.dialog.selectByRules')}</button>
+				{/if}
+				<button class="text-(--vscode-textLink-foreground) hover:underline" disabled={cleanup.scanning || !!progress} onclick={refresh}>{t('workspaceCleanup.dialog.rescan')}</button>
+				<button
+					class="text-(--vscode-textLink-foreground) hover:underline"
+					onclick={() => {
+						cleanup.close();
+						systemSettings.showPage('workspaceCleanup');
+					}}>{t('workspaceCleanup.dialog.setUp')}</button
+				>
+			</div>
+		{/if}
+		{#if !only}<CleanupFilterBar shown={rows.length} total={base.length} />{/if}
 		<ul class="min-h-0 flex-1 overflow-y-auto border-y border-(--vscode-widget-border) py-1">
 			{#each rows as v (v.meta.slug)}
 				{@const slug = v.meta.slug}
+				{@const verdict = only ? undefined : cleanup.verdicts.get(slug)}
 				<li>
 					<label class={['mx-1.5 flex items-center gap-3 rounded-md px-3 py-2', busy(slug) ? 'opacity-50' : 'cursor-pointer hover:bg-(--vscode-list-hoverBackground)']}>
-						<input type="checkbox" class="size-4 accent-(--vscode-focusBorder)" disabled={busy(slug) || !!progress} bind:checked={picked[slug]} />
+						<input type="checkbox" class="size-4 accent-(--vscode-focusBorder)" disabled={busy(slug) || !!progress} bind:checked={picked[slug]} onchange={() => (touched = true)} />
 						<span class={['size-2 shrink-0 rounded-full', STATUS_DOT[v.status]]} title={STATUS_LABEL[v.status]}></span>
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-[13px]">{v.meta.title}</span>
 							<span class="block truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">{adeTasks.branchOf(slug)} · {STATUS_LABEL[v.status]}</span>
+							{#if verdict}
+								{#if verdict.evaluation.action === 'delete'}
+									<span class="block truncate text-[11px] text-(--vscode-charts-green)">{t('workspaceCleanup.dialog.readyChip', { reason: formatWorkspaceCleanupRuleReason(verdict.evaluation.reason) })}</span>
+								{:else if cleanup.rulesOn && verdict.evaluation.action === 'keep' && verdict.evaluation.cause !== 'no-rule-matched'}
+									<span class="block truncate text-[11px] text-(--vscode-descriptionForeground)">{formatWorkspaceCleanupKeepCause(verdict.evaluation.cause, verdict.evaluation.waiting)}</span>
+								{/if}
+							{/if}
 						</span>
-						<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{timeAgo(v.meta.updated_at, adeTasks.now)}</span>
+						<span class="shrink-0 text-right text-[11px] text-(--vscode-descriptionForeground)">
+							{timeAgo(v.meta.updated_at, adeTasks.now)}
+							{#if factOf.get(slug)?.sizeBytes != null}<span class="block font-mono">{formatBytes(factOf.get(slug)!.sizeBytes!)}</span>{/if}
+						</span>
 					</label>
 				</li>
 			{:else}
-				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{t('adeAttempts.cleanup.empty')}</li>
+				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{base.length ? t('workspaceCleanup.filter.noMatch') : t('adeAttempts.cleanup.empty')}</li>
 			{/each}
 		</ul>
+		{#if !only && cleanup.prProgress}
+			<div class="px-5 pt-2 text-xs text-(--vscode-descriptionForeground)" role="status">{t('workspaceCleanup.readingPrs', { scanned: cleanup.prProgress.scanned, total: cleanup.prProgress.total })}</div>
+		{/if}
+		{#if !only && (cleanup.measuring || frees.bytes > 0)}
+			<div class="px-5 pt-2 text-xs text-(--vscode-descriptionForeground)" role="status">
+				{#if cleanup.measuring}
+					{t('workspaceCleanup.measuring', { scanned: cleanup.sizeProgress?.scanned ?? 0, total: cleanup.sizeProgress?.total ?? 0 })}
+				{:else if frees.unmeasured}
+					{t('workspaceCleanup.freesUpPartial', { size: formatBytes(frees.bytes), count: frees.unmeasured })}
+				{:else}
+					{t('workspaceCleanup.freesUp', { size: formatBytes(frees.bytes) })}
+				{/if}
+			</div>
+		{/if}
 		<footer class="flex items-center gap-3 px-5 py-3">
 			<label class="flex flex-1 items-center gap-2 text-[13px]">
 				<input type="checkbox" class="size-4 accent-(--vscode-focusBorder)" bind:checked={deleteBranch} disabled={!!progress} />
