@@ -55,11 +55,15 @@ class Cleanup {
 			slug,
 			(p) => parseTaskDiffKey(p)?.slug
 		);
+		const view = adeTasks.find(slug);
 		return {
 			liveAgent: runtime.isLive(slug) || runtime.isWorking(slug),
 			active: !!editors.active && slugOfTaskKey(editors.active) === slug,
 			dirtyEditor: tabs.some((p) => editors.isDirty(p)),
-			updatedAt: adeTasks.find(slug)?.meta.updated_at
+			updatedAt: view?.meta.updated_at,
+			origin: view?.meta.origin ?? null,
+			dispatchedBy: view?.meta.dispatched_by ?? null,
+			finished: !!view && view.status !== 'running' && view.status !== 'waiting'
 		};
 	}
 

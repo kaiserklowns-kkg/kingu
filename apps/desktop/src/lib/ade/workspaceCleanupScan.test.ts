@@ -112,4 +112,36 @@ describe('workspace cleanup scan → evaluator input', () => {
 	test('the run receipt lists what was removed, what failed and how many were kept', () => {
 		expect(cleanupReceipt(['a'], [{ slug: 'b', error: 'x' }], 3)).toEqual({ removed: ['a'], failed: [{ slug: 'b', error: 'x' }], kept: 3 });
 	});
+
+	describe('automation runs and orchestration workers', () => {
+		const rulesFor = (key: 'automationRuns' | 'orchestrationWorkers') => resolveWorkspaceCleanupPolicy({ workspaceCleanupPolicy: { ...getDefaultWorkspaceCleanupRules(), [key]: { enabled: true } } });
+		const fin = (over: Partial<CleanupTaskContext>): CleanupTaskContext => ({ liveAgent: false, active: false, dirtyEditor: false, finished: true, ...over });
+		const decide = (c: CleanupCandidate, ctx: CleanupTaskContext, key: 'automationRuns' | 'orchestrationWorkers') => evaluateScan(scan(c), rulesFor(key), () => ctx).get('a')!.evaluation;
+
+		test('a finished automation run is removed by the automation rule, whether or not it merged', () => {
+			expect(decide(cand({ merged: false }), fin({ origin: 'automation' }), 'automationRuns')).toEqual({ action: 'delete', reason: 'automation-run' });
+		});
+
+		test('a finished released worker is removed by the worker rule', () => {
+			expect(decide(cand({ merged: false }), fin({ dispatchedBy: 'coordinator' }), 'orchestrationWorkers')).toEqual({ action: 'delete', reason: 'orchestration-worker' });
+		});
+
+		test('a run or worker still going, or one you started yourself, is not a reason', () => {
+			expect(decide(cand({ merged: false }), fin({ origin: 'automation', finished: false }), 'automationRuns')).toMatchObject({ action: 'keep', cause: 'no-rule-matched' });
+			expect(decide(cand({ merged: false }), fin({ dispatchedBy: 'c', finished: false }), 'orchestrationWorkers')).toMatchObject({ action: 'keep', cause: 'no-rule-matched' });
+			expect(decide(cand({ merged: false }), fin({}), 'automationRuns')).toMatchObject({ action: 'keep', cause: 'no-rule-matched' });
+		});
+
+		test('the other rule being on does not remove it, and a rule that is off removes nothing', () => {
+			expect(decide(cand({ merged: false }), fin({ origin: 'automation' }), 'orchestrationWorkers')).toMatchObject({ action: 'keep', cause: 'no-rule-matched' });
+			expect(evaluateScan(scan(cand({ merged: false })), resolveWorkspaceCleanupPolicy({}), () => fin({ origin: 'automation' })).get('a')!.evaluation).toEqual({ action: 'keep', cause: 'rules-off' });
+		});
+
+		test('work that could be lost still keeps a finished automation run or worker', () => {
+			for (const over of [{ clean: false }, { unpushed: true }, { ignoredFiles: true }]) {
+				const e = decide(cand({ merged: false, ...over }), fin({ origin: 'automation' }), 'automationRuns');
+				expect([over, e.action]).toEqual([over, 'keep']);
+			}
+		});
+	});
 });

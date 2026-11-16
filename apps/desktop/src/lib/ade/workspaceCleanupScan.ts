@@ -50,12 +50,21 @@ export type CleanupTaskContext = {
 	dirtyEditor: boolean;
 	/** Task's own last update (ms), so a turn that never touched Git still counts as activity. */
 	updatedAt?: number;
+	/** What started the task besides you (`automation`), and the task whose agent dispatched it (orchestration). */
+	origin?: 'automation' | null;
+	dispatchedBy?: string | null;
+	/** The agent's work is over: not running and not waiting on you. Only a finished run or worker is a cleanup reason. */
+	finished?: boolean;
 };
 
 export function candidateInput(c: CleanupCandidate, ctx: CleanupTaskContext | undefined): WorkspaceCleanupInput {
 	const reasons: WorkspaceCleanupInputReason[] = [];
 	if (c.merged) reasons.push('merged');
 	if (c.unchanged) reasons.push('unchanged');
+	// Finished automation runs and released orchestration workers (Orca's two other rules): what
+	// started the task is the reason, and the protections below still keep any work that could be lost.
+	if (ctx?.finished && ctx.origin === 'automation') reasons.push('automation-run');
+	if (ctx?.finished && ctx.dispatchedBy) reasons.push('orchestration-worker');
 	const blockers: WorkspaceCleanupBlocker[] = [];
 	if (c.isMain) blockers.push('main-worktree');
 	// A worktree Kingu did not create is not a task: it has no remove path here, so it is never offered.
