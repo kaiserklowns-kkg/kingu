@@ -143,6 +143,11 @@ export async function mockTauri(
 					return taskList;
 				},
 				projects_list: () => [],
+				project_groups_list: () => [],
+				ssh_targets_list: () => [],
+				ssh_forwards_list: () => [],
+				ssh_unrestored_forwards: () => [],
+				ssh_projects_list: () => [],
 				worktree_list: () => [],
 				worktree_create: (args: any) => ({
 					path: `${workspace}/.kingu/worktrees/${args?.slug}`,

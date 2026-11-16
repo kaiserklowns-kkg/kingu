@@ -37,9 +37,9 @@ class SshHosts {
 	}
 
 	async refresh() {
-		this.targets = await invoke<SshTarget[]>('ssh_targets_list').catch(() => []);
-		this.forwards = await invoke<Forward[]>('ssh_forwards_list').catch(() => []);
-		this.unrestored = await invoke<SavedForward[]>('ssh_unrestored_forwards').catch(() => []);
+		this.targets = (await invoke<SshTarget[]>('ssh_targets_list').catch(() => [])) ?? [];
+		this.forwards = (await invoke<Forward[]>('ssh_forwards_list').catch(() => [])) ?? [];
+		this.unrestored = (await invoke<SavedForward[]>('ssh_unrestored_forwards').catch(() => [])) ?? [];
 	}
 
 	/** Files on the host (Orca's ssh:browseDir): `path` empty → the login folder. */
