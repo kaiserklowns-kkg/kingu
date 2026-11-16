@@ -166,7 +166,8 @@ pub fn ls_remote(dir: &Path, url: &str, git_ref: Option<&str>) -> Result<String,
   let (heads, tags) = git_ref.map(|r| (format!("refs/heads/{r}"), format!("refs/tags/{r}"))).unwrap_or_default();
   let args = ls_remote_args(url, &heads, &tags, git_ref);
   let env = [("GIT_ALLOW_PROTOCOL", "https:ssh:file")];
-  crate::git_remote::net_env(dir, &args, &env, &std::sync::atomic::AtomicBool::new(false), LS_REMOTE_TIMEOUT)
+  // A daily update check nobody waits for: git_admission's background tier.
+  crate::git_admission::with_tier(crate::git_admission::Tier::Background, || crate::git_remote::net_env(dir, &args, &env, &std::sync::atomic::AtomicBool::new(false), LS_REMOTE_TIMEOUT))
 }
 
 #[cfg(test)]

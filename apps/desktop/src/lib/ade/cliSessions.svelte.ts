@@ -61,6 +61,9 @@ class CliSessions {
 			$effect(() => {
 				const on = settings.get<boolean>('kingu.agent.statusHooks') !== false;
 				if (statusHooks === true && !on) void invoke('agent_status_hooks_remove').catch((e) => clientLog('error', `remove status hooks: ${e}`));
+				// Orca's managed claude hooks: a claude typed by hand in a task pane reports its state too.
+				// Rust writes them only for a claude new enough to know every event (inert outside Kingu).
+				if (on && statusHooks !== true) void invoke('agent_status_hooks_install', { agent: 'claude', program: 'claude' }).catch((e) => clientLog('info', `claude status hooks: ${e}`));
 				statusHooks = on;
 			});
 			$effect(() => {
@@ -221,6 +224,27 @@ class CliSessions {
 		// The CLI's next hook event takes over; until then the question is answered.
 		const now = this.hooks[slug];
 		if (now?.question) this.hooks[slug] = { ...now, phase: 'working', question: false, ask: undefined, message: t('ade.cli.answered'), at: Date.now() };
+		this.#last[slug] = Date.now();
+		return true;
+	}
+
+	/**
+	 * Answers the permission prompt the task's CLI shows (its hooks said so): Enter takes the
+	 * highlighted choice — "Yes"/"Allow once", the first option in claude, codex, gemini and cursor —
+	 * and Esc declines. Used by the phone (mobile.svelte.ts). False when no prompt is open.
+	 */
+	async answerPermission(slug: string, allow: boolean): Promise<boolean> {
+		const hook = this.hooks[slug];
+		const key = this.key(slug);
+		if (!key || !hook?.permission || hook.phase !== 'waiting') return false;
+		try {
+			await invoke('pty_write', { key, data: allow ? '\r' : '\x1b' });
+		} catch (e) {
+			status.flash(t('ade.cli.answerFailed', { error: String(e) }), 8000);
+			return false;
+		}
+		const now = this.hooks[slug];
+		if (now?.permission) this.hooks[slug] = { ...now, phase: allow ? 'working' : 'idle', permission: false, message: t('ade.cli.answered'), at: Date.now() };
 		this.#last[slug] = Date.now();
 		return true;
 	}

@@ -70,6 +70,8 @@ pub enum Forge {
   /// GitHub (or anything else): `gh`.
   Github,
   Gitlab(Project),
+  /// bitbucket.org (Orca's Bitbucket provider): its REST API (`crate::bitbucket`).
+  Bitbucket(crate::bitbucket::Repo),
 }
 
 /// Hosts a GitLab remote may be on: gitlab.com and `kingu.gitlab.host` (a self-hosted GitLab,
@@ -94,8 +96,12 @@ pub fn project_of_remote(remote: &str, hosts: &[String]) -> Option<Project> {
 pub fn forge(dir: &Path) -> Forge {
   let Ok(out) = crate::git::run(dir, &["remote", "get-url", "origin"]) else { return Forge::Github };
   let configured = crate::system::config_dir().and_then(|d| crate::settings::user_value(d, "kingu.gitlab.host"));
+  let remote = String::from_utf8_lossy(&out);
+  if let Some(repo) = crate::bitbucket::parse_remote(&remote) {
+    return Forge::Bitbucket(repo);
+  }
   let hosts = gitlab_hosts(configured.as_ref().and_then(Value::as_str));
-  project_of_remote(&String::from_utf8_lossy(&out), &hosts).map_or(Forge::Github, Forge::Gitlab)
+  project_of_remote(&remote, &hosts).map_or(Forge::Github, Forge::Gitlab)
 }
 
 /// The route of `source` from its project as `GET /projects/:id` returns it. A parent the token

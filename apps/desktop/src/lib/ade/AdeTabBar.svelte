@@ -26,6 +26,7 @@
 	import { enabledBins } from './agentCli';
 	import { isMarkdownEditor } from './adeMarkdown.ts';
 	import type { AdeTab } from './adeTabs';
+	import { splittable } from './adeSplit';
 	import { terminalBells } from './terminalBell.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
 
@@ -49,6 +50,10 @@
 			menuItem('reveal', 'Reveal in Finder', { enabled: file }),
 			menuItem('keep', 'Keep Open', { enabled: file && 'preview' in t && t.preview }),
 			menuItem('preview', 'Toggle Markdown Preview', { enabled: file && 'key' in t && isMarkdownEditor(t.key) }),
+			menuSeparator,
+			menuItem('splitRight', tr('ade.split.right'), { enabled: splittable(t.id) && tabs.length > 1 }),
+			menuItem('splitDown', tr('ade.split.down'), { enabled: splittable(t.id) && tabs.length > 1 }),
+			menuItem('unsplit', tr('ade.split.close'), { enabled: !!adeLayout.treeOf(key) }),
 			menuSeparator,
 			menuItem('pin', adeLayout.isPinned(key, t.id) ? 'Unpin Tab' : 'Pin Tab', { enabled: closable(t) || adeLayout.isPinned(key, t.id) }),
 			{
@@ -87,6 +92,11 @@
 				return adeLayout.toggleMarkdownPreview(key);
 			case 'pin':
 				return adeLayout.togglePin(key, t.id);
+			case 'splitRight':
+			case 'splitDown':
+				return adeLayout.splitTab(key, t.id, id === 'splitRight' ? 'right' : 'down');
+			case 'unsplit':
+				return adeLayout.unsplit(key);
 		}
 		if (id.startsWith('color:')) return adeLayout.setColor(key, t.id, id.slice(6) || undefined);
 	}
@@ -134,6 +144,8 @@
 	let dropId = $state<string | null>(null);
 	function dragStart(e: DragEvent, id: string) {
 		dragId = id;
+		// The center shows its split drop zones (Orca: drag a tab to a pane edge).
+		adeLayout.draggingTab = id;
 		e.dataTransfer?.setData('text/plain', id);
 		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
 	}
@@ -190,7 +202,7 @@
 					ondragstart={(e) => dragStart(e, t.id)}
 					ondragover={(e) => dragOver(e, t.id)}
 					ondrop={(e) => drop(e, t.id)}
-					ondragend={() => (dragId = null, dropId = null)}
+					ondragend={() => ((dragId = null), (dropId = null), (adeLayout.draggingTab = null))}
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && !adeLayout.isPinned(key, t.id) && adeLayout.close(key, t.id)}

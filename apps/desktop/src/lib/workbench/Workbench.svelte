@@ -11,6 +11,8 @@
 	import { installChatExtras } from '#lib/agent/chatExtras.svelte.ts';
 	import ActivityBar from './ActivityBar.svelte';
 	import CleanupDialog from '#lib/ade/CleanupDialog.svelte';
+	import WorkspaceSpaceDialog from '#lib/ade/WorkspaceSpaceDialog.svelte';
+	import { workspaceSpace } from '#lib/ade/workspaceSpace.svelte.ts';
 	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 	import Tooltips from './Tooltips.svelte';
@@ -79,6 +81,14 @@
 	import { installAgentsMode } from '#lib/ade/agentsMode.svelte.ts';
 	import { installWorktreeCommands } from '#lib/ade/worktreeMenu.svelte.ts';
 	import { installAttempts } from '#lib/ade/attempts.svelte.ts';
+	import MobilePairDialog from '#lib/ade/MobilePairDialog.svelte';
+	import { installMobile, mobilePairing } from '#lib/ade/mobile.svelte.ts';
+	import SshHostsDialog from '#lib/ade/SshHostsDialog.svelte';
+	import { installSshCommands, sshHosts } from '#lib/ade/sshHosts.svelte.ts';
+	import SshRemoteFolder from '#lib/ade/SshRemoteFolder.svelte';
+	import { sshWorkspace } from '#lib/ade/sshWorkspace.svelte.ts';
+	import LinkPreview from '#lib/workbench/LinkPreview.svelte';
+	import { installBitbucketCommands } from '#lib/ade/bitbucket.svelte.ts';
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAdeAttention } from '#lib/ade/adeAttention.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
@@ -399,6 +409,9 @@
 		const uninstallAutomations = installAutomations();
 		const uninstallIssues = installIssues();
 		const uninstallLinear = installLinear();
+		const uninstallMobile = installMobile();
+		const uninstallSsh = installSshCommands();
+		const uninstallBitbucket = installBitbucketCommands();
 		const uninstallTaskSources = installTaskSources();
 		const uninstallCliBridge = installCliBridge();
 		const uninstallWorkspaceTrust = workspaceTrust.install();
@@ -483,6 +496,9 @@
 			uninstallTaskSources();
 			uninstallCliBridge();
 			uninstallWorkspaceTrust();
+			uninstallMobile();
+			uninstallSsh();
+			uninstallBitbucket();
 			uninstallTrustedDomains();
 			uninstallVoice();
 			uninstallAutomations();
@@ -674,7 +690,12 @@
 	<AccessibleViewWidget />
 	<LinearConnect />
 	<TrackerConnect />
+	{#if mobilePairing.open}<MobilePairDialog />{/if}
+	{#if sshWorkspace.current}<SshRemoteFolder />{/if}
+	{#if sshHosts.open}<SshHostsDialog />{/if}
+	{#if workspaceSpace.open}<WorkspaceSpaceDialog />{/if}
 	<AdeDialogs />
+	<LinkPreview />
 	<RepoDialog />
 	<NotificationToasts />
 </div>

@@ -9,7 +9,58 @@ import { effectiveStatus, type TaskMeta, type TaskRuntime, type TaskView } from 
 import type { SidebarTask } from './sidebarView';
 
 /** One entry of Rust's `projects_list`. */
-export type Project = { path: string; added_at: number };
+export type Project = { path: string; added_at: number; group?: string | null; group_order?: number | null };
+
+/** Orca's ProjectGroup (projects.rs): a named set of projects in the side bar. */
+export type ProjectGroup = {
+	id: string;
+	name: string;
+	parent_path: string | null;
+	parent_group_id: string | null;
+	created_from: string;
+	tab_order: number;
+	is_collapsed: boolean;
+	color: string | null;
+};
+
+/** One group in the side bar: its projects and how deep it sits (sub-groups are indented). */
+export type GroupSection = { group: ProjectGroup; depth: number; projects: SidebarProject[] };
+
+/**
+ * The side bar's project groups (Orca's project-groups.ts order): groups by `tab_order` then name,
+ * each followed by its sub-groups; inside one, projects by `group_order`, then their place in the
+ * list (Orca's `getEffectiveProjectGroupManualRank`). The open folder is left out (it keeps its
+ * own place at the top), as is any project whose group is gone.
+ */
+export function groupSections(items: readonly SidebarProject[], list: readonly Project[], groups: readonly ProjectGroup[]): GroupSection[] {
+	const byPath = new Map(list.map((p, i) => [p.path, { p, i }]));
+	const known = new Set(groups.map((g) => g.id));
+	const sorted = [...groups].sort((a, b) => a.tab_order - b.tab_order || a.name.localeCompare(b.name));
+	const out: GroupSection[] = [];
+	const seen = new Set<string>();
+	const walk = (parent: string | null, depth: number) => {
+		for (const g of sorted) {
+			const p = g.parent_group_id && known.has(g.parent_group_id) && g.parent_group_id !== g.id ? g.parent_group_id : null;
+			if (p !== parent || seen.has(g.id)) continue;
+			seen.add(g.id);
+			const rank = (path: string) => {
+				const e = byPath.get(path);
+				const o = e?.p.group_order;
+				return typeof o === 'number' && Number.isFinite(o) ? o : (e?.i ?? 0) * 1000;
+			};
+			const projects = items.filter((it) => !it.open && byPath.get(it.path)?.p.group === g.id).sort((a, b) => rank(a.path) - rank(b.path));
+			out.push({ group: g, depth, projects });
+			walk(g.id, depth + 1);
+		}
+	};
+	walk(null, 0);
+	return out;
+}
+
+/** Paths that a group section shows (so the ungrouped list skips them). */
+export function groupedPaths(sections: readonly GroupSection[]): Set<string> {
+	return new Set(sections.flatMap((s) => s.projects.map((p) => p.path)));
+}
 
 /** The folder name: a project's label. */
 export const projectName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path;

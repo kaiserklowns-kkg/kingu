@@ -325,6 +325,10 @@ pub const REPOSITORY_CHANGED: &str = "scm:repository-changed";
 
 #[tauri::command]
 pub async fn git_repositories(app: tauri::AppHandle, ws: Workspace, options: Option<DetectOptions>) -> Result<Detection, String> {
+  // A worktree on an SSH host is the window's one repository (remote_ws.rs).
+  if let Some(r) = ws.remote() {
+    return Ok(crate::remote_ws::repositories(&r));
+  }
   let roots = ws.roots();
   let opts = options.unwrap_or_default();
   let (found, unwatched) = crate::blocking(move || {

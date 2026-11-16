@@ -20,6 +20,18 @@ describe('agent hooks', () => {
 		expect(run([{ hook_event_name: 'Notification', message: 'Claude needs your permission to use Bash' }])).toMatchObject({ phase: 'waiting', permission: true });
 		expect(run([{ hook_event_name: 'Notification', message: 'Claude is waiting for your input' }])).toMatchObject({ phase: 'waiting', permission: false });
 	});
+	test('newer claude events: failures, compaction and MCP dialogs (Orca claude-events)', () => {
+		const w = run([{ hook_event_name: 'UserPromptSubmit', prompt: 'x' }]);
+		expect(applyHook(w, { hook_event_name: 'PostToolUseFailure', tool_name: 'Bash' }, 9).phase).toBe('working');
+		expect(applyHook(w, { hook_event_name: 'StopFailure', error: 'rate_limit' }, 9)).toMatchObject({ phase: 'idle', message: 'rate_limit' });
+		expect(applyHook(w, { hook_event_name: 'PostCompact' }, 9).phase).toBe('idle');
+		const idle = run([{ hook_event_name: 'Stop' }]);
+		expect(applyHook(idle, { hook_event_name: 'PostCompact' }, 9)).toBe(idle);
+		const asked = applyHook(w, { hook_event_name: 'Elicitation', message: 'Pick a repo' }, 9);
+		expect(asked).toMatchObject({ phase: 'waiting', question: true, message: 'Pick a repo' });
+		expect(needsInput(asked)).toBe(true);
+		expect(applyHook(asked, { hook_event_name: 'ElicitationResult' }, 10).phase).toBe('working');
+	});
 	test('unknown events change nothing', () => {
 		const s = initialHookState(0);
 		expect(applyHook(s, { hook_event_name: 'PreCompact' }, 5)).toBe(s);
@@ -117,5 +129,31 @@ describe('process exit (Kingu)', () => {
 		expect(s).toMatchObject({ phase: 'ended', permission: false, question: false, hooks: true, message: 'agent ปิดไปแล้ว' });
 		expect(needsInput(s)).toBe(false);
 		expect(run([{ kingu_hook: 'kingu', event: 'Other' }]).phase).toBe('starting');
+	});
+});
+
+describe('claude subagents and hand-typed claude (Orca roster, managed user hooks)', () => {
+	test("the lead's Stop waits for running subagents; the last one ends the turn", () => {
+		let s = run([{ hook_event_name: 'UserPromptSubmit', prompt: 'x' }, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'Explore' }, { hook_event_name: 'SubagentStart', agent_id: 'a2' }]);
+		expect(Object.keys(s.subagents ?? {})).toEqual(['a1', 'a2']);
+		s = applyHook(s, { hook_event_name: 'Stop' }, 10);
+		expect(s).toMatchObject({ phase: 'working', leadDone: true });
+		s = applyHook(s, { hook_event_name: 'SubagentStop', agent_id: 'a1' }, 11);
+		expect(s.phase).toBe('working');
+		s = applyHook(s, { hook_event_name: 'SubagentStop', agent_id: 'a2' }, 12);
+		expect(s).toMatchObject({ phase: 'idle', leadDone: false });
+		expect(s.subagents).toBeUndefined();
+	});
+	test('a subagent ending before the lead stops leaves the turn running; a stop without children is idle', () => {
+		let s = run([{ hook_event_name: 'UserPromptSubmit', prompt: 'x' }, { hook_event_name: 'SubagentStart', agent_id: 'a1' }, { hook_event_name: 'SubagentStop', agent_id: 'a1' }]);
+		expect(s.phase).toBe('working');
+		s = applyHook(s, { hook_event_name: 'Stop' }, 10);
+		expect(s.phase).toBe('idle');
+		expect(applyHook(s, { hook_event_name: 'Stop', agent_id: 'x' }, 11)).toBe(s);
+	});
+	test("Kingu's tagged lines from a hand-typed claude use the claude mapping", () => {
+		const s = run([{ kingu_hook: 'claude', event: 'PermissionRequest', payload: { hook_event_name: 'PermissionRequest', tool_name: 'Bash', session_id: 'S' } }]);
+		expect(s).toMatchObject({ phase: 'waiting', permission: true, sessionId: 'S', hooks: true });
+		expect(needsInput(s)).toBe(true);
 	});
 });

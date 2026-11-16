@@ -28,9 +28,54 @@ impl Launch {
 
 /// The launch arguments (after the program): existing paths, relative ones against `cwd`;
 /// flags (`-psn_…` from an old Finder, `--…`) and paths that do not exist are left out.
+/// `fstat`'s error for a handle that isn't open.
+#[cfg(unix)]
+const EBADF: i32 = 9;
+
+/// The standard handles and how each is reopened: input read-only (`"r"`), output and errors
+/// write-only (`"w"`).
+#[cfg(unix)]
+const STDIO_REOPEN: [(i32, i32); 3] = [(0, libc::O_RDONLY), (1, libc::O_WRONLY), (2, libc::O_WRONLY)];
+
+/// Orca's launcher rule (`Contents/MacOS/Orca`, `sub_1000004c0` at 0x1000004c0, run first by
+/// `entry` at 0x100000460): an app started from Finder, Play or another program may get its
+/// standard input, output or error closed. For each of handles 0, 1 and 2 whose `fstat` fails
+/// with EBADF (9), reopen it on `/dev/null` (mode `r` for 0, `w` for 1 and 2), so the next file
+/// the app opens can't land on one of them and a log or `println!` can't fail or write into it.
+/// Other `fstat` errors leave the handle alone, as Orca does.
+#[cfg(unix)]
+pub fn reopen_closed_stdio() {
+  for (fd, flags) in STDIO_REOPEN {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } == 0 {
+      continue;
+    }
+    if std::io::Error::last_os_error().raw_os_error() != Some(EBADF) {
+      continue;
+    }
+    let null = unsafe { libc::open(c"/dev/null".as_ptr(), flags) };
+    // The lowest free handle is the closed one, so `open` usually returns `fd` itself.
+    if null >= 0 && null != fd {
+      unsafe {
+        libc::dup2(null, fd);
+        libc::close(null);
+      }
+    }
+  }
+}
+
+#[cfg(not(unix))]
+pub fn reopen_closed_stdio() {}
+
 pub fn launch_args(args: impl IntoIterator<Item = OsString>, cwd: &Path) -> Launch {
   let mut out = Launch::default();
-  for arg in args {
+  let mut args = args.into_iter();
+  while let Some(arg) = args.next() {
+    // `--screenshot <file>` (screenshot.rs): its value is an output file, not one to open.
+    if arg == "--screenshot" {
+      args.next();
+      continue;
+    }
     if arg.to_string_lossy().starts_with('-') {
       continue;
     }

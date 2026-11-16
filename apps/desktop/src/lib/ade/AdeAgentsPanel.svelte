@@ -15,7 +15,7 @@
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { PRIMARY } from './adeLayout.svelte';
-	import { sessionAgo } from './agentsPanel';
+	import { resumeArgv, sessionAgo } from './agentsPanel';
 
 	let { slug }: { slug: string } = $props();
 
@@ -26,7 +26,7 @@
 	let expanded = $state<string | null>(null);
 
 	/** Claude Code's own transcripts for this folder and its worktrees (read locally). */
-	type CliSession = { id: string; title: string; preview: string | null; cwd: string | null; branch: string | null; model: string | null; messages: number; created: number; updated: number; path: string };
+	type CliSession = { id: string; title: string; preview: string | null; cwd: string | null; branch: string | null; model: string | null; messages: number; created: number; updated: number; path: string; agent: 'claude' | 'codex' | 'gemini' };
 	let cli = $state<CliSession[]>([]);
 	let loading = $state(false);
 	let loadError = $state('');
@@ -37,7 +37,9 @@
 		reading = root;
 		loading = true;
 		try {
-			const next = await invoke<CliSession[]>('claude_sessions', { limit: 250 });
+			// Claude's transcripts, plus Codex's rollouts and Gemini's chats (Orca's history covers many CLIs).
+			const [claude, others] = await Promise.all([invoke<CliSession[]>('claude_sessions', { limit: 250 }), invoke<CliSession[]>('agent_cli_sessions', { limit: 250 }).catch(() => [] as CliSession[])]);
+			const next = [...claude, ...others];
 			if (reading !== root) return;
 			cli = next;
 			loadError = '';
@@ -97,7 +99,7 @@
 				id: `cli:${c.id}`,
 				title: c.title,
 				preview: c.preview,
-				agent: 'claude',
+				agent: c.agent,
 				count: `${c.messages} msgs`,
 				created: c.created,
 				updated: c.updated,
@@ -134,7 +136,7 @@
 					...(menu.x.logPath ? [menuItem('copyLog', 'Copy Log Path')] : []),
 					...(menu.x.prompt ? [menuItem('copyPrompt', 'Copy Prompt')] : []),
 					menuSeparator,
-					menuItem('delete', 'Delete', { enabled: !menu.x.task && !!menu.x.logPath })
+					menuItem('delete', 'Delete', { enabled: !menu.x.task && !!menu.x.logPath && menu.x.agent === 'claude' })
 				]
 			: []
 	);
@@ -143,9 +145,10 @@
 		if (id === 'resume') {
 			adeLayout.show(x.worktree);
 			if (x.task) return adeLayout.select(x.worktree, 'main');
-			// A Claude Code session opens in a new terminal of its worktree with `claude --resume`.
-			adeLayout.newTerminal(x.worktree, { title: 'claude', run: ['claude', '--resume', x.sessionId ?? ''] });
-			return status.flash('claude session queued', 2000);
+			// A CLI's own session opens in a new terminal of its worktree with that CLI's resume command.
+			const argv = resumeArgv(x.agent, x.sessionId ?? '');
+			adeLayout.newTerminal(x.worktree, { title: x.agent, run: argv });
+			return status.flash(`${x.agent} session queued`, 2000);
 		}
 		if (id === 'delete') {
 			const ok = await ask(`"${x.title}" will be deleted. Once deleted, it will no longer be resumable from Claude's own command line either.`, { title: 'Delete this session?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' });
@@ -167,7 +170,7 @@
 			if (slug) adeLayout.show(slug);
 			return;
 		}
-		const text = id === 'copyResume' ? `claude --resume ${x.sessionId}` : id === 'copyId' ? (x.sessionId ?? '') : id === 'copyLog' ? (x.logPath ?? '') : (x.prompt ?? '');
+		const text = id === 'copyResume' ? resumeArgv(x.agent, x.sessionId ?? '').join(' ') : id === 'copyId' ? (x.sessionId ?? '') : id === 'copyLog' ? (x.logPath ?? '') : (x.prompt ?? '');
 		await navigator.clipboard.writeText(text);
 		status.flash({ copyResume: 'Resume command copied', copyId: 'Session ID copied', copyLog: 'Log path copied', copyPrompt: 'Prompt copied' }[id] ?? 'Copied', 2000);
 	}

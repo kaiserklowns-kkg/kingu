@@ -21,6 +21,10 @@ export type HookState = {
 	/** Real hook events arrive (not only codex's turn-end notify): the phase can be trusted. */
 	hooks?: boolean;
 	sessionId?: string;
+	/** Claude's subagents still running (SubagentStart without its SubagentStop), by agent id (Orca's child roster). */
+	subagents?: Record<string, string>;
+	/** The lead's turn ended while subagents ran: the last one to stop ends it (Orca's "monitoring"). */
+	leadDone?: boolean;
 	/** Unix ms of the latest event. */
 	at: number;
 };
@@ -69,9 +73,9 @@ export function questionText(input: unknown): string | undefined {
 const toolOf = (p: Payload) => str(p.tool_name) ?? str(p.toolName) ?? str(p.name) ?? str((p.tool as Payload | undefined)?.name);
 const inputOf = (p: Payload) => p.tool_input ?? p.toolInput ?? p.input ?? p.args ?? p.arguments;
 
-type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message'>>;
-const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ask: undefined, ...(message ? { message } : {}) });
-const idle = (message = t('ade.hooks.turnDone')): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, message });
+type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message' | 'subagents' | 'leadDone'>>;
+const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ask: undefined, leadDone: false, ...(message ? { message } : {}) });
+const idle = (message = t('ade.hooks.turnDone')): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, leadDone: false, message });
 const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, ask: undefined, message: message || (tool ? t('ade.model.eventPermission', { tool }) : t('ade.hooks.waitingPermission')) });
 const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, ask: parseAsk(input) ?? undefined, message: firstLine(questionText(input)) || t('ade.model.question') });
 const usingTool = (p: Payload) => {
@@ -237,9 +241,27 @@ function kingu(ev: string): Patch | null {
 
 const PROVIDERS: Partial<Record<string, (ev: string, p: Payload, prev: HookState) => Patch | null>> = { gemini, cursor, copilot, droid, codex, opencode, kingu };
 
+/** Orca's roster rule: the lead's Stop while a subagent still runs is not the end of the turn. */
+function stopped(prev: HookState, message?: string): Patch {
+	const n = Object.keys(prev.subagents ?? {}).length;
+	return n ? { ...working(t('ade.hooks.subagentsRunning', { count: n })), leadDone: true } : idle(message);
+}
+
 /** Claude Code hook events (Orca claude-events + Kingu's Notification handling). */
 function claude(ev: HookEvent, prev: HookState): Patch | null {
+	const agentId = str((ev as Payload).agent_id);
 	switch (ev.hook_event_name) {
+		// Orca's child roster (claude-lifecycle-events.ts): background subagents keep the lead working.
+		case 'SubagentStart':
+			return agentId ? { subagents: { ...prev.subagents, [agentId]: str((ev as Payload).agent_type) ?? 'subagent' } } : null;
+		case 'SubagentStop': {
+			if (!agentId || !prev.subagents?.[agentId]) return null;
+			const rest = Object.fromEntries(Object.entries(prev.subagents).filter(([id]) => id !== agentId));
+			const n = Object.keys(rest).length;
+			// The lead already stopped: the last subagent to end ends the turn.
+			if (prev.leadDone) return n ? { subagents: rest, message: t('ade.hooks.subagentsRunning', { count: n }) } : { ...idle(), subagents: undefined };
+			return { subagents: n ? rest : undefined };
+		}
 		case 'SessionStart':
 			return idle(t('ade.hooks.ready'));
 		case 'UserPromptSubmit':
@@ -251,7 +273,18 @@ function claude(ev: HookEvent, prev: HookState): Patch | null {
 		case 'PermissionRequest':
 			return isQuestionTool(ev.tool_name) ? question(ev.tool_input) : permission(ev.tool_name);
 		case 'PostToolUse':
+		case 'PostToolUseFailure':
+		case 'ElicitationResult':
 			return working();
+		// An MCP server's dialog (Orca: blocks on the person).
+		case 'Elicitation':
+			return { ...question(null), message: firstLine(ev.message) || t('ade.model.question') };
+		// A manual /compact may send no Stop (Orca); PreCompact is not "working" (it fires on abort too).
+		case 'PostCompact':
+			return prev.phase === 'working' ? idle() : null;
+		// The turn stopped on an API or model error instead of Stop.
+		case 'StopFailure':
+			return idle(firstLine(ev.message) || firstLine((ev as Payload).error) || t('ade.hooks.error'));
 		case 'Notification': {
 			if (ev.notification_type === 'elicitation_dialog') return { ...question(null), message: firstLine(ev.message) || t('ade.model.question') };
 			// While a question is open, Claude's "waiting for your input" is about that question.
@@ -261,9 +294,10 @@ function claude(ev: HookEvent, prev: HookState): Patch | null {
 			return { phase: 'waiting', permission: perm, question: false, ask: undefined, message: firstLine(ev.message) || t('ade.hooks.waiting') };
 		}
 		case 'Stop':
-			return idle();
+			// A subagent's own Stop carries its agent id; only the lead's ends the turn.
+			return agentId ? null : stopped(prev);
 		case 'SessionEnd':
-			return { phase: 'ended', permission: false, question: false, ask: undefined, message: t('ade.hooks.sessionEnded') };
+			return { phase: 'ended', permission: false, question: false, ask: undefined, subagents: undefined, message: t('ade.hooks.sessionEnded') };
 		default:
 			return null;
 	}
@@ -274,6 +308,12 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 	if (ev.type === 'agent-turn-complete') {
 		const sessionId = typeof ev['thread-id'] === 'string' && ev['thread-id'] ? ev['thread-id'] : state.sessionId;
 		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, message: firstLine(ev['last-assistant-message']) || t('ade.hooks.turnDone') };
+	}
+	// A claude typed by hand in a task pane reports through Kingu's user-settings entries (status_hooks.rs).
+	if (ev.kingu_hook === 'claude' && ev.payload && typeof ev.payload === 'object') {
+		const p = { ...ev.payload, hook_event_name: str(ev.payload.hook_event_name) ?? ev.event } as HookEvent;
+		const patch = claude(p, state);
+		return patch ? { ...state, ...patch, hooks: true, at: now, sessionId: p.session_id ?? state.sessionId } : state;
 	}
 	if (typeof ev.kingu_hook === 'string') {
 		const map = PROVIDERS[ev.kingu_hook];

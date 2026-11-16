@@ -51,3 +51,15 @@ test('one step at a time', async () => {
 	expect(await first).toBe('slow');
 	expect(await h.undo()).toBe('fast');
 });
+
+test('peek shows the step undo / redo would run, without running it', async () => {
+	const h = new FileUndo();
+	let n = 0;
+	h.push({ label: 'A', undo: async () => void n--, redo: async () => void n++ });
+	expect(h.peek('undo')?.label).toBe('A');
+	expect(h.peek('redo')).toBeUndefined();
+	expect(n).toBe(0);
+	await h.undo();
+	expect(h.peek('undo')).toBeUndefined();
+	expect(h.peek('redo')?.label).toBe('A');
+});

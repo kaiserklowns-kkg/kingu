@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { jumpRows, worktreeActions } from './worktreeActions';
+import { jumpItems, worktreeActions, JUMP_CREATE, JUMP_FOLDER, type JumpTask } from './worktreeActions';
 
 const ids = (rows: ReturnType<typeof worktreeActions>) => rows.map((r) => (r === 'separator' ? '-' : r.id));
 
@@ -9,7 +9,7 @@ describe('worktree actions', () => {
 	});
 	test('a task can be closed and removed, but not while its agent works', () => {
 		const rows = worktreeActions({ slug: 'fix', status: 'review', running: true });
-		expect(ids(rows).slice(-11)).toEqual(['copyBranch', 'rename', '-', 'markDone', 'moveStatus', 'continueSession', 'handOff', '-', 'newFromTask', '-', 'remove']);
+		expect(ids(rows).slice(-12)).toEqual(['copyBranch', 'rename', 'editDetails', '-', 'markDone', 'moveStatus', 'continueSession', 'handOff', '-', 'newFromTask', '-', 'remove']);
 		const blocked = rows.filter((r) => r !== 'separator' && (r.id === 'markDone' || r.id === 'remove'));
 		expect(blocked.map((r) => r !== 'separator' && r.enabled)).toEqual([false, false]);
 	});
@@ -47,17 +47,21 @@ describe('worktree actions', () => {
 	});
 });
 
-describe('jump rows', () => {
-	test('folder first, then each group in order', () => {
-		const rows = jumpRows({ name: 'demo', branch: 'main' }, [
-			{ label: 'รอคุณ', tasks: [{ slug: 'a', title: 'A', status: 'รอรีวิว' }] },
-			{ label: 'กำลังทำ', tasks: [{ slug: 'b', title: 'B', status: 'กำลังทำ' }] }
-		]);
-		expect(rows.map((r) => [r.key, r.group])).toEqual([
-			['', 'Folder'],
-			['a', 'รอคุณ'],
-			['b', 'กำลังทำ']
-		]);
-		expect(rows[0].description).toBe('primary · main');
+describe('jump palette (Orca worktree-jump)', () => {
+	const L = { needsYou: 'Needs you', recent: 'Recent', folder: 'Folder', matches: 'Worktrees', create: (q: string) => `Create "${q}"`, createHint: 'new' };
+	const task = (slug: string, status: JumpTask['status'], updated: number, extra: Partial<JumpTask> = {}): JumpTask => ({ slug, title: slug.replace('-', ' '), status, statusLabel: status, branch: `kingu/${slug}`, updated, ...extra });
+	const tasks = [task('fix-login', 'review', 5, { pr: 42 }), task('add-tests', 'waiting', 1), task('old-docs', 'done', 2, { seen: 9 })];
+	const fuzzy = (q: string, s: string) => (s.toLowerCase().includes(q.toLowerCase()) ? { score: 10 - s.toLowerCase().indexOf(q.toLowerCase()), positions: [] } : null);
+	test('nothing typed: needs you, then recent by use, then the folder', () => {
+		const items = jumpItems('', { name: 'repo', branch: 'main' }, tasks, fuzzy, L);
+		expect(items.map((i) => i.id)).toEqual(['add-tests', 'old-docs', 'fix-login', JUMP_FOLDER]);
+		expect(items.map((i) => i.separator)).toEqual(['Needs you', 'Recent', undefined, 'Folder']);
+	});
+	test('PR numbers, title then branch matches, and a create row last', () => {
+		expect(jumpItems('#42', { name: 'repo', branch: 'main' }, tasks, fuzzy, L)[0].id).toBe('fix-login');
+		const items = jumpItems('docs', { name: 'repo', branch: 'main' }, tasks, fuzzy, L);
+		expect(items.map((i) => i.id)).toEqual(['old-docs', `${JUMP_CREATE}docs`]);
+		expect(items.at(-1)?.label).toBe('Create "docs"');
+		expect(jumpItems('zzz', { name: 'repo', branch: 'main' }, tasks, fuzzy, L).map((i) => i.id)).toEqual([`${JUMP_CREATE}zzz`]);
 	});
 });

@@ -407,6 +407,146 @@ pub fn link_paths(root: &Path, worktree: &Path, shared: &[String], symlinks: &[S
 }
 
 // ---------------------------------------------------------------------------------------------
+// .worktreeinclude (Orca: git/worktrees/content-paths/worktree-include-file.ts and
+// ipc/worktree-include-copy-budget.ts): gitignored files a new worktree gets its own copy of
+// (`.env`, local editor settings), unlike sharedDirectories, which are linked.
+
+pub const WORKTREE_INCLUDE_FILE: &str = ".worktreeinclude";
+/// Orca `WORKTREE_INCLUDE_MAX_FILE_BYTES` / `WORKTREE_INCLUDE_MAX_ENTRIES`.
+const INCLUDE_MAX_FILE_BYTES: u64 = 256 * 1024;
+const INCLUDE_MAX_ENTRIES: usize = 1000;
+/// Orca `DEFAULT_WORKTREE_COPY_BUDGET`: all copies together, in bytes and in entries.
+const COPY_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const COPY_MAX_ENTRIES: u64 = 50_000;
+
+/// Orca `parseWorktreeIncludeFile` + its filters: literal repo-relative paths only (blank lines and
+/// `#` comments skipped; `!`, `*`, `?` patterns, absolute paths, `..` and `.git` refused), each once,
+/// at most 1000.
+pub fn parse_worktree_include(content: &str) -> Vec<String> {
+  let mut out: Vec<String> = Vec::new();
+  for raw in content.lines() {
+    let line = raw.trim();
+    if line.is_empty() || line.starts_with('#') {
+      continue;
+    }
+    let p = line.replace('\\', "/");
+    let p = p.strip_prefix("./").unwrap_or(&p).trim_end_matches('/').to_string();
+    if p.is_empty() || out.contains(&p) {
+      continue;
+    }
+    if out.len() >= INCLUDE_MAX_ENTRIES {
+      log::warn!("{WORKTREE_INCLUDE_FILE} lists more than {INCLUDE_MAX_ENTRIES} entries; ignoring the rest");
+      break;
+    }
+    if p.starts_with('!') || p.contains('*') || p.contains('?') {
+      log::warn!("{WORKTREE_INCLUDE_FILE}: skipping unsupported pattern {p:?} (only literal paths)");
+      continue;
+    }
+    let segs: Vec<&str> = p.split('/').collect();
+    if p.starts_with('/') || segs.iter().any(|s| s.is_empty() || *s == "..") || segs[0] == ".git" {
+      log::warn!("{WORKTREE_INCLUDE_FILE}: skipping unsafe path {p:?}");
+      continue;
+    }
+    out.push(p);
+  }
+  out
+}
+
+/// The listed paths that exist in `root` and git ignores (copying a tracked path would show up as
+/// a change), sorted. Any failure gives none: the file never blocks creating a worktree.
+pub fn worktree_include_paths(root: &Path) -> Vec<String> {
+  let file = root.join(WORKTREE_INCLUDE_FILE);
+  let Ok(meta) = std::fs::symlink_metadata(&file) else { return vec![] };
+  if !meta.is_file() || meta.len() > INCLUDE_MAX_FILE_BYTES {
+    return vec![];
+  }
+  let Ok(content) = std::fs::read_to_string(&file) else { return vec![] };
+  let existing: Vec<String> = parse_worktree_include(&content).into_iter().filter(|p| std::fs::symlink_metadata(root.join(p)).is_ok()).collect();
+  if existing.is_empty() {
+    return vec![];
+  }
+  let out = crate::shell_env::command("git").arg("-C").arg(root).arg("check-ignore").arg("--").args(&existing).output();
+  let Ok(out) = out else { return vec![] };
+  let ignored: std::collections::HashSet<String> = String::from_utf8_lossy(&out.stdout).lines().map(|l| l.trim_end_matches('/').to_string()).collect();
+  let mut v: Vec<String> = existing.into_iter().filter(|p| ignored.contains(p)).collect();
+  v.sort();
+  v
+}
+
+/// Size and entry count of `path` (symlinks not followed), stopping once past the limits.
+fn copy_size(path: &Path, max_bytes: u64, max_entries: u64) -> Option<(u64, u64)> {
+  let (mut bytes, mut entries) = (0u64, 0u64);
+  let mut pending = vec![path.to_path_buf()];
+  while let Some(p) = pending.pop() {
+    let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+    entries += 1;
+    if m.is_file() {
+      bytes += m.len();
+    } else if m.is_dir() {
+      pending.extend(std::fs::read_dir(&p).ok()?.filter_map(|e| e.ok().map(|e| e.path())));
+    }
+    if bytes > max_bytes || entries > max_entries {
+      return None;
+    }
+  }
+  Some((bytes, entries))
+}
+
+/// Copies a file (an APFS clone when possible), a folder recursively, or a symlink as a symlink.
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+  let m = std::fs::symlink_metadata(src)?;
+  if m.file_type().is_symlink() {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)?;
+    return Ok(());
+  }
+  if m.is_dir() {
+    std::fs::create_dir_all(dst)?;
+    for e in std::fs::read_dir(src)? {
+      let e = e?;
+      copy_tree(&e.path(), &dst.join(e.file_name()))?;
+    }
+    return Ok(());
+  }
+  if !clone_file(src, dst) {
+    std::fs::copy(src, dst)?;
+  }
+  Ok(())
+}
+
+/// Copies each `.worktreeinclude` path of `root` into the worktree, within Orca's copy budget
+/// (2 GiB, 50 000 entries for all of them); a path already in the worktree is left alone.
+/// Returns (copied, skipped for the budget).
+pub fn copy_includes(root: &Path, worktree: &Path, paths: &[String]) -> (Vec<String>, Vec<String>) {
+  let (mut bytes, mut entries) = (COPY_MAX_BYTES, COPY_MAX_ENTRIES);
+  let (mut copied, mut skipped) = (Vec::new(), Vec::new());
+  for rel in paths {
+    let (src, dst) = (root.join(rel), worktree.join(rel));
+    if std::fs::symlink_metadata(&dst).is_ok() {
+      continue;
+    }
+    let Some((b, n)) = copy_size(&src, bytes, entries) else {
+      skipped.push(rel.clone());
+      continue;
+    };
+    if let Some(parent) = dst.parent()
+      && std::fs::create_dir_all(parent).is_err()
+    {
+      continue;
+    }
+    match copy_tree(&src, &dst) {
+      Ok(()) => {
+        bytes -= b;
+        entries -= n;
+        copied.push(rel.clone());
+      }
+      Err(e) => log::warn!("{WORKTREE_INCLUDE_FILE}: copying {rel}: {e}"),
+    }
+  }
+  (copied, skipped)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Commands
 
 fn trust_data(app: &AppHandle) -> Result<TrustData, String> {
@@ -497,7 +637,13 @@ pub fn worktree_link_shared(app: AppHandle, ws: Workspace, slug: String) -> Resu
   let shared = if source == Source::LocalOnly { vec![] } else { kingu_yaml::load(&root).ok().flatten().map(|c| c.shared_directories).unwrap_or_default() };
   let linked = link_paths(&root, &dir, &shared, &symlink_paths(&config, &root));
   log::info!("worktree {slug}: linked {} shared path(s)", linked.len());
-  Ok(linked.into_iter().map(|(p, _)| p).collect())
+  // Orca: paths already shared or linked are not copied again.
+  let include: Vec<String> = worktree_include_paths(&root).into_iter().filter(|p| !linked.iter().any(|(l, _)| l == p)).collect();
+  let (copied, skipped) = copy_includes(&root, &dir, &include);
+  if !copied.is_empty() || !skipped.is_empty() {
+    log::info!("worktree {slug}: {WORKTREE_INCLUDE_FILE} copied {}, skipped {} over the size budget", copied.len(), skipped.len());
+  }
+  Ok(linked.into_iter().map(|(p, _)| p).chain(copied).collect())
 }
 
 #[cfg(test)]
@@ -685,6 +831,38 @@ mod tests {
   }
 
   #[cfg(unix)]
+  #[test]
+  fn worktree_include_lists_literal_safe_paths() {
+    let text = "# local files\n.env\n./.env.local\n\n.vscode/settings.json\n.env\n*.log\n!keep\n../out\n/abs\n.git/config\nbuild/\n";
+    assert_eq!(parse_worktree_include(text), [".env", ".env.local", ".vscode/settings.json", "build"]);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn worktree_include_copies_only_ignored_existing_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(root.join("conf")).unwrap();
+    let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&root).args(args).output().unwrap().status.success());
+    git(&["init", "-q"]);
+    std::fs::write(root.join(".gitignore"), ".env\nconf/\n").unwrap();
+    std::fs::write(root.join(".env"), "SECRET=1").unwrap();
+    std::fs::write(root.join("conf/a.json"), "{}").unwrap();
+    std::fs::write(root.join("tracked.txt"), "x").unwrap();
+    std::fs::write(root.join(WORKTREE_INCLUDE_FILE), ".env\nconf\ntracked.txt\nmissing\n").unwrap();
+    let paths = worktree_include_paths(&root);
+    assert_eq!(paths, [".env", "conf"], "tracked and missing paths are left out");
+    let wt = tmp.path().join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::write(wt.join(".env"), "MINE").unwrap();
+    let (copied, skipped) = copy_includes(&root, &wt, &paths);
+    assert_eq!(copied, ["conf"]);
+    assert!(skipped.is_empty());
+    assert_eq!(std::fs::read_to_string(wt.join(".env")).unwrap(), "MINE", "an existing file is kept");
+    assert_eq!(std::fs::read_to_string(wt.join("conf/a.json")).unwrap(), "{}");
+    assert!(!std::fs::symlink_metadata(wt.join("conf")).unwrap().file_type().is_symlink(), "a real copy");
+  }
+
   #[test]
   fn links_shared_paths_safely() {
     let (_tmp, root, config, _cache) = setup();

@@ -5,7 +5,7 @@ import { ORCA_AI_CAPABILITIES, ORCA_MAP } from './orcaMap';
 import { t, tIn } from '../../i18n/index';
 
 /** A row's Kingu key as a matcher: `<profile>` and `.*` stand for any segment(s). */
-const matcher = (key: string) => new RegExp(`^${key.replace(/\./g, '\\.').replace('<profile>', '[a-z-]+').replace('\\.*', '\\..+')}$`);
+const matcher = (key: string) => new RegExp(`^${key.replace(/\./g, '\\.').replace('<profile>', '[a-z0-9-]+').replace('\\.*', '\\..+')}$`);
 
 describe('ADE settings registry (Orca settings as kingu.*)', () => {
 	test('every ADE setting: kingu.* id, Thai then English description, a valid default, in a section', () => {

@@ -27,6 +27,7 @@ pub mod mcp_chat;
 pub mod memories;
 pub mod mr;
 pub mod notes;
+pub mod op_ledger;
 pub mod open_in;
 pub mod orchestration;
 pub mod pr;
@@ -36,9 +37,12 @@ pub mod rewind;
 pub mod arkai;
 pub mod runtimes;
 pub mod safety_asks;
+pub mod session_protocol;
 pub mod scripts;
 pub mod slash_commands;
 pub mod status_hooks;
+pub mod supervisor;
+pub mod status_plugins;
 pub mod tasks;
 pub mod tool_rules;
 pub mod tool_sets;
@@ -94,6 +98,7 @@ pub async fn agent_start(
   app: tauri::AppHandle,
   ws: Workspace,
   agents: State<'_, Arc<AgentHost>>,
+  sup: State<'_, Arc<supervisor::Supervisor>>,
   slug: Option<String>,
   root: Option<String>,
   cwd: Option<String>,
@@ -112,6 +117,7 @@ pub async fn agent_start(
   agent: Option<String>,
   disabled_tools: Option<Vec<String>>,
   effort: Option<String>,
+  operation_id: Option<String>,
   on_event: Channel<AgentEvent>,
 ) -> Result<u32, String> {
   check_effort(effort.as_deref())?;
@@ -168,6 +174,20 @@ pub async fn agent_start(
   let open_root = ws.root()?;
   let dir = run_dir(&open_root, root.as_deref(), slug.as_deref(), cwd.as_deref())?;
   let cwd = dir.to_str().ok_or("worktree path is not valid UTF-8")?.to_owned();
+  // The supervisor's session of this run, and the operation ledger's claim (supervisor.rs):
+  // a start / resume sent twice with one operation id runs once.
+  let session = supervisor::run_info(&open_root, chat_id.as_deref(), slug.as_deref(), &cwd, &runtime);
+  let sup = sup.inner().clone();
+  let op = sup
+    .begin_op(
+      operation_id.as_deref(),
+      &session.owner,
+      &session.scope,
+      &serde_json::json!({"method": "agent_start", "session": session.id, "fields": {
+        "prompt": prompt, "resume": resume, "resume_at": resume_at, "runtime": runtime, "model": model, "images": images, "agent": agent,
+      }}),
+    )
+    .map_err(|r| r.message())?;
   // A chat's rules files (kingu.chat.rules.enabled): `rules` are its attached files. Then the
   // chat's agent (Ask, or a custom agent: `customizations`): its text after the rules, and the
   // tools it leaves out.
@@ -328,15 +348,20 @@ pub async fn agent_start(
   // chat.tools.terminal/urls.autoApprove: prompts the rules approve are answered here (the rules
   // re-read for each prompt, so an "Always allow" just saved applies to the next one).
   let approver = std::sync::Mutex::new(tool_rules::AutoApprover::default());
+  // The run's session opens in the supervisor with its first event or once `start` returned,
+  // never before: a start the owner check refuses must leave the live run's session alone.
+  let opener = Arc::new(supervisor::RunOpener::new(sup.clone(), session, req.prompt.clone()));
+  let open_on_event = opener.clone();
   let run_id: Arc<std::sync::OnceLock<u32>> = Arc::default();
   let (answer_host, answer_run) = (Arc::downgrade(&agents), run_id.clone());
   let set_run = run_id.clone();
   // Spawning the sidecar and its first answer can take a moment: keep it off the main thread.
-  let id = tauri::async_runtime::spawn_blocking(move || {
+  let started = tauri::async_runtime::spawn_blocking(move || {
     let id = agents.start(
       req,
       Arc::new(move |ev| {
         let (ev, allow) = approver.lock().unwrap().on_event(ev, || tool_rules::ToolRules::load(&config));
+        open_on_event.on_event(&ev);
         if let Some(request) = allow {
           auto_answer(answer_host.clone(), answer_run.clone(), request);
         }
@@ -367,7 +392,11 @@ pub async fn agent_start(
     Ok::<u32, String>(id)
   })
   .await
-  .map_err(|e| e.to_string())??;
+  .map_err(|e| e.to_string())
+  .and_then(|r| r);
+  opener.started(&started);
+  supervisor::settle(op, &started);
+  let id = started?;
   log::info!("agent run {id} started for {what}{}{}", if resuming { " (resumed)" } else { "" }, if runtime == runtimes::CLAUDE { String::new() } else { format!(" on {runtime}") });
   // A new run makes the chat's last rewind final.
   if let Some(chat) = chat_id.as_deref()
@@ -744,13 +773,37 @@ async fn on_host<T: Send + 'static>(
 
 /// Follow-up message to a running session, with attached image files.
 #[tauri::command]
-pub async fn agent_send(agents: State<'_, Arc<AgentHost>>, run_id: u32, text: String, images: Option<Vec<String>>) -> Result<(), String> {
+/// `operation_id`: the follow-up's ledger id (supervisor.rs); sent twice, it runs once.
+#[allow(clippy::too_many_arguments)]
+pub async fn agent_send(
+  agents: State<'_, Arc<AgentHost>>,
+  sup: State<'_, Arc<supervisor::Supervisor>>,
+  run_id: u32,
+  text: String,
+  images: Option<Vec<String>>,
+  operation_id: Option<String>,
+) -> Result<(), String> {
   if text.trim().is_empty() {
     return Err(crate::tr!(crate::i18n::msg::TasksMsg::MessageEmpty));
   }
   let images = images.unwrap_or_default();
   crate::attachments::check_images(&images)?;
-  on_host(&agents, move |a| a.send(run_id, &text, &images)).await
+  let sup = sup.inner().clone();
+  let session = sup.session_of_run(run_id).and_then(|id| sup.get(&id));
+  let (owner, scope, sid) = match &session {
+    Some(s) => (s.info.owner.clone(), s.info.scope.clone(), s.info.id.clone()),
+    None => (format!("run:{run_id}"), String::new(), String::new()),
+  };
+  let op = sup
+    .begin_op(operation_id.as_deref(), &owner, &scope, &serde_json::json!({"method": "agent_send", "session": sid, "fields": {"run": run_id, "text": text, "images": images}}))
+    .map_err(|r| r.message())?;
+  let turn = session.as_ref().and_then(|_| sup.prompt(&sid, &text));
+  let sent = on_host(&agents, move |a| a.send(run_id, &text, &images)).await;
+  if let (Err(_), Some(turn)) = (&sent, &turn) {
+    sup.cancel_turn(&sid, turn, "send_failed");
+  }
+  supervisor::settle(op, &sent);
+  sent
 }
 
 /// Answers a `permission_request`: `allow`, `allow_always` (this session), `allow_workspace`,
@@ -941,6 +994,12 @@ pub async fn gh_status(ws: Workspace) -> Result<review::GhStatus, String> {
   let root = ws.root().ok();
   blocking(move || match root.as_deref().map(mr::forge) {
     Some(mr::Forge::Gitlab(p)) => Ok(mr::status(&p)),
+    // Orca's Bitbucket provider: connected when a credential is set (stored or environment).
+    Some(mr::Forge::Bitbucket(_)) => {
+      let st = crate::bitbucket::bitbucket_status();
+      let detail = if st.configured { st.account.clone().unwrap_or_else(|| "Bitbucket".into()) } else { crate::tr!(crate::i18n::msg::BitbucketMsg::NotConnected) };
+      Ok(review::GhStatus { installed: true, authenticated: st.configured, path: None, detail, provider: "bitbucket" })
+    }
     _ => Ok(review::gh_status(review::gh_bin())),
   })
   .await
@@ -960,6 +1019,16 @@ pub async fn worktree_pr(ws: Workspace, slug: String) -> Result<Option<review::W
     mr::Forge::Gitlab(p) => {
       let (t, r) = forge::gitlab(&p)?;
       mr::worktree_mr(&t, &r, &dir, slug.as_deref())
+    }
+    mr::Forge::Bitbucket(repo) => {
+      let branch = match slug.as_deref() {
+        Some(slug) => worktree::task_branch(&dir, slug)?,
+        None => match worktree::current_branch(&dir)? {
+          Some(b) => b,
+          None => return Ok(None),
+        },
+      };
+      crate::bitbucket::branch_pr(&crate::bitbucket::connected()?, &repo, &branch)
     }
     mr::Forge::Github => review::worktree_pr(&gh()?, &dir, slug.as_deref()),
   })
@@ -987,6 +1056,22 @@ pub async fn worktree_pr_create(
       let (t, r) = forge::gitlab(&p)?;
       let url = mr::push_and_create(&t, &r, &dir, &slug, &base, &title, &body, draft, stacked.unwrap_or(false))?;
       // kingu.pr.openAfterCreate: best effort, the merge request exists either way.
+      if open.unwrap_or(false)
+        && let Err(e) = crate::system::open_web_url(&url)
+      {
+        log::warn!("open {url}: {e}");
+      }
+      return Ok(url);
+    }
+    if let mr::Forge::Bitbucket(repo) = mr::forge(&dir) {
+      // Orca's Bitbucket provider: push the task branch, then POST /pullrequests.
+      let t = crate::bitbucket::connected_for_create()?;
+      if stacked.unwrap_or(false) {
+        review::push_stack_base(&dir, &base)?;
+      }
+      let branch = worktree::task_branch(&dir, &slug)?;
+      crate::git::run(&dir, &["push", "-q", "-u", "origin", &branch]).map_err(|e| e.to_string())?;
+      let url = crate::bitbucket::create(&t, &repo, &branch, &base, &title, &body)?;
       if open.unwrap_or(false)
         && let Err(e) = crate::system::open_web_url(&url)
       {
@@ -1081,6 +1166,7 @@ pub async fn worktree_pr_merge(
       let (p, iid) = mr::parse_url(&url, &p)?;
       mr::merge(&crate::gitlab::connected(&p.host)?, &p, iid, method, delete_branch.unwrap_or(false))
     }
+    mr::Forge::Bitbucket(_) => forge::not_on_bitbucket(),
     mr::Forge::Github => pr::merge(&gh()?, &dir, &url, number, method, delete_branch.unwrap_or(false)),
   })
   .await
@@ -1095,6 +1181,7 @@ pub async fn gh_merge_settings(ws: Workspace, slug: String, url: String) -> Resu
       let (p, _) = mr::parse_url(&url, &p)?;
       mr::merge_settings(&crate::gitlab::connected(&p.host)?, &p)
     }
+    mr::Forge::Bitbucket(_) => forge::not_on_bitbucket(),
     mr::Forge::Github => pr::merge_settings(&gh()?, &dir, &pr::RepoRef::from_pr_url(&url)?),
   })
   .await
@@ -1109,6 +1196,7 @@ pub async fn worktree_pr_check_logs(ws: Workspace, slug: String, url: String, ch
       let (p, _) = mr::parse_url(&url, &p)?;
       Ok(mr::check_logs(&crate::gitlab::connected(&p.host)?, &p, &checks))
     }
+    mr::Forge::Bitbucket(_) => forge::not_on_bitbucket(),
     mr::Forge::Github => pr::check_logs(&gh()?, &dir, &url, &checks),
   })
   .await
@@ -1123,6 +1211,7 @@ pub async fn worktree_pr_threads(ws: Workspace, slug: String, url: String, numbe
       let (p, iid) = mr::parse_url(&url, &p)?;
       mr::threads(&crate::gitlab::connected(&p.host)?, &p, iid, &url)
     }
+    mr::Forge::Bitbucket(_) => forge::not_on_bitbucket(),
     mr::Forge::Github => pr::review_threads(&gh()?, &dir, &url, number),
   })
   .await
@@ -1137,6 +1226,7 @@ pub async fn gh_resolve_thread(ws: Workspace, slug: String, url: String, thread_
       let (p, iid) = mr::parse_url(&url, &p)?;
       mr::resolve(&crate::gitlab::connected(&p.host)?, &p, iid, &thread_id, resolve)
     }
+    mr::Forge::Bitbucket(_) => forge::not_on_bitbucket(),
     mr::Forge::Github => pr::resolve_thread(&gh()?, &dir, &url, &thread_id, resolve),
   })
   .await?;

@@ -7,6 +7,13 @@
 	// status, unread state and agent row; opening one switches the folder. Orca's
 	// footer is left out: Settings, Help and the board already live elsewhere in Kingu (title bar
 	// gear, Settings, the Tasks row); Reveal active workspace is on the project header.
+	import InboxBell from './InboxBell.svelte';
+	import { quick } from '#lib/workbench/quick.svelte.ts';
+	import { descendantsOf } from './lineage';
+	import { adeDialogs } from './dialogs.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
+	import { menuTargets, rangeSelect, toggleSelect } from './sidebarSelection';
+	import CreatingRows from './CreatingRows.svelte';
 	import { untrack } from 'svelte';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
@@ -26,8 +33,10 @@
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { cleanup } from './cleanup.svelte';
+	import { workspaceSpace } from './workspaceSpace.svelte';
+	import { sshHosts } from './sshHosts.svelte';
 	import { newSession } from './agentsMode.svelte';
-	import { jumpToWorktree } from './worktreeMenu.svelte';
+	import { jumpToWorktree, sidebarOrder } from './worktreeMenu.svelte';
 	import { rowCardStatus, rowText } from './agentPresence';
 	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
@@ -41,12 +50,13 @@
 	import { actionsFor, openWorktreeIn, runWorktreeAction } from './worktreeMenu.svelte';
 	import type { WorktreeAction } from './worktreeActions';
 	import { projects } from './projects.svelte';
-	import { aroundOpen, projectName, projectSidebarTask, type SidebarProject } from './projects';
+	import { aroundOpen, groupedPaths, projectName, projectSidebarTask, type SidebarProject } from './projects';
 	import { defaultWorkflowId, workflowOf, workflowStatuses } from './workflow.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { nestTasks } from './attempts.ts';
 	import { childAgentRows, childAgentsKey, childAgentToggle } from './childAgents.ts';
 	import TaskBadges from './TaskBadges.svelte';
+	import SshProjectsSection from './SshProjectsSection.svelte';
 
 	const root = $derived(workspace.root ?? '');
 	const now = $derived(adeTasks.now);
@@ -88,7 +98,7 @@
 	const primaryRow = $derived<Row>({ key: PRIMARY, title: workspace.name ?? '', branch: status.branch || 'HEAD', created: 0, activity: 0 });
 	const taskRows = $derived<Row[]>(
 		adeTasks.views
-			.filter((v) => !hiddenBy(sidebarTask(v), sidebarFilters()))
+			.filter((v) => !v.meta.archived_at && !hiddenBy(sidebarTask(v), sidebarFilters()))
 			.map((v) => ({ key: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), view: v, created: v.meta.created_at, activity: lastActivity(v) }))
 	);
 	const sorted = $derived(
@@ -140,6 +150,10 @@
 	});
 	/** Every card in display order, for arrow-key navigation. */
 	const order = $derived(groups.flatMap((g) => (prefs.isCollapsed(g.id) ? [] : g.rows.map((r) => r.key))).filter((k, i, a) => a.indexOf(k) === i));
+	// ⌘1–9 (worktreeMenu.svelte.ts) jump to the rows in this order.
+	$effect(() => {
+		sidebarOrder.keys = order;
+	});
 
 	// --- State per card ------------------------------------------------------------------------
 	function stateOf(r: Row): CardStatus {
@@ -157,6 +171,64 @@
 		if (!on) appMode.markViewed(key);
 		else if (appMode.viewedAt[key]) delete appMode.viewedAt[key];
 	}
+	// --- Multi-select (Orca): ⌘-click toggles, Shift-click selects a range, a plain click starts over --
+	let selection = $state<string[]>([]);
+	let anchor: string | null = null;
+	function clickCard(key: string, e: MouseEvent) {
+		if (e.metaKey || e.ctrlKey) {
+			selection = toggleSelect(selection, selectedKey, key);
+			anchor = key;
+			return;
+		}
+		if (e.shiftKey) {
+			selection = rangeSelect(order, anchor ?? selectedKey, key);
+			return;
+		}
+		selection = [];
+		anchor = key;
+		activate(key);
+	}
+	async function runBulk(id: string, keys: string[]) {
+		const tasks = keys.filter((k) => k !== PRIMARY && adeTasks.find(k));
+		selection = [];
+		if (id === 'bulk:sleep') return keys.forEach((k) => adeLayout.drop(k));
+		if (id === 'bulk:markRead' || id === 'bulk:markUnread') return keys.forEach((k) => setUnread(k, id === 'bulk:markUnread'));
+		if (id === 'bulk:pin' || id === 'bulk:unpin') return keys.forEach((k) => prefs.setPinned(root, k, id === 'bulk:pin'));
+		if (id === 'bulk:archive') {
+			for (const k of tasks) await adeTasks.archive(k);
+			return;
+		}
+		if (id !== 'bulk:delete' || !tasks.length) return;
+		const names = tasks.map((k) => adeTasks.find(k)?.meta.title ?? k);
+		if (!(await ask(t('ade.sidebar.bulkDeleteAsk', { count: tasks.length, names: names.slice(0, 5).join(', ') + (names.length > 5 ? '…' : '') }), { kind: 'warning', okLabel: t('ade.sidebar.bulkDelete', { count: tasks.length }) }))) return;
+		await adeTasks.removeMany(tasks);
+	}
+
+	// --- Descendants (Orca's nested workspaces) and Archive ----------------------------------
+	const descendants = (key: string) => (key ? descendantsOf(adeTasks.list, key) : []);
+	async function deleteTree(key: string) {
+		const kids = descendants(key);
+		const title = adeTasks.find(key)?.meta.title ?? key;
+		const names = kids.map((k) => adeTasks.find(k)?.meta.title ?? k);
+		if (!(await ask(t('ade.lineage.deleteAsk', { title, count: kids.length, names: names.slice(0, 5).join(', ') + (names.length > 5 ? '…' : '') }), { kind: 'warning', okLabel: t('ade.lineage.deleteAll', { count: kids.length }) }))) return;
+		// Children first, so no worktree is removed while one stacked on it still exists.
+		await adeTasks.removeMany([...kids].reverse().concat(key));
+	}
+	const archived = $derived(adeTasks.list.filter((m) => m.archived_at));
+	async function openArchived() {
+		const pick = await quick.choose({
+			placeholder: t('ade.archive.pick'),
+			items: archived.flatMap((m) => [
+				{ id: `open:${m.slug}`, label: m.title, description: `kingu/${m.slug}` },
+				{ id: `restore:${m.slug}`, label: `${t('ade.archive.unarchive')}: ${m.title}`, description: '' }
+			])
+		});
+		if (!pick) return;
+		const slug = pick.id.slice(pick.id.indexOf(':') + 1);
+		if (pick.id.startsWith('restore:')) return void adeTasks.archive(slug, false);
+		activate(slug);
+	}
+
 	function activate(key: string) {
 		adeLayout.board = false;
 		adeLayout.show(key);
@@ -208,6 +280,9 @@
 	let addMenu = $state<{ x: number; y: number } | null>(null);
 	const ADD_ITEMS: MenuNode[] = $derived([
 		menuItem('add', t('adeProjects.add')),
+		menuItem('folderOfProjects', t('adeProjects.folderOfProjects')),
+		menuItem('groupNew', t('adeProjects.groupNew')),
+		menuItem('ssh', 'SSH Hosts…'),
 		menuSeparator,
 		menuItem('open', t('legacyAde.adeSidebar.openFolder')),
 		menuItem('clone', 'Clone repository…'),
@@ -215,31 +290,57 @@
 	]);
 	function runAdd(id: string) {
 		if (id === 'add') void projects.pickAndAdd();
+		else if (id === 'folderOfProjects') void projects.addFolderOfProjects();
+		else if (id === 'groupNew') void projects.newGroup();
+		else if (id === 'ssh') void sshHosts.show();
 		else if (id === 'open') void commands.run('workbench.action.files.openFolder');
 		else void repoDialog.show(id === 'clone' ? 'clone' : 'create');
 	}
 
 	// --- Context menu -------------------------------------------------------------------------
 	let menu = $state<{ key: string; x: number; y: number } | null>(null);
-	const SIDEBAR_IDS = ['pin', 'unpin', 'markRead', 'markUnread', 'sleep'];
+	const SIDEBAR_IDS = ['pin', 'unpin', 'markRead', 'markUnread', 'sleep', 'sleepTree', 'archive', 'deleteTree'];
 	const menuItems = $derived.by((): MenuNode[] => {
 		if (!menu) return [];
 		const key = menu.key;
+		const targets = menuTargets(selection, key);
+		if (targets.length > 1) {
+			const n = targets.length;
+			const deletable = targets.filter((k) => k !== PRIMARY && adeTasks.find(k)).length;
+			const allPinned = targets.every((k) => prefs.pinned(root).includes(k));
+			return [
+				menuItem('bulk:sleep', t('ade.sidebar.bulkSleep', { count: n })),
+				menuItem(allPinned ? 'bulk:unpin' : 'bulk:pin', allPinned ? t('ade.sidebar.bulkUnpin', { count: n }) : t('ade.sidebar.bulkPin', { count: n })),
+				menuItem('bulk:markRead', t('ade.sidebar.bulkMarkRead', { count: n })),
+				menuItem('bulk:markUnread', t('ade.sidebar.bulkMarkUnread', { count: n })),
+				menuItem('bulk:archive', `${t('ade.archive.action')} (${deletable})`, { enabled: deletable > 0 }),
+				menuSeparator,
+				menuItem('bulk:delete', t('ade.sidebar.bulkDelete', { count: deletable }), { enabled: deletable > 0 })
+			];
+		}
 		const isPinned = prefs.pinned(root).includes(key);
 		const unread = isUnread(key === PRIMARY ? primaryRow : (sorted.find((r) => r.key === key) ?? primaryRow));
 		const hasPanels = (adeLayout.terminals[key]?.length ?? 0) + (adeLayout.files[key]?.length ?? 0) > 0;
+		const kids = descendants(key);
 		return [
 			...actionsFor(key).map((r) => (r === 'separator' ? menuSeparator : menuItem(r.id, r.label, { enabled: r.enabled ?? true }))),
 			menuSeparator,
 			menuItem(isPinned ? 'unpin' : 'pin', isPinned ? 'Unpin' : 'Pin'),
 			menuItem(unread ? 'markRead' : 'markUnread', unread ? 'Mark Read' : 'Mark Unread'),
-			menuItem('sleep', 'Sleep', { enabled: hasPanels })
+			menuItem('sleep', 'Sleep', { enabled: hasPanels }),
+			...(kids.length ? [menuItem('sleepTree', t('ade.lineage.sleepAll', { count: kids.length }))] : []),
+			...(key !== PRIMARY && adeTasks.find(key) ? [menuItem('archive', t('ade.archive.action'))] : []),
+			...(kids.length ? [menuItem('deleteTree', t('ade.lineage.deleteAll', { count: kids.length }))] : [])
 		];
 	});
 	function runMenu(id: string, key: string) {
+		if (id.startsWith('bulk:')) return void runBulk(id, menuTargets(selection, key));
 		if (!SIDEBAR_IDS.includes(id)) return runWorktreeAction(key, id as WorktreeAction);
 		if (id === 'pin' || id === 'unpin') return prefs.setPinned(root, key, id === 'pin');
 		if (id === 'markRead' || id === 'markUnread') return setUnread(key, id === 'markUnread');
+		if (id === 'archive') return void adeTasks.archive(key);
+		if (id === 'deleteTree') return void deleteTree(key);
+		if (id === 'sleepTree') return [key, ...descendants(key)].forEach((k) => adeLayout.drop(k));
 		// Sleep closes the worktree's terminals and tabs; its folder, branch and agent session stay.
 		adeLayout.drop(key);
 	}
@@ -336,9 +437,18 @@
 	let options = $state<{ x: number; y: number } | null>(null);
 	let repoMenu = $state<{ x: number; y: number } | null>(null);
 	const filterCount = $derived(activeFilterCount(prefs.filters));
-	const repoItems: MenuNode[] = [menuItem('settings', 'Project Settings'), menuItem('reveal', 'Reveal in Finder'), menuSeparator, menuItem('remove', 'Remove Project')];
+	const repoItems: MenuNode[] = [
+		menuItem('settings', 'Project Settings'),
+		menuItem('reveal', 'Reveal in Finder'),
+		menuItem('space', 'Workspace Space…'),
+		menuItem('ssh', 'SSH Hosts…'),
+		menuSeparator,
+		menuItem('remove', 'Remove Project')
+	];
 	function runRepo(id: string) {
-		if (id === 'settings') systemSettings.show();
+		if (id === 'space') workspaceSpace.show();
+		else if (id === 'ssh') void sshHosts.show();
+		else if (id === 'settings') systemSettings.show();
 		else if (id === 'reveal') void invoke('fs_reveal', { rel: '' }).catch((e) => status.error(String(e)));
 		else if (id === 'remove') void removeOpen();
 	}
@@ -356,7 +466,7 @@
 		const wts = projects.worktrees(root);
 		const rows = projects
 			.views(root)
-			.filter((v) => !hiddenBy(projectSidebarTask(v, wts.find((w) => w.slug === v.meta.slug)?.detached ?? false), sidebarFilters()))
+			.filter((v) => !v.meta.archived_at && !hiddenBy(projectSidebarTask(v, wts.find((w) => w.slug === v.meta.slug)?.detached ?? false), sidebarFilters()))
 			.map((v) => ({ root, key: v.meta.slug, title: v.meta.title, branch: wts.find((w) => w.slug === v.meta.slug)?.branch ?? `kingu/${v.meta.slug}`, view: v, created: v.meta.created_at, activity: lastActivity(v) }));
 		return sortItems(
 			rows.map((r) => ({ ...r, slug: r.key, status: r.view.status, createdAt: r.created, lastActivityAt: r.activity })),
@@ -367,8 +477,16 @@
 	}
 	// Grouped by project, the projects keep the order they were added around the open folder; otherwise they follow it.
 	const around = $derived(aroundOpen(projects.items));
-	const beforeProjects = $derived(prefs.groupBy === 'repo' ? around.before : []);
-	const afterProjects = $derived(prefs.groupBy === 'repo' ? around.after : [...around.before, ...around.after]);
+	// Projects in an Orca project group show under its header instead (projects.sections).
+	const grouped = $derived(groupedPaths(projects.sections));
+	const beforeProjects = $derived(prefs.groupBy === 'repo' ? around.before.filter((p) => !grouped.has(p.path)) : []);
+	const afterProjects = $derived((prefs.groupBy === 'repo' ? around.after : [...around.before, ...around.after]).filter((p) => !grouped.has(p.path)));
+	let groupMenu = $state<{ id: string; x: number; y: number } | null>(null);
+	const groupItems = $derived<MenuNode[]>([menuItem('rename', t('adeProjects.groupRename')), menuSeparator, menuItem('delete', t('adeProjects.groupDelete'))]);
+	function runGroup(id: string, group: string) {
+		if (id === 'rename') void projects.renameGroup(group);
+		else if (id === 'delete') void projects.deleteGroup(group);
+	}
 	function projectUnread(r: ProjectRow): boolean {
 		if (prefs.markedUnread(r.root).includes(r.key)) return true;
 		const s = adeTasks.stateOf(r.view);
@@ -379,10 +497,27 @@
 		void projects.open(r.root, r.key);
 	}
 	let projectMenu = $state<{ root: string; x: number; y: number } | null>(null);
-	const projectItems = $derived<MenuNode[]>([menuItem('open', t('adeProjects.open')), menuSeparator, menuItem('remove', t('adeProjects.remove'))]);
+	const projectItems = $derived.by<MenuNode[]>(() => {
+		const root = projectMenu?.root;
+		const current = projects.list.find((p) => p.path === root)?.group ?? null;
+		// Orca's Move to Group: every other group, out of the current one, or a new one.
+		const moves = projects.groups.filter((g) => g.id !== current).map((g) => menuItem(`group:${g.id}`, t('adeProjects.groupMoveTo', { name: g.name })));
+		return [
+			menuItem('open', t('adeProjects.open')),
+			menuSeparator,
+			...moves,
+			...(current ? [menuItem('ungroup', t('adeProjects.groupRemoveFrom'))] : []),
+			menuItem('newGroup', t('adeProjects.groupNewWith'), { enabled: projects.added.has(root ?? '') }),
+			menuSeparator,
+			menuItem('remove', t('adeProjects.remove'))
+		];
+	});
 	function runProject(id: string, root: string) {
 		if (id === 'open') void projects.open(root);
 		else if (id === 'remove') void projects.remove(root);
+		else if (id === 'ungroup') void projects.moveToGroup(root, null);
+		else if (id === 'newGroup') void projects.newGroup(root);
+		else if (id.startsWith('group:')) void projects.moveToGroup(root, id.slice('group:'.length));
 	}
 	function newWorkspace() {
 		adeLayout.show(PRIMARY);
@@ -444,10 +579,11 @@
 					: secondary
 						? 'border-(--vscode-focusBorder)/25 bg-(--vscode-list-inactiveSelectionBackground)/45'
 						: 'border-transparent hover:bg-(--vscode-list-hoverBackground)/60',
-				revealed === r.key && 'ring-[1.5px] ring-(--vscode-focusBorder)/70'
+				revealed === r.key && 'ring-[1.5px] ring-(--vscode-focusBorder)/70',
+				selection.length > 1 && selection.includes(r.key) && 'bg-(--vscode-list-inactiveSelectionBackground)/70 ring-1 ring-(--vscode-focusBorder)/60'
 			]}
-			onclick={() => activate(r.key)}
-			ondblclick={() => r.view && adeTasks.startRename(r.key)}
+			onclick={(e) => clickCard(r.key, e)}
+			ondblclick={() => r.view && adeDialogs.open({ kind: 'details', slug: r.key })}
 			oncontextmenu={(e) => openMenu(r.key, e)}
 			ondragstart={(e) => ((dragging = r.key), e.dataTransfer?.setData('text/plain', r.key))}
 			ondragend={() => (dragging = dropBefore = null)}
@@ -529,6 +665,9 @@
 							{/if}
 						</div>
 					</div>
+					{#if r.view?.meta.comment && !prefs.compact}
+						<div class="truncate text-[11px] leading-4 text-(--vscode-descriptionForeground)" title={r.view.meta.comment}>{r.view.meta.comment}</div>
+					{/if}
 					{#if !prefs.compact}
 						{@const pr = r.view && props.has('pr') ? prStatuses.bySlug[r.key]?.pr : null}
 						{@const totals = r.view?.stat && props.has('diff') ? aggregateStats(r.view.stat.files) : null}
@@ -667,6 +806,7 @@
 				{#each ['⇧', '⌘', 'J'] as k (k)}<kbd class="min-w-4 rounded border border-(--vscode-widget-border) bg-(--vscode-sideBar-foreground)/8 px-1 py-px text-center font-sans text-[9px] text-(--vscode-sideBar-foreground)/55">{k}</kbd>{/each}
 			</span>
 		</button>
+		<InboxBell navClass="{NAV} {NAV_OFF} w-full" />
 		{#each ([{ page: 'now', icon: 'agent', label: 'Now' }, { page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
 			{@const on = adeLayout.page === n.page}
 			<button class="{NAV} {on ? NAV_ON : NAV_OFF}" aria-current={on ? 'page' : undefined} disabled={n.page !== 'board' && !workspace.root} onclick={() => adeLayout.togglePage(n.page)}>
@@ -757,6 +897,7 @@
 					<button class="text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={scm.busy} onclick={initGit}>{t('legacyAde.adeSidebar.initGit')}</button>
 				</div>
 			{/if}
+			<CreatingRows />
 			{#each groups as g, gi (g.id)}
 				{@const collapsed = prefs.isCollapsed(g.id)}
 				{#if g.repo}{#each beforeProjects as p (p.path)}{@render projectGroup(p)}{/each}{/if}
@@ -823,6 +964,11 @@
 					</button>
 				</div>
 			{/each}
+			{#if archived.length}
+				<button class="mx-2 mt-1 flex h-6 w-[calc(100%-16px)] items-center gap-1.5 rounded px-2 text-[11px] {MUTED} hover:bg-(--vscode-list-hoverBackground)" onclick={openArchived}>
+					<Icon name="bookmark" size={12} />{t('ade.archive.section', { count: archived.length })}
+				</button>
+			{/if}
 			{#if workspace.root && !order.length && !groups.some((g) => g.rows.length)}
 				<div class="px-4 py-6 text-center text-[11px] {MUTED}">
 					<p>No workspaces found</p>
@@ -830,6 +976,44 @@
 				</div>
 			{/if}
 			{#each afterProjects as p (p.path)}{@render projectGroup(p)}{/each}
+			<!-- Orca's project groups: a header each (collapse, rename, delete), then its projects. -->
+			{#each projects.sections as sec (sec.group.id)}
+				{@const g = sec.group}
+				<div class="pt-1" style:padding-left="{sec.depth * 10}px">
+					<div
+						role="button"
+						tabindex="0"
+						aria-expanded={!g.is_collapsed}
+						class="group/header flex h-7 w-full cursor-pointer items-center gap-1.5 pr-2 pl-2.5 text-left"
+						title={g.parent_path ?? g.name}
+						onclick={() => projects.toggleGroup(g.id)}
+						onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), projects.toggleGroup(g.id))}
+						oncontextmenu={(e) => (e.preventDefault(), (groupMenu = { id: g.id, x: e.clientX, y: e.clientY }))}
+					>
+						<span class="grid size-4 shrink-0 place-items-center rounded-[4px] bg-sky-500/15 text-sky-400"><Icon name="columns" size={11} /></span>
+						<span class="truncate text-[11px] leading-none font-semibold tracking-wide uppercase {MUTED}">{g.name}</span>
+						<span class="text-[10px] {MUTED}" title={t('adeProjects.groupCount', { count: sec.projects.length })}>{sec.projects.length}</span>
+						<span class="ml-auto flex items-center">
+							<button
+								class={REVEAL}
+								aria-label={t('adeProjects.groupActions', { name: g.name })}
+								title={t('adeProjects.groupActions', { name: g.name })}
+								onclick={(e) => {
+									e.stopPropagation();
+									const rr = e.currentTarget.getBoundingClientRect();
+									groupMenu = { id: g.id, x: rr.right - 220, y: rr.bottom + 6 };
+								}}><Icon name="more" size={14} /></button
+							>
+							<span class={['grid size-5 place-items-center rounded-md transition-transform', g.is_collapsed && '-rotate-90']}><Icon name="chevronDown" size={14} /></span>
+						</span>
+					</div>
+					{#if !g.is_collapsed}
+						{#each sec.projects as p (p.path)}{@render projectGroup(p)}{/each}
+					{/if}
+				</div>
+			{/each}
+			<!-- Projects on SSH hosts (sshProjects.svelte.ts). -->
+			<SshProjectsSection />
 			{#if draggingProject}
 				<!-- Dropping below the last project moves it to the end (Orca's manual project order). -->
 				<div class="h-6 shrink-0" role="presentation" ondragover={(e) => (e.preventDefault(), e.stopPropagation())} ondrop={(e) => (e.preventDefault(), e.stopPropagation(), dropProjectOn(null))}></div>
@@ -863,6 +1047,10 @@
 {#if projectMenu}
 	{@const root = projectMenu.root}
 	<PopupMenu items={projectItems} label={t('adeProjects.menu')} x={projectMenu.x} y={projectMenu.y} onRun={(node) => node.type === 'item' && runProject(node.id, root)} onClose={() => (projectMenu = null)} />
+{/if}
+{#if groupMenu}
+	{@const gid = groupMenu.id}
+	<PopupMenu items={groupItems} label={t('adeProjects.groupActions', { name: projects.groups.find((g) => g.id === gid)?.name ?? '' })} x={groupMenu.x} y={groupMenu.y} onRun={(node) => node.type === 'item' && runGroup(node.id, gid)} onClose={() => (groupMenu = null)} />
 {/if}
 {#if addMenu}
 	<PopupMenu items={ADD_ITEMS} label="Add project" x={addMenu.x} y={addMenu.y} onRun={(node) => node.type === 'item' && runAdd(node.id)} onClose={() => (addMenu = null)} />

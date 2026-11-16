@@ -11,6 +11,7 @@
 	import { BUTTON, ICON_BUTTON } from './ui';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { cleanup } from './cleanup.svelte';
+	import { workspaceSpace } from './workspaceSpace.svelte';
 	import { workflowColumns, workflowStatuses } from './workflow.ts';
 	import { nestTasks } from './attempts.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -66,6 +67,7 @@
 		</div>
 		<button class={BUTTON} onclick={() => (adeTasks.composing = !adeTasks.composing)}><Icon name="plus" size={14} /> {t('adeWorkflow.board.newTask')}</button>
 		<button class={ICON_BUTTON} aria-label={t('adeWorkflow.board.cleanUp')} title={t('adeWorkflow.board.cleanUpTitle')} disabled={!adeTasks.views.length} onclick={() => (cleanup.open = true)}><Icon name="trash" size={16} /></button>
+		<button class={ICON_BUTTON} aria-label="Workspace Space" title="Workspace Space: disk used by each task's worktree" onclick={() => workspaceSpace.show()}><Icon name="chartBar" size={16} /></button>
 		<button class={ICON_BUTTON} aria-label={t('adeWorkflow.board.refresh')} title={t('adeWorkflow.board.refresh')} onclick={() => adeTasks.load()}><Icon name="refresh" size={16} /></button>
 	</header>
 	{#if adeTasks.composing}

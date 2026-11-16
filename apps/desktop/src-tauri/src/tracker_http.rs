@@ -57,9 +57,15 @@ pub struct Http {
 impl Http {
   /// `base`: `https://gitlab.com/api/v4`, `https://acme.atlassian.net` (no trailing `/`).
   pub fn new(service: &'static str, base: &str, auth_header: &'static str, auth_value: String) -> Result<Self, String> {
+    Self::with_timeout(service, base, auth_header, auth_value, Duration::from_secs(25))
+  }
+
+  /// [`Http::new`] with a whole-request time limit of `total` (a service whose original client uses
+  /// a shorter one, like Bitbucket's 5 s); the connect limit stays 5 s or `total` if shorter.
+  pub fn with_timeout(service: &'static str, base: &str, auth_header: &'static str, auth_value: String, total: Duration) -> Result<Self, String> {
     let client = crate::net_proxy::client_builder()?
-      .timeout(Duration::from_secs(25))
-      .connect_timeout(Duration::from_secs(5))
+      .timeout(total)
+      .connect_timeout(total.min(Duration::from_secs(5)))
       .redirect(reqwest::redirect::Policy::none())
       // Atlassian's XSRF check refuses POSTs carrying a browser user agent.
       .user_agent(concat!("kingu-desktop/", env!("CARGO_PKG_VERSION")))

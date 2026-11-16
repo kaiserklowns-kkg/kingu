@@ -15,6 +15,83 @@ const DIR: &str = "agent-hooks";
 /// The events that move a card: started, working, waiting for you (a permission prompt, a
 /// question, idle), turn done, ended.
 pub const EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "Notification", "Stop", "SessionEnd"];
+/// Events newer Claude Code versions know, with the first version that has each (Orca's
+/// `CLAUDE_HOOK_EVENT_FIRST_VERSIONS`, cli-capabilities/claude-hook-event-versions.ts). An older
+/// claude rejects the whole `--settings` on an unknown event, so each is added only when
+/// `claude --version` says it is known; an unknown version gets none of them (Orca: the floor).
+/// PostToolUseFailure keeps a failed tool "working"; Elicitation (an MCP server's dialog) waits on
+/// you; PostCompact ends a manual /compact that sends no Stop; StopFailure ends a turn an API
+/// error stopped. SubagentStart/SubagentStop (both from 2.0.43) keep the lead "working" while its
+/// background subagents run (Orca's child roster).
+pub const GATED_EVENTS: &[(&str, (u32, u32, u32))] = &[
+  ("SubagentStart", (2, 0, 43)),
+  ("SubagentStop", (2, 0, 43)),
+  ("PostToolUseFailure", (2, 0, 56)),
+  ("Elicitation", (2, 1, 63)),
+  ("ElicitationResult", (2, 1, 63)),
+  ("PostCompact", (2, 1, 76)),
+  ("StopFailure", (2, 1, 78)),
+];
+
+/// The events a claude of `version` gets.
+pub fn events_for(version: Option<(u32, u32, u32)>) -> Vec<&'static str> {
+  let mut out = EVENTS.to_vec();
+  if let Some(v) = version {
+    out.extend(GATED_EVENTS.iter().filter(|(_, floor)| v >= *floor).map(|(e, _)| *e));
+  }
+  out
+}
+
+/// Claude's own version line, `2.1.80 (Claude Code)` (Orca `parseClaudeCliVersionOutput`: a
+/// launcher's own version, e.g. from `npx`, must not count).
+pub fn parse_claude_version(out: &str) -> Option<(u32, u32, u32)> {
+  out.lines().find_map(|l| {
+    let i = l.to_ascii_lowercase().find("(claude code)")?;
+    let word = l[..i].split_whitespace().last()?;
+    let core = word.split(['-', '+']).next()?;
+    let mut n = core.split('.').map(|x| x.parse::<u32>().ok());
+    Some((n.next()??, n.next()??, n.next()??))
+  })
+}
+
+/// `<program> --version`, at most 5 s, cached per program for the app's run.
+pub(crate) fn claude_version(program: &str) -> Option<(u32, u32, u32)> {
+  use std::collections::HashMap;
+  use std::sync::{Mutex, OnceLock};
+  static CACHE: OnceLock<Mutex<HashMap<String, Option<(u32, u32, u32)>>>> = OnceLock::new();
+  let cache = CACHE.get_or_init(Mutex::default);
+  if let Some(v) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(program) {
+    return *v;
+  }
+  let mut child = crate::shell_env::command(program)
+    .arg("--version")
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .ok()?;
+  let start = std::time::Instant::now();
+  loop {
+    match child.try_wait() {
+      Ok(Some(_)) => break,
+      Ok(None) if start.elapsed() < std::time::Duration::from_secs(5) => std::thread::sleep(std::time::Duration::from_millis(50)),
+      _ => {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+      }
+    }
+  }
+  let mut out = String::new();
+  child.stdout.take()?.read_to_string(&mut out).ok()?;
+  let v = parse_claude_version(&out);
+  // A probe that worked is kept; a failed one is tried again next launch.
+  if v.is_some() {
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(program.to_string(), v);
+  }
+  v
+}
+
 /// One read returns at most this much (a long session catches up over several reads).
 const MAX_READ: u64 = 1 << 20;
 
@@ -33,11 +110,11 @@ pub fn quotable_path(file: &Path) -> Result<&str, String> {
 }
 
 /// `--settings` JSON with a command hook per event that appends the payload to `file`.
-pub fn settings_json(file: &Path) -> Result<String, String> {
+pub fn settings_json(file: &Path, events: &[&str]) -> Result<String, String> {
   let path = quotable_path(file)?;
   let command = format!("{{ cat; echo; }} >> '{path}'");
   let entry = serde_json::json!([{ "hooks": [{ "type": "command", "command": command }] }]);
-  let hooks: serde_json::Map<String, serde_json::Value> = EVENTS.iter().map(|e| (e.to_string(), entry.clone())).collect();
+  let hooks: serde_json::Map<String, serde_json::Value> = events.iter().map(|e| (e.to_string(), entry.clone())).collect();
   Ok(serde_json::json!({ "hooks": hooks }).to_string())
 }
 
@@ -71,7 +148,7 @@ pub fn read_from(file: &Path, offset: u64) -> Result<HookRead, String> {
   Ok(HookRead { events, offset: offset + used as u64 })
 }
 
-fn file_of(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
+pub(crate) fn file_of(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
   if !valid_token(token) {
     return Err("invalid hook token".into());
   }
@@ -88,10 +165,12 @@ fn fresh_file(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
   Ok(file)
 }
 
-/// The `--settings` JSON for a new claude session.
+/// The `--settings` JSON for a new claude session; `program`: the claude it runs (for its version).
 #[tauri::command]
-pub fn agent_hook_settings(app: AppHandle, token: String) -> Result<String, String> {
-  settings_json(&fresh_file(&app, &token)?)
+pub async fn agent_hook_settings(app: AppHandle, token: String, program: Option<String>) -> Result<String, String> {
+  let program = program.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "claude".into());
+  let version = tauri::async_runtime::spawn_blocking(move || claude_version(&program)).await.map_err(|e| e.to_string())?;
+  settings_json(&fresh_file(&app, &token)?, &events_for(version))
 }
 
 /// The hook file of a new session whose CLI appends to it itself (codex `notify`).
@@ -256,13 +335,26 @@ mod tests {
 
   #[test]
   fn settings_append_each_event_to_the_file() {
-    let json: serde_json::Value = serde_json::from_str(&settings_json(Path::new("/c/agent-hooks/t.jsonl")).unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&settings_json(Path::new("/c/agent-hooks/t.jsonl"), EVENTS).unwrap()).unwrap();
     for e in EVENTS {
       assert_eq!(json["hooks"][e][0]["hooks"][0]["command"], "{ cat; echo; } >> '/c/agent-hooks/t.jsonl'");
     }
-    assert!(settings_json(Path::new("/it's/t.jsonl")).is_err());
+    assert!(settings_json(Path::new("/it's/t.jsonl"), EVENTS).is_err());
     assert_eq!(quotable_path(Path::new("/c/agent-hooks/t.jsonl")).unwrap(), "/c/agent-hooks/t.jsonl");
     assert!(quotable_path(Path::new("/c/a\nb.jsonl")).is_err());
+  }
+
+  #[test]
+  fn newer_events_follow_the_claude_version() {
+    assert_eq!(parse_claude_version("2.1.80 (Claude Code)\n"), Some((2, 1, 80)));
+    assert_eq!(parse_claude_version("npx 10.2.0\n2.0.60-beta.1 (Claude Code)"), Some((2, 0, 60)));
+    assert_eq!(parse_claude_version("10.2.0"), None);
+    assert_eq!(events_for(None), EVENTS.to_vec());
+    let mid = events_for(Some((2, 1, 63)));
+    assert!(mid.contains(&"PostToolUseFailure") && mid.contains(&"Elicitation") && !mid.contains(&"PostCompact"));
+    assert!(events_for(Some((2, 1, 78))).contains(&"StopFailure"));
+    assert!(!events_for(Some((2, 0, 55))).contains(&"PostToolUseFailure"));
+    assert!(events_for(Some((3, 0, 0))).len() == EVENTS.len() + GATED_EVENTS.len());
   }
 
   #[test]

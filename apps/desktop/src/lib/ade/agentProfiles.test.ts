@@ -124,7 +124,8 @@ describe('other CLIs', () => {
 		expect(profile('opencode').launch(['opencode'], { fresh: true }, ctx).argv.slice(0, 3)).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/c/agent-hooks/t.jsonl', 'OPENCODE_CONFIG_DIR=/d/opencode/default']);
 		expect(hookEnv({ hookFile: null })).toEqual({});
 		for (const id of ['gemini', 'cursor', 'copilot', 'droid', 'opencode']) expect(profile(id).status).toBe('agent-hooks');
-		expect(profile('amp').launch(['amp'], { fresh: true }, ctx).argv).toEqual(['amp']);
+		expect(profile('amp').launch(['amp'], { fresh: true }, { ...ctx, opencodeDir: null }).argv).toEqual(['env', 'KINGU_AGENT_HOOK_FILE=/c/agent-hooks/t.jsonl', 'amp']);
+		expect(profile('aider').launch(['aider'], { fresh: true }, ctx).argv).toEqual(['aider']);
 	});
 	test('gemini: --prompt-interactive, resume latest', () => {
 		const g = profile('gemini');

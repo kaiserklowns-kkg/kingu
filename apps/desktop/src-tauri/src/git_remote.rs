@@ -173,6 +173,12 @@ fn run_net_streaming(
   timeout: Duration,
   on_err: &mut dyn FnMut(&str),
 ) -> Result<NetOutput, Stopped> {
+  // A slot in the network budget first (git_admission); Cancel also stops the wait.
+  let _slot = match crate::git_admission::admit(args, root, Some(cancel)) {
+    Ok(slot) => slot,
+    Err(_) if cancel.load(Ordering::SeqCst) => return Err(Stopped::Cancelled),
+    Err(e) => return Ok(NetOutput { ok: false, stdout: String::new(), stderr: e }),
+  };
   let mut cmd: Command = crate::git::command();
   cmd.envs(env.iter().copied());
   cmd
@@ -734,6 +740,7 @@ pub struct Stash {
 /// `git stash` takes no paths here, and with `--literal-pathspecs` (which [`run`] adds) git 2.56
 /// silently leaves untracked files out of `stash push --include-untracked`.
 fn run_unliteral(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+  let _slot = crate::git_admission::admit(args, root, None)?;
   let out = crate::git::command().arg("-C").arg(root).arg("--no-optional-locks").args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
   if !out.status.success() {
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
@@ -1003,14 +1010,24 @@ async fn exclusive_in<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn git_fetch(ws: Workspace, ops: State<'_, GitOps>, options: Option<FetchOptions>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+/// `background`: `git.autofetch` (git_admission's background tier: behind clicks and status reads).
+pub async fn git_fetch(ws: Workspace, ops: State<'_, GitOps>, options: Option<FetchOptions>, slug: Option<String>, repo: Option<String>, background: Option<bool>) -> Result<(), String> {
+  if let Some(r) = ws.remote() {
+    let _ = &ops;
+    return crate::ssh_hosts::blocking(move || crate::remote_ws::net(&r, "fetch", None).map(drop)).await?;
+  }
   let opts = options.unwrap_or_default();
-  exclusive_in(&ws, &ops, slug.as_deref(), repo.as_deref(), move |root, c| fetch(root, &opts, c, NET_TIMEOUT)).await
+  let tier = if background == Some(true) { crate::git_admission::Tier::Background } else { crate::git_admission::Tier::Interactive };
+  exclusive_in(&ws, &ops, slug.as_deref(), repo.as_deref(), move |root, c| crate::git_admission::with_tier(tier, || fetch(root, &opts, c, NET_TIMEOUT))).await
 }
 
 /// `rebase` is kept for older callers; `options` carries VS Code's pull settings.
 #[tauri::command]
 pub async fn git_pull(ws: Workspace, ops: State<'_, GitOps>, rebase: Option<bool>, options: Option<PullOptions>, slug: Option<String>, repo: Option<String>) -> Result<(), String> {
+  if let Some(r) = ws.remote() {
+    let _ = &ops;
+    return crate::ssh_hosts::blocking(move || crate::remote_ws::net(&r, "pull", None).map(drop)).await?;
+  }
   let mut opts = options.unwrap_or_default();
   opts.rebase |= rebase.unwrap_or(false);
   exclusive_in(&ws, &ops, slug.as_deref(), repo.as_deref(), move |root, c| pull(root, &opts, c, NET_TIMEOUT)).await
@@ -1019,6 +1036,10 @@ pub async fn git_pull(ws: Workspace, ops: State<'_, GitOps>, rebase: Option<bool
 /// Pushes, or publishes to `remote` when the branch has no upstream. Returns the upstream.
 #[tauri::command]
 pub async fn git_push(ws: Workspace, ops: State<'_, GitOps>, remote: Option<String>, options: Option<PushOptions>, slug: Option<String>, repo: Option<String>) -> Result<String, String> {
+  if let Some(r) = ws.remote() {
+    let _ = &ops;
+    return crate::ssh_hosts::blocking(move || crate::remote_ws::net(&r, "push", remote.as_deref())).await?;
+  }
   let opts = options.unwrap_or_default();
   exclusive_in(&ws, &ops, slug.as_deref(), repo.as_deref(), move |root, c| push(root, remote.as_deref(), &opts, c, NET_TIMEOUT)).await
 }
@@ -1033,6 +1054,10 @@ pub async fn git_sync(
   slug: Option<String>,
   repo: Option<String>,
 ) -> Result<(), String> {
+  if let Some(r) = ws.remote() {
+    let _ = &ops;
+    return crate::ssh_hosts::blocking(move || crate::remote_ws::net(&r, "sync", None).map(drop)).await?;
+  }
   let mut opts = options.unwrap_or_default();
   opts.rebase |= rebase.unwrap_or(false);
   let push_opts = push_options.unwrap_or_default();

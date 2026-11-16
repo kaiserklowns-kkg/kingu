@@ -34,19 +34,21 @@ export class WorktreeRepo implements ScmSource {
 		this.slug = slug;
 	}
 
-	refresh(): Promise<void> {
+	/** `background`: a safety poll nobody asked for (git_admission.rs's background tier). */
+	refresh(opts: { background?: boolean } = {}): Promise<void> {
 		if (this.#inflight) {
 			this.#again = true;
 			return this.#inflight;
 		}
+		const background = opts.background === true;
 		this.#inflight = (async () => {
 			do {
 				this.#again = false;
 				try {
 					const slug = this.slug || null;
 					const [repo, stats] = await Promise.all([
-						invoke<GitStatus | null>('git_status', { slug }),
-						invoke<NumStat>('git_numstat', { slug }).catch(() => ({ unstaged: {}, staged: {} }))
+						invoke<GitStatus | null>('git_status', { slug, background }),
+						invoke<NumStat>('git_numstat', { slug, background }).catch(() => ({ unstaged: {}, staged: {} }))
 					]);
 					this.repo = repo;
 					this.stats = stats;

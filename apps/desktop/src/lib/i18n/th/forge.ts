@@ -290,5 +290,17 @@ export const forge = {
 	'forge.mergeLine.checksPassed': 'checks ผ่าน',
 	'forge.mergeLine.ableToMerge': 'merge ได้',
 
-	'forge.prStart.notOnGitlab': 'ยังเริ่มงานจาก merge request บน GitLab ไม่ได้'
+	'forge.prStart.notOnGitlab': 'ยังเริ่มงานจาก merge request บน GitLab ไม่ได้',
+	'forge.bitbucket.mode': 'วิธีเข้าสู่ระบบ Bitbucket',
+	'forge.bitbucket.modeBasic': 'อีเมลและ API token',
+	'forge.bitbucket.modeBasicHint': 'อีเมล Atlassian ของคุณกับ API token ที่เข้าถึง repository และ pull request ได้',
+	'forge.bitbucket.modeToken': 'Access token',
+	'forge.bitbucket.modeTokenHint': 'Access token ของ repository, project หรือ workspace',
+	'forge.bitbucket.accessToken': 'Access token ของ Bitbucket',
+	'forge.bitbucket.email': 'อีเมล Bitbucket',
+	'forge.bitbucket.apiToken': 'API token ของ Bitbucket',
+	'forge.bitbucket.next': 'กด Enter เพื่อไปต่อ',
+	'forge.bitbucket.connectHint': 'กด Enter เพื่อตรวจกับ Bitbucket แล้วเชื่อมต่อ',
+	'forge.bitbucket.connected': 'เชื่อมต่อ Bitbucket แล้วในชื่อ {account}',
+	'forge.bitbucket.disconnected': 'ยกเลิกการเชื่อมต่อ Bitbucket แล้ว'
 } satisfies Record<keyof typeof en, string>;

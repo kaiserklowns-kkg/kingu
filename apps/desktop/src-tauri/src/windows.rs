@@ -51,6 +51,8 @@ pub struct WorkspaceState {
   pub empty: Option<String>,
   /// Files to open now (each handed out once).
   pub open_files: Vec<String>,
+  /// A worktree on an SSH host is the workspace (its one folder is then `ssh://…`).
+  pub remote: Option<crate::remote_ws::RemoteInfo>,
 }
 
 #[derive(serde::Serialize)]
@@ -72,12 +74,16 @@ fn state_of(ws: &Workspace) -> WorkspaceState {
   let s = ws.session();
   WorkspaceState {
     window: ws.label().into(),
-    folders: s.folders.iter().map(|f| FolderInfo { path: f.path.display().to_string(), name: f.label() }).collect(),
+    folders: match &s.remote {
+      Some(r) => vec![FolderInfo { path: r.uri(), name: r.name() }],
+      None => s.folders.iter().map(|f| FolderInfo { path: f.path.display().to_string(), name: f.label() }).collect(),
+    },
     file: s.file.as_ref().map(|f| f.display().to_string()),
     untitled: s.untitled.clone(),
     identity: s.identity(),
     empty: s.empty.clone(),
     open_files: Vec::new(),
+    remote: s.remote.as_ref().map(crate::remote_ws::RemoteRoot::info),
   }
 }
 
@@ -100,7 +106,7 @@ pub fn set_session(app: &AppHandle, ws: &Workspace, mut next: WindowSession) {
   next.empty = empty_id(&old, &next);
   let old_primary = old.folders.first().map(|f| f.path.clone());
   let new_primary = next.folders.first().map(|f| f.path.clone());
-  let primary_changed = old_primary != new_primary;
+  let primary_changed = old_primary != new_primary || old.remote != next.remote;
   if primary_changed {
     app.state::<crate::lsp::Servers>().stop_window(ws.label());
     app.state::<crate::dap::Sessions>().stop_window(ws.label());
@@ -151,7 +157,7 @@ pub fn set_session(app: &AppHandle, ws: &Workspace, mut next: WindowSession) {
 /// The id an empty window keeps its page state under: the one it came with, the one it had while
 /// already empty, else a new one; `None` once it has folders.
 fn empty_id(old: &WindowSession, next: &WindowSession) -> Option<String> {
-  if !next.folders.is_empty() {
+  if !next.folders.is_empty() || next.remote.is_some() {
     return None;
   }
   next.empty.clone().or_else(|| old.empty.clone().filter(|_| old.folders.is_empty())).or_else(|| Some(untitled_id()))
@@ -479,6 +485,28 @@ pub fn workspace_open(app: AppHandle, ws: Workspace, path: String) -> Result<Str
   let root = session.folders[0].path.display().to_string();
   set_session(&app, &ws, session);
   Ok(root)
+}
+
+/// Opens a worktree of an added SSH project as this window's workspace (remote_ws.rs): its root
+/// or one of its task worktrees, on a saved host.
+#[tauri::command]
+pub fn workspace_open_remote(
+  app: AppHandle,
+  ws: Workspace,
+  targets: tauri::State<'_, crate::ssh_hosts::Targets>,
+  projects: tauri::State<'_, crate::projects::Projects>,
+  host: String,
+  root: String,
+  path: String,
+) -> Result<WorkspaceState, String> {
+  projects.check_remote(&host, &root)?;
+  if !crate::ssh_projects::inside_project(&root, &path) {
+    return Err(crate::tr!(crate::i18n::msg::ProjectsMsg::RemoteBadPath, path));
+  }
+  let target = targets.get(&host)?;
+  log::info!("window {} opens {}:{path}", ws.label(), target.label);
+  set_session(&app, &ws, WindowSession { remote: Some(crate::remote_ws::RemoteRoot { target, root, path }), ..Default::default() });
+  Ok(state_of(&ws))
 }
 
 /// Opens a `.code-workspace` file's folders (`file`) or a multi-selection of folders (untitled

@@ -4,6 +4,8 @@
 	// opens the server in the browser, copies its URL, jumps to its worktree, or stops it (only a
 	// process Kingu started: Rust refuses any other). Scanned every 5 s while the tab shows.
 	import Icon from '#lib/workbench/Icon.svelte';
+	import { invoke } from '@tauri-apps/api/core';
+	import { worktreeDir } from './keys';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { system, type Port } from '#lib/workbench/system.svelte.ts';
@@ -37,6 +39,24 @@
 			status.flash('URL copied', 2000);
 		} catch {
 			status.flash("Couldn't copy the URL", 3000);
+		}
+	}
+
+	/** Orca's localhost worktree label: the server at `<task>.kingu.localhost:<relay>` in Kingu's browser
+	 * (Rust localhost_labels.rs relays it), so each task's app keeps its own cookies and storage. */
+	async function openLabeled(p: Row) {
+		const root = workspace.root;
+		if (!root || p.owner === null) return;
+		try {
+			const r = await invoke<{ label: string; url: string }>('localhost_label_register', {
+				targetUrl: url(p),
+				projectName: workspace.name ?? 'project',
+				worktreeName: p.owner || 'main',
+				worktreePath: p.owner ? `${root}/${worktreeDir(p.owner)}` : root
+			});
+			adeLayout.newBrowser(p.owner ?? adeLayout.key, r.url);
+		} catch (e) {
+			status.flash(String(e), 5000);
 		}
 	}
 
@@ -88,6 +108,9 @@
 						{/if}
 					</div>
 				</div>
+				{#if p.owner !== null}
+					<button class={ICON_BTN} aria-label="Open with Task Name" title="Open in Kingu's browser at its own task address, so it keeps its own cookies" onclick={() => openLabeled(p)}><Icon name="globe" size={14} /></button>
+				{/if}
 				<button class={ICON_BTN} aria-label="Open in Browser" title="Open {url(p)}" onclick={() => system.openPort(p.port)}><Icon name="openExternal" size={14} /></button>
 				<button class={ICON_BTN} aria-label="Copy URL" title="Copy URL" onclick={() => copy(p)}><Icon name="copy" size={14} /></button>
 				<button class={ICON_BTN} aria-label="Stop Process" title={p.ours ? 'Stop process' : 'Only processes started under Kingu can be stopped here'} disabled={!p.ours} onclick={() => stop(p)}><Icon name="stopProcess" size={14} /></button>

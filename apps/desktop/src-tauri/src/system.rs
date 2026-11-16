@@ -37,8 +37,8 @@ pub struct ProcessRow {
 
 #[derive(serde::Serialize)]
 pub struct Stats {
-  /// Resident memory of Kingu and every process below it (shells, agent CLIs, language servers),
-  /// summed RSS, plus the WebKit processes that render our window (`webkit`; launchd starts them,
+  /// Memory of Kingu and every process below it (shells, agent CLIs, language servers): each
+  /// one's physical footprint on macOS (Orca's rule, `footprint`), else its RSS; plus the WebKit processes that render our window (`webkit`; launchd starts them,
   /// so they are not our children). `None` off Unix.
   memory_bytes: Option<u64>,
   /// Summed CPU of the same tree; above 100 means more than one core.
@@ -170,6 +170,37 @@ mod objc {
   }
 }
 
+/// RUSAGE_INFO_V0 (`<sys/resource.h>`): 16-byte uuid then ten u64 counters; 96 bytes.
+#[cfg(target_os = "macos")]
+const RUSAGE_INFO_V0: i32 = 0;
+/// `ri_phys_footprint` sits at byte 72 (0x48) of `rusage_info_v0`.
+#[cfg(target_os = "macos")]
+const PHYS_FOOTPRINT_OFFSET: usize = 72;
+
+/// A process's physical footprint, what Activity Monitor shows as "Memory": Orca's
+/// `orca-process-footprint` helper (`footprint(pid)` at 0x100002d10) reads
+/// `proc_pid_rusage(pid, RUSAGE_INFO_V0)` and returns `ri_phys_footprint` (offset 0x48), or
+/// nothing when the call fails (another user's process, or it already exited).
+#[cfg(target_os = "macos")]
+fn footprint(pid: u32) -> Option<u64> {
+  unsafe extern "C" {
+    fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut std::ffi::c_void) -> i32;
+  }
+  let mut info = [0u64; 12];
+  let rc = unsafe { proc_pid_rusage(pid as i32, RUSAGE_INFO_V0, info.as_mut_ptr().cast()) };
+  (rc == 0).then_some(info[PHYS_FOOTPRINT_OFFSET / 8])
+}
+
+#[cfg(not(target_os = "macos"))]
+fn footprint(_pid: u32) -> Option<u64> {
+  None
+}
+
+/// Bytes a process uses: its footprint where the system gives one (Orca's rule), else `ps` RSS.
+fn memory_of(p: &Proc) -> u64 {
+  footprint(p.pid).unwrap_or(p.rss * 1024)
+}
+
 fn base_name(command: &str) -> String {
   command.rsplit('/').next().unwrap_or(command).trim_start_matches('-').to_string()
 }
@@ -217,7 +248,9 @@ pub fn stats(terminals: Vec<PtyInfo>, daemon: Option<u32>, webkit: &[u32], keep:
   let mut ours = kingu_tree(&rows, daemon);
   ours.extend(webkit.iter().copied().filter(|pid| rows.iter().any(|p| p.pid == *pid)));
   let mine: Vec<&Proc> = rows.iter().filter(|p| ours.contains(&p.pid)).collect();
-  let memory = mine.iter().map(|p| p.rss).sum::<u64>() * 1024;
+  // One footprint read per process (Orca's helper reads each pid once per sample).
+  let bytes: std::collections::HashMap<u32, u64> = mine.iter().map(|p| (p.pid, memory_of(p))).collect();
+  let memory = bytes.values().sum::<u64>();
   let cpu = mine.iter().map(|p| p.cpu).sum::<f32>();
   let mut processes: Vec<ProcessRow> = mine
     .iter()
@@ -226,7 +259,7 @@ pub fn stats(terminals: Vec<PtyInfo>, daemon: Option<u32>, webkit: &[u32], keep:
     .map(|p| {
       let web = webkit.contains(&p.pid);
       let name = if web { webkit_name(&p.command) } else { base_name(&p.command) };
-      ProcessRow { pid: p.pid, ppid: p.ppid, rss_bytes: p.rss * 1024, cpu: p.cpu, name, stoppable: !web && Some(p.pid) != daemon }
+      ProcessRow { pid: p.pid, ppid: p.ppid, rss_bytes: bytes.get(&p.pid).copied().unwrap_or(p.rss * 1024), cpu: p.cpu, name, stoppable: !web && Some(p.pid) != daemon }
     })
     .collect();
   processes.sort_by_key(|p| std::cmp::Reverse(p.rss_bytes));
@@ -389,6 +422,19 @@ pub fn open_web_url(url: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn footprint_of_this_process_is_plausible() {
+    // Allocate and touch 64 MiB so the footprint has something to count.
+    let block = vec![1u8; 64 * 1024 * 1024];
+    let bytes = footprint(std::process::id()).expect("own footprint");
+    assert!(bytes >= 64 * 1024 * 1024, "{bytes}");
+    assert!(bytes < 64 * 1024 * 1024 * 1024, "{bytes}");
+    assert_eq!(block[block.len() - 1], 1);
+    // A pid that can't exist gives nothing (then RSS is used).
+    assert_eq!(footprint(u32::MAX >> 1), None);
+  }
 
   #[test]
   fn external_browser_command() {

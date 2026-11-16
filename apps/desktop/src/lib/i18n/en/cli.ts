@@ -14,6 +14,7 @@ export const cli = {
 	'cli.outsideFolder': '{path} is not in the folder open in Kingu; open its folder first (kingu open <folder>)',
 	'cli.folderNotOpened': 'Kingu did not open {path}',
 	'cli.taskNotCreated': 'The task was not created (see Kingu\'s notifications)',
+	'cli.taskNotFound': 'No task {slug} in this window\'s folder',
 	'cli.unknownRequest': 'Unknown request: {method}',
 	'cli.noProfile': 'No profile named {name} (Profiles: Switch Profile… lists them)'
 } as const;

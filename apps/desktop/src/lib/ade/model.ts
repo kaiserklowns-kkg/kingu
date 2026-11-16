@@ -53,6 +53,10 @@ export type TaskMeta = {
 	hibernated_at?: number | null;
 	/** Orchestration: the task whose agent dispatched this one (`kingu task create`, Rust agent/orchestration.rs). */
 	dispatched_by?: string | null;
+	/** A note on the worktree card (Orca's Edit Worktree Details comment, Rust `comment`). */
+	comment?: string | null;
+	/** Unix ms it was archived (Orca's isArchived: hidden from the side bar, worktree kept). */
+	archived_at?: number | null;
 };
 
 /**
@@ -128,7 +132,7 @@ export type DiffStat = {
 
 /** `provider: 'gitlab'`: the folder's origin is on GitLab, so PRs are merge requests over GitLab's API
  * (always `installed`; `authenticated` = a token for its host is stored, `detail` says how to connect). */
-export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string; provider?: 'github' | 'gitlab' };
+export type GhStatus = { installed: boolean; authenticated: boolean; path: string | null; detail: string; provider?: 'github' | 'gitlab' | 'bitbucket' };
 export type MergeResult = { commit: string; fast_forward: boolean; checkout: string | null };
 
 export type TaskView = { meta: TaskMeta; runtime?: TaskRuntime; status: TaskStatus; stat?: DiffStat; statError?: string };

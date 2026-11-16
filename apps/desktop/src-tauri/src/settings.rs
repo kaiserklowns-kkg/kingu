@@ -15,6 +15,8 @@ use crate::workspace::Workspace;
 
 const FILE: &str = "settings.json";
 const KEYBINDINGS_FILE: &str = "keybindings.json";
+/// User tasks (VS Code: Tasks: Open User Tasks), in the profile folder next to keybindings.json.
+const TASKS_FILE: &str = "tasks.json";
 const WORKSPACE_DIR: &str = ".kingu";
 const MAX_BYTES: usize = 1024 * 1024;
 
@@ -31,6 +33,8 @@ pub enum Scope {
   Workspace,
   /// The user `keybindings.json`.
   Keybindings,
+  /// The user `tasks.json` (tasks that every folder offers).
+  Tasks,
   /// Kingu's own per-repository overrides (Orca's per-repo settings) for the open folder:
   /// `<config_dir>/repos/<id>.json`, never inside the repository.
   Repo,
@@ -45,6 +49,7 @@ impl Scope {
       "user" => Ok(Self::User),
       "workspace" => Ok(Self::Workspace),
       "keybindings" => Ok(Self::Keybindings),
+      "tasks" => Ok(Self::Tasks),
       "repo" => Ok(Self::Repo),
       "defaultUser" => Ok(Self::DefaultUser),
       _ => Err(format!("unknown settings scope: {s}")),
@@ -214,6 +219,7 @@ fn path_for(app: &AppHandle, ws: &Workspace, scope: Scope) -> Result<PathBuf, St
     Scope::DefaultUser => Ok(user_path(&app.path().app_config_dir().map_err(|e| e.to_string())?)),
     Scope::Workspace => workspace_path(&ws.root()?),
     Scope::Keybindings => Ok(crate::user_profiles::window_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?, ws).join(KEYBINDINGS_FILE)),
+    Scope::Tasks => Ok(crate::user_profiles::window_dir(&app.path().app_config_dir().map_err(|e| e.to_string())?, ws).join(TASKS_FILE)),
     Scope::Repo => Ok(repo_path(&app.path().app_config_dir().map_err(|e| e.to_string())?, &ws.root()?)),
   }
 }
@@ -365,6 +371,7 @@ mod tests {
     assert_eq!(Scope::parse("user").unwrap(), Scope::User);
     assert_eq!(Scope::parse("workspace").unwrap(), Scope::Workspace);
     assert_eq!(Scope::parse("keybindings").unwrap(), Scope::Keybindings);
+    assert_eq!(Scope::parse("tasks").unwrap(), Scope::Tasks);
     assert_eq!(Scope::parse("repo").unwrap(), Scope::Repo);
     assert!(Scope::parse("../etc").is_err());
   }

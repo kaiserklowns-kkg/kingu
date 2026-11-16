@@ -8,17 +8,40 @@
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY } from './ui';
 	import { t } from '#lib/i18n/index.ts';
+	import { agentInbox } from './agentInbox.svelte.ts';
+	import { activityFeed } from './agentInbox';
+	import { projects } from './projects.svelte';
+	import { timeAgo } from './model';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 
 	const decisions = $derived(adeTasks.groups.attention.filter((v) => v.status === 'waiting' || v.status === 'failed'));
 	const review = $derived(adeTasks.groups.attention.filter((v) => v.status === 'review'));
 	const working = $derived(adeTasks.groups.active);
 	const complete = $derived(!decisions.length && !review.length && !working.length);
 
+	// Orca's Agents feed history: notices and created worktrees, newest first, with a filter.
+	let filter = $state('');
+	let filterBox: HTMLInputElement | undefined = $state();
+	const feed = $derived(activityFeed(agentInbox.items, adeTasks.list, filter));
+	function openEntry(slug: string, root: string | null) {
+		if (root && root !== workspace.root) return void projects.open(root, slug);
+		if (adeTasks.find(slug)) adeTasks.openTask(slug);
+	}
+	// ⌘F (Ctrl+F) focuses the feed filter while the page is shown (a terminal keeps its own).
+	function onKey(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f' && !(e.target as HTMLElement | null)?.closest('.xterm')) {
+			e.preventDefault();
+			filterBox?.focus();
+		}
+	}
+
 	function newTask() {
 		adeTasks.composing = true;
 		adeLayout.show(PRIMARY);
 	}
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <div class="h-full overflow-y-auto bg-(--vscode-editor-background) text-(--vscode-foreground)">
 	<header class="sticky top-0 z-10 border-b border-(--vscode-widget-border) bg-(--vscode-editor-background)/95 px-5 py-4 backdrop-blur">
@@ -69,5 +92,29 @@
 				<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{#each working as view (view.meta.slug)}<TaskCard {view} />{/each}</div>
 			</section>
 		{/if}
+
+		<section aria-labelledby="now-activity">
+			<div class="mb-2 flex items-center gap-2">
+				<Icon name="activity" size={14} />
+				<h2 id="now-activity" class="font-semibold">{t('ade.activity.title')}</h2>
+				<input bind:this={filterBox} class="ml-auto h-7 w-56 rounded border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-2 text-xs outline-none focus:border-(--vscode-focusBorder)" placeholder={t('ade.activity.filter')} aria-label={t('ade.activity.filter')} bind:value={filter} />
+			</div>
+			<ul class="divide-y divide-(--vscode-widget-border) rounded-lg border border-(--vscode-widget-border) text-xs">
+				{#each feed as e (e.id)}
+					<li>
+						<button class="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-(--vscode-list-hoverBackground)" onclick={() => openEntry(e.slug, e.root)}>
+							<span class="mt-0.5 text-(--vscode-descriptionForeground)"><Icon name={e.kind === 'created' ? 'plus' : 'bell'} size={13} /></span>
+							<span class="min-w-0 flex-1">
+								<span class="block truncate">{e.kind === 'created' ? t('ade.activity.created', { title: e.title }) : e.title}</span>
+								{#if e.body}<span class="block truncate text-(--vscode-descriptionForeground)">{e.body}</span>{/if}
+							</span>
+							<span class="shrink-0 text-[10px] text-(--vscode-descriptionForeground)">{timeAgo(e.at, adeTasks.now)}</span>
+						</button>
+					</li>
+				{:else}
+					<li class="px-3 py-4 text-center text-(--vscode-descriptionForeground)">{t('ade.activity.empty')}</li>
+				{/each}
+			</ul>
+		</section>
 	</main>
 </div>

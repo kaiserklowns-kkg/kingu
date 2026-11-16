@@ -3,6 +3,8 @@
 // to agent" — the notes in Orca's prompt format, delivered to the task's agent; delivered notes
 // are deleted (only while they still match what was sent).
 
+import { sendPrompt } from './agentTarget.svelte';
+import { paneAgents } from './paneAgents.svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { clientLog } from '#lib/client-log.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -115,8 +117,19 @@ class DiffNotes {
 		const pending = notes.filter((n) => !this.sending[n.id]);
 		if (!pending.length) return;
 		const how = this.delivery(key);
-		if (how === 'none') return this.copy(pending);
 		const prompt = formatNotes(pending);
+		// Orca's "Send notes to…": with another agent in the worktree's panes, or no task agent at
+		// all, the user picks where they go; delivered notes clear unless they were only copied.
+		if (how === 'none' || (key && paneAgents.rows(key).length)) {
+			for (const n of pending) this.sending[n.id] = true;
+			try {
+				const kind = await sendPrompt(key, prompt, t('ade.diffNotes.what', { count: pending.length }));
+				if (kind && kind !== 'copy') await this.#set(key, clearDelivered(this.list(key), pending));
+			} finally {
+				for (const n of pending) delete this.sending[n.id];
+			}
+			return;
+		}
 		for (const n of pending) this.sending[n.id] = true;
 		status.flash(t('ade.diffNotes.sending'));
 		try {

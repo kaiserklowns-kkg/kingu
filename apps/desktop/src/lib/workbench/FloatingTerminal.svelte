@@ -196,7 +196,7 @@
 				{#each floating.tabs as t (t.id)}
 					<div class={['absolute inset-0', floating.active !== t.id && 'invisible']} data-floating-active={floating.active === t.id ? '' : undefined}>
 						{#if t.kind === 'terminal'}
-							<Terminal key={floating.terminalKey(t.id)} floatingCwd={cwd} onoutput={() => floating.activity(t.id)} />
+							<Terminal key={floating.terminalKey(t.id)} floatingCwd={cwd} run={t.run} onoutput={() => floating.output(t.id)} ontitle={(title) => floating.titled(t.id, title)} />
 						{:else if t.kind === 'browser'}
 							<FloatingBrowser id={t.id} url={t.url} />
 						{:else if t.path}

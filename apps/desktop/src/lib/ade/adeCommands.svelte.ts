@@ -7,11 +7,13 @@ import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 import { focusedTerminal } from '#lib/terminal/registry.ts';
 import { ADE_SHORTCUTS as K, selectTabShortcut, type Shortcut } from './adeShortcuts.ts';
-import { adeLayout } from './adeLayout.svelte';
+import { adeLayout, browserLabel } from './adeLayout.svelte';
+import { browserAction } from '#lib/workbench/floating.ts';
 import { tabPanes } from './adeTabs.ts';
 import { cliName, parseCliCommand } from './agentCli';
 import { isMarkdownEditor } from './adeMarkdown.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { workspaceSpace } from './workspaceSpace.svelte';
 
 /** The Agents layout is what the window shows. */
 export const adeInFront = () => appMode.isAgents && !systemSettings.visible;
@@ -79,7 +81,24 @@ export function installAdeCommands(): () => void {
 			const t = terminal();
 			if (t) void adeLayout.closePane(t.key, t.tab.id);
 		}, split),
-		commands.register({ ...K.clear, category: 'Terminal', scope: 'agents', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() })
+		commands.register({ ...K.clear, category: 'Terminal', scope: 'agents', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() }),
+		// Orca's Workspace Space: disk used by each task's worktree (IDE and Agents layout alike).
+		// Orca's browser tools while a browser tab is shown (zoom stays on the toolbar: ⌘= ⌘- ⌘0 zoom Kingu).
+		...(['find', 'devtools'] as const).map((action) =>
+			commands.register({
+				id: `kingu.browser.${action}`,
+				title: action === 'find' ? 'Browser: Find in Page' : 'Browser: Toggle Developer Tools',
+				category: 'Browser',
+				key: action === 'find' ? 'cmd+f' : 'alt+cmd+i',
+				scope: 'agents',
+				when: () => front() && adeLayout.activeBrowser() !== null,
+				run: () => {
+					const b = adeLayout.activeBrowser();
+					if (b) browserAction(browserLabel(b.key, b.tab.id), action);
+				}
+			})
+		),
+		commands.register({ id: 'kingu.agents.workspaceSpace', title: 'Workspace Space…', category: 'Agents', when: () => workspace.root !== null, run: () => workspaceSpace.show() })
 	];
 	return () => unregister.forEach((u) => u());
 }

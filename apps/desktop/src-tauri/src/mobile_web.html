@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1e1e1e">
+<title>Kingu</title>
+<style nonce="__NONCE__">
+:root{--bg:#f6f6f6;--card:#fff;--fg:#1f1f1f;--muted:#6b6b6b;--line:#e2e2e2;--accent:#2f6fde;--ok:#2e8b57;--warn:#c27c00;--bad:#c33;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#181818;--card:#232323;--fg:#e6e6e6;--muted:#9a9a9a;--line:#333;--accent:#5b9bff;--ok:#73c991;--warn:#e2b340;--bad:#f07070}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans Thai",sans-serif}
+header{position:sticky;top:0;display:flex;align-items:center;gap:8px;padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));background:var(--bg);border-bottom:1px solid var(--line);z-index:1}
+header h1{flex:1;margin:0;font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+main{padding:12px 16px 32px;max-width:720px;margin:0 auto}
+button{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:8px 12px;min-height:40px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5}
+input,textarea{font:inherit;width:100%;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;padding:10px}
+textarea{min-height:110px;resize:vertical}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:8px 0}
+.project{margin:16px 0 4px;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.task{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;padding:12px}
+.task:last-child{border-bottom:0}
+.task .t{flex:1;min-width:0}
+.task .title{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task .sub{display:block;font-size:12px;color:var(--muted)}
+.dot{width:10px;height:10px;border-radius:50%;flex:none;background:var(--muted)}
+.s-running .dot,.dot.s-running{background:var(--accent)}
+.s-waiting .dot,.dot.s-waiting{background:var(--warn)}
+.s-review .dot,.dot.s-review{background:var(--ok)}
+.s-failed .dot,.dot.s-failed{background:var(--bad)}
+.ask{border-color:var(--warn)}
+.opt{display:flex;gap:8px;align-items:flex-start;padding:6px 0}
+.opt input{width:auto;margin-top:3px}
+.row button{flex:1}
+.muted{color:var(--muted)}
+.error{color:var(--bad)}
+.ok{color:var(--ok)}
+.pad{padding:12px}
+.pre{white-space:pre-wrap;word-break:break-word}
+.row{display:flex;gap:8px;align-items:center;margin-top:10px}
+.code{font:600 22px/1.2 ui-monospace,Menlo,monospace;letter-spacing:.12em;text-align:center;text-transform:uppercase}
+h2{font-size:15px;margin:0 0 6px}
+</style>
+</head>
+<body>
+<header><h1 id="title">Kingu</h1><button id="refresh" hidden></button></header>
+<main id="main"></main>
+<script nonce="__NONCE__">
+(function () {
+  'use strict';
+  var S = __STRINGS__;
+  var KEY = 'kingu.mobile.token';
+  var main = document.getElementById('main');
+  var titleEl = document.getElementById('title');
+  var refreshBtn = document.getElementById('refresh');
+  var data = null;
+  var current = null;
+  var timer = null;
+
+  function store(get, value) {
+    try {
+      if (get) return localStorage.getItem(KEY);
+      if (value) localStorage.setItem(KEY, value); else localStorage.removeItem(KEY);
+    } catch (e) { return null; }
+    return null;
+  }
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function clear() { while (main.firstChild) main.removeChild(main.firstChild); }
+  function statusText(s) {
+    return { running: S.statusRunning, waiting: S.statusWaiting, review: S.statusReview, done: S.statusDone, failed: S.statusFailed }[s] || s;
+  }
+  function ago(ms) {
+    if (!ms) return '';
+    try {
+      var d = new Date(ms);
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  }
+  function api(method, path, body) {
+    var headers = { 'Accept': 'application/json' };
+    var token = store(true);
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    if (body) headers['Content-Type'] = 'application/json';
+    return fetch(path, { method: method, headers: headers, body: body ? JSON.stringify(body) : undefined, cache: 'no-store', credentials: 'omit' })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (r.status === 401 && path !== '/api/pair') { store(false, null); showPair(j.error || ''); throw new Error(j.error || ''); }
+          if (!r.ok) throw new Error(j.error || String(r.status));
+          return j;
+        });
+      });
+  }
+
+  function showPair(message) {
+    stop();
+    current = null;
+    titleEl.textContent = S.pairTitle;
+    refreshBtn.hidden = true;
+    clear();
+    var box = el('div', 'card pad');
+    box.appendChild(el('p', 'muted', S.pairHint));
+    var input = el('input', 'code');
+    input.autocomplete = 'off';
+    input.autocapitalize = 'characters';
+    input.spellcheck = false;
+    input.placeholder = 'XXXXX-XXXXX';
+    input.maxLength = 16;
+    box.appendChild(input);
+    var msg = el('p', 'error', message || '');
+    var btn = el('button', 'primary', S.pair);
+    btn.style.width = '100%';
+    btn.style.marginTop = '10px';
+    btn.onclick = function () { pair(input.value, btn, msg); };
+    input.onkeydown = function (e) { if (e.key === 'Enter') pair(input.value, btn, msg); };
+    box.appendChild(btn);
+    box.appendChild(msg);
+    main.appendChild(box);
+  }
+
+  function deviceName() {
+    var ua = navigator.userAgent || '';
+    if (/iPad/.test(ua)) return 'iPad';
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/Android/.test(ua)) return 'Android';
+    return '';
+  }
+
+  function pair(code, btn, msg) {
+    if (btn) { btn.disabled = true; btn.textContent = S.pairing; }
+    return api('POST', '/api/pair', { code: String(code || ''), name: deviceName() })
+      .then(function (j) { store(false, j.token); showTasks(); })
+      .catch(function (e) {
+        if (btn) { btn.disabled = false; btn.textContent = S.pair; }
+        if (msg) msg.textContent = e.message; else showPair(e.message);
+      });
+  }
+
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  function poll() {
+    stop();
+    timer = setInterval(function () { if (document.visibilityState === 'visible') load(); }, 3000);
+  }
+
+  function load() {
+    return api('GET', '/api/tasks').then(function (j) {
+      data = j;
+      if (current) renderTask(); else renderList();
+    }).catch(function (e) {
+      if (!store(true)) return;
+      clear();
+      main.appendChild(el('p', 'error', S.offline));
+    });
+  }
+
+  function showTasks() {
+    current = null;
+    refreshBtn.hidden = false;
+    refreshBtn.textContent = S.refresh;
+    refreshBtn.onclick = load;
+    load();
+    poll();
+  }
+
+  function renderList() {
+    titleEl.textContent = S.tasks;
+    clear();
+    var projects = (data && data.projects) || [];
+    var any = false;
+    projects.forEach(function (p) {
+      if (!p.tasks.length) return;
+      any = true;
+      main.appendChild(el('div', 'project', p.name));
+      var card = el('div', 'card');
+      p.tasks.forEach(function (t) {
+        var b = el('button', 'task s-' + t.status);
+        b.appendChild(el('span', 'dot'));
+        var txt = el('span', 't');
+        txt.appendChild(el('span', 'title', t.title));
+        var sub = statusText(t.status) + (t.hibernated ? ' · ' + S.sleeping : '') + (t.live && t.live.message ? ' · ' + t.live.message : '') + ' · ' + ago(t.updatedAt);
+        txt.appendChild(el('span', 'sub', sub));
+        b.appendChild(txt);
+        b.onclick = function () { current = { root: p.root, slug: t.slug }; renderTask(); };
+        card.appendChild(b);
+      });
+      main.appendChild(card);
+    });
+    if (!any) main.appendChild(el('p', 'muted', S.noTasks));
+    var forget = el('button', '', S.forget);
+    forget.style.marginTop = '24px';
+    forget.onclick = function () {
+      api('POST', '/api/unpair', {}).catch(function () {}).then(function () { store(false, null); showPair(''); });
+    };
+    main.appendChild(forget);
+  }
+
+  function find() {
+    var projects = (data && data.projects) || [];
+    for (var i = 0; i < projects.length; i++) {
+      if (projects[i].root !== current.root) continue;
+      for (var k = 0; k < projects[i].tasks.length; k++) if (projects[i].tasks[k].slug === current.slug) return { p: projects[i], t: projects[i].tasks[k] };
+    }
+    return null;
+  }
+
+  var draft = '';
+  function renderTask() {
+    var hit = find();
+    if (!hit) { current = null; return renderList(); }
+    var p = hit.p, t = hit.t;
+    var focused = document.activeElement && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT');
+    if (focused) return; // Don't redraw under the user's typing.
+    titleEl.textContent = t.title;
+    clear();
+    var back = el('button', '', '‹ ' + S.back);
+    back.onclick = function () { current = null; renderList(); };
+    main.appendChild(back);
+    var head = el('div', 'card pad');
+    var st = el('div', 'row');
+    st.appendChild(el('span', 'dot s-' + t.status));
+    st.appendChild(el('span', '', statusText(t.status) + (t.hibernated ? ' · ' + S.sleeping : '')));
+    st.style.marginTop = '0';
+    head.appendChild(st);
+    head.appendChild(el('div', 'muted', p.name + ' · ' + t.agent + ' · ' + ago(t.updatedAt)));
+    if (t.live && t.live.message) head.appendChild(el('div', 'pre', t.live.message));
+    main.appendChild(head);
+    var phase = t.live && t.live.phase;
+    if (phase === 'permission' && p.open) main.appendChild(permissionCard(p, t));
+    if (phase === 'question' && p.open && t.live.ask && t.live.ask.questions && t.live.ask.questions.length) main.appendChild(questionCard(p, t));
+    if (t.prompt) {
+      var pr = el('div', 'card pad');
+      pr.appendChild(el('h2', '', S.prompt));
+      pr.appendChild(el('div', 'pre', t.prompt));
+      main.appendChild(pr);
+    }
+    if (t.lastRun) {
+      var lr = el('div', 'card pad');
+      lr.appendChild(el('h2', '', S.lastRun + ' · ' + statusText(t.lastRun.status) + ' · ' + ago(t.lastRun.at)));
+      if (t.lastRun.summary) lr.appendChild(el('div', 'pre', t.lastRun.summary));
+      if (t.lastRun.error) lr.appendChild(el('div', 'pre error', t.lastRun.error));
+      main.appendChild(lr);
+    }
+    var box = el('div', 'card pad');
+    var ta = el('textarea');
+    ta.placeholder = S.messagePlaceholder;
+    ta.maxLength = data.maxMessage || 16000;
+    ta.value = draft;
+    ta.oninput = function () { draft = ta.value; };
+    box.appendChild(ta);
+    var row = el('div', 'row');
+    var send = el('button', 'primary', S.send);
+    var note = el('span', 'muted', p.open ? '' : S.notOpen);
+    send.disabled = !p.open;
+    send.onclick = function () {
+      if (!ta.value.trim()) return;
+      send.disabled = true; send.textContent = S.sending; note.className = 'muted'; note.textContent = '';
+      api('POST', '/api/send', { root: p.root, slug: t.slug, text: ta.value })
+        .then(function () { draft = ''; ta.value = ''; note.className = 'ok'; note.textContent = S.sent; })
+        .catch(function (e) { note.className = 'error'; note.textContent = e.message; })
+        .then(function () { send.disabled = false; send.textContent = S.send; ta.blur(); });
+    };
+    row.appendChild(send);
+    row.appendChild(note);
+    box.appendChild(row);
+    main.appendChild(box);
+  }
+
+  function answerNote() { return el('p', 'muted', ''); }
+  function answer(p, t, body, buttons, note) {
+    buttons.forEach(function (b) { b.disabled = true; });
+    body.root = p.root; body.slug = t.slug;
+    return api('POST', '/api/answer', body)
+      .then(function () { note.className = 'ok'; note.textContent = S.answered; asks[t.slug] = null; setTimeout(load, 800); })
+      .catch(function (e) { note.className = 'error'; note.textContent = e.message; buttons.forEach(function (b) { b.disabled = false; }); });
+  }
+
+  function permissionCard(p, t) {
+    var box = el('div', 'card pad ask');
+    box.appendChild(el('h2', '', S.permissionTitle));
+    if (t.live.message) box.appendChild(el('div', 'pre', t.live.message));
+    box.appendChild(el('div', 'muted', S.permissionHint));
+    var row = el('div', 'row');
+    var allow = el('button', 'primary', S.allow);
+    var deny = el('button', '', S.deny);
+    var note = answerNote();
+    allow.onclick = function () { answer(p, t, { answer: 'allow' }, [allow, deny], note); };
+    deny.onclick = function () { answer(p, t, { answer: 'deny' }, [allow, deny], note); };
+    row.appendChild(allow);
+    row.appendChild(deny);
+    box.appendChild(row);
+    box.appendChild(note);
+    return box;
+  }
+
+  // Picked options per task while its question is open: { key, sels: [{ indices, other }] }.
+  var asks = {};
+  function questionCard(p, t) {
+    var qs = t.live.ask.questions;
+    var key = JSON.stringify(qs);
+    var st = asks[t.slug];
+    if (!st || st.key !== key) st = asks[t.slug] = { key: key, sels: qs.map(function () { return { indices: [], other: '' }; }) };
+    var box = el('div', 'card pad ask');
+    box.appendChild(el('h2', '', S.questionTitle));
+    var send = el('button', 'primary', S.sendAnswer);
+    var note = answerNote();
+    function complete() {
+      return st.sels.every(function (s) { return s.indices.length > 0 || s.other.trim(); });
+    }
+    qs.forEach(function (q, qi) {
+      var sel = st.sels[qi];
+      box.appendChild(el('div', 'pre', (q.header ? q.header + ': ' : '') + (q.question || '')));
+      (q.options || []).forEach(function (o, oi) {
+        var lab = el('label', 'opt');
+        var inp = el('input');
+        inp.type = q.multiSelect ? 'checkbox' : 'radio';
+        inp.name = 'q' + qi;
+        inp.checked = sel.indices.indexOf(oi) >= 0;
+        inp.onchange = function () {
+          if (q.multiSelect) {
+            sel.indices = sel.indices.filter(function (i) { return i !== oi; });
+            if (inp.checked) sel.indices.push(oi);
+          } else { sel.indices = [oi]; sel.other = ''; }
+          send.disabled = !complete();
+          inp.blur();
+        };
+        lab.appendChild(inp);
+        var txt = el('span', '');
+        txt.appendChild(el('div', '', o.label));
+        if (o.description) txt.appendChild(el('div', 'muted', o.description));
+        lab.appendChild(txt);
+        box.appendChild(lab);
+      });
+      var other = el('input');
+      other.placeholder = S.otherAnswer;
+      other.value = sel.other;
+      other.oninput = function () {
+        sel.other = other.value;
+        if (!q.multiSelect && other.value.trim()) sel.indices = [];
+        send.disabled = !complete();
+      };
+      box.appendChild(other);
+    });
+    send.disabled = !complete();
+    send.onclick = function () {
+      var sels = st.sels.map(function (s) { return s.other.trim() ? { indices: s.indices, other: s.other.trim() } : { indices: s.indices }; });
+      answer(p, t, { answer: 'question', selections: sels }, [send], note);
+    };
+    var row = el('div', 'row');
+    row.appendChild(send);
+    box.appendChild(row);
+    box.appendChild(note);
+    return box;
+  }
+
+  var m = /[#&]pairing=([A-Za-z0-9-]+)/.exec(location.hash || '');
+  if (m) {
+    // The code stays out of the history and of any later Referer.
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+    titleEl.textContent = S.pairTitle;
+    main.appendChild(el('p', 'muted', S.pairing));
+    pair(m[1], null, null);
+  } else if (store(true)) {
+    showTasks();
+  } else {
+    showPair('');
+  }
+})();
+</script>
+</body>
+</html>

@@ -40,6 +40,13 @@ async function handle(req: CliRequest): Promise<unknown> {
 			adeTasks.openTask(slug);
 			return null;
 		}
+		case 'task.set': {
+			// Orca's `worktree set --comment`: the note on the card ('' clears it); Rust checked slug and length.
+			const slug = String(req.params.slug ?? '');
+			if (!adeTasks.find(slug)) throw new Error(t('cli.taskNotFound', { slug }));
+			await adeTasks.setComment(slug, String(req.params.comment ?? ''));
+			return null;
+		}
 		case 'workspaceCleanup.preview':
 			return cleanup.preview();
 		case 'workspaceCleanup.run':

@@ -11,9 +11,13 @@ import { adeLayout, PRIMARY } from './adeLayout.svelte';
 import { openEditor } from './agentsMode.svelte';
 import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { worktreeDir } from './keys';
-import { COLUMNS, STATUS_LABEL, timeAgo } from './model';
+import { STATUS_LABEL, timeAgo } from './model';
 import { adeTasks } from './tasks.svelte';
-import { jumpRows, openInLabels, worktreeActions, type WorktreeAction } from './worktreeActions';
+import { adeDialogs } from './dialogs.svelte.ts';
+import { jumpItems, openInLabels, worktreeActions, JUMP_CREATE, JUMP_FOLDER, type JumpTask, type WorktreeAction } from './worktreeActions';
+import { fuzzyMatch } from '#lib/workbench/fuzzy.ts';
+import { prStatuses } from './prStatus.svelte';
+import { newSession } from './agentsMode.svelte';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
@@ -178,6 +182,8 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 			return slug && copy(adeTasks.branchOf(slug), 'branch');
 		case 'rename':
 			return slug && adeTasks.startRename(slug);
+		case 'editDetails':
+			return slug && adeDialogs.open({ kind: 'details', slug });
 		case 'markDone':
 			return slug && adeTasks.markDone(slug);
 		case 'reopen':
@@ -197,29 +203,72 @@ export function runWorktreeAction(key: string, id: WorktreeAction) {
 	}
 }
 
-/** Worktree Jump (⇧⌘J): the folder and every task worktree; Enter opens it in the Agents layout. */
+/**
+ * Worktree Jump (Orca's ⌘J, `components/worktree-jump`): with nothing typed, the worktrees that
+ * need you and the most recently used ones; typing matches titles, branches and `#PR`, and the
+ * last row creates a worktree from the text (the composer opens with it filled in).
+ */
 export function jumpToWorktree() {
 	if (!workspace.root) return status.flash(t('adeTasks.worktree.openFolderFirst'));
-	const rows = jumpRows(
-		{ name: workspace.name ?? '', branch: status.branch ?? '' },
-		COLUMNS.map((c) => ({ label: c.label, tasks: adeTasks.groups[c.id].map((v) => ({ slug: v.meta.slug, title: v.meta.title, status: STATUS_LABEL[v.status], branch: adeTasks.branchOf(v.meta.slug) })) }))
-	);
-	let last = '';
+	const tasks: JumpTask[] = adeTasks.views.map((v) => ({
+		slug: v.meta.slug,
+		title: v.meta.title,
+		status: v.status,
+		statusLabel: STATUS_LABEL[v.status],
+		branch: adeTasks.branchOf(v.meta.slug) ?? `kingu/${v.meta.slug}`,
+		pr: prStatuses.bySlug[v.meta.slug]?.pr?.number,
+		updated: v.runtime?.updatedAt ?? v.meta.updated_at,
+		seen: appMode.viewedAt[v.meta.slug]
+	}));
+	const folder = { name: workspace.name ?? '', branch: status.branch ?? '' };
+	const labels = {
+		needsYou: t('adeTasks.jump.needsYou'),
+		recent: t('adeTasks.jump.recent'),
+		folder: t('adeTasks.worktree.folderGroup'),
+		matches: t('adeTasks.jump.matches'),
+		create: (q: string) => t('adeTasks.jump.create', { name: q }),
+		createHint: t('adeTasks.jump.createHint')
+	};
 	quick.pick({
 		placeholder: t('adeTasks.worktree.jumpPlaceholder'),
-		items: rows.map((r) => {
-			const separator = r.group !== last ? r.group : undefined;
-			last = r.group;
-			return { id: r.key || FOLDER_ID, label: r.label, description: r.description, separator };
-		}),
-		activeId: appMode.isAgents ? adeLayout.key || FOLDER_ID : undefined,
-		onAccept: (item) => runWorktreeAction(item.id === FOLDER_ID ? PRIMARY : item.id, 'open')
+		items: [],
+		dynamic: (value) => jumpItems(value, folder, tasks, fuzzyMatch, labels),
+		activeId: appMode.isAgents ? adeLayout.key || JUMP_FOLDER : undefined,
+		onAccept: (item) => {
+			if (item.id.startsWith(JUMP_CREATE)) {
+				appMode.setMode('agents');
+				newSession();
+				adeTasks.prefill = item.id.slice(JUMP_CREATE.length);
+				return;
+			}
+			runWorktreeAction(item.id === JUMP_FOLDER ? PRIMARY : item.id, 'open');
+		}
 	});
 }
+
+/** The side bar's visible worktree order (AdeSidebar keeps it): ⌘1–9 jump to row N (Orca). */
+export const sidebarOrder = $state<{ keys: string[] }>({ keys: [] });
 
 export function installWorktreeCommands(): () => void {
 	const unregister = [
 		commands.register({ id: 'kingu.agents.jumpWorktree', title: 'Worktree Jump…', category: 'Agents', key: 'cmd+shift+j', when: () => workspace.root !== null, run: jumpToWorktree }),
+		// Orca's ⌘J in the Agents layout (the IDE keeps ⌘J for its panel).
+		commands.register({ id: 'kingu.agents.jumpWorktreeOrca', title: 'Worktree Jump (Orca key)', category: 'Agents', key: 'cmd+j', scope: 'agents', palette: false, when: () => appMode.isAgents && workspace.root !== null, run: jumpToWorktree }),
+		// Orca's ⌘1–9: the Nth worktree as the side bar shows it (the IDE keeps them for editor groups).
+		...Array.from({ length: 9 }, (_, i) =>
+			commands.register({
+				id: `kingu.agents.selectWorktree${i + 1}`,
+				title: `Select Worktree ${i + 1}`,
+				category: 'Agents',
+				key: `cmd+${i + 1}`,
+				scope: 'agents',
+				when: () => appMode.isAgents && sidebarOrder.keys.length > i,
+				run: () => {
+					const key = sidebarOrder.keys[i];
+					if (key !== undefined) adeLayout.show(key);
+				}
+			})
+		),
 		commands.register({
 			id: 'kingu.agents.newTerminalInWorktree',
 			title: 'New Terminal in Worktree',

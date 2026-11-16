@@ -70,6 +70,7 @@
 		onbell,
 		onaction,
 		onopenfile,
+		onopenurl,
 		onfocus
 	}: {
 		key: string;
@@ -94,8 +95,16 @@
 		onaction?: (id: string) => void;
 		/** A file link was followed: `rel` is relative to the open folder. */
 		onopenfile?: (rel: string, line?: number, column?: number) => void;
+		/** A web link was followed; true when the owner opened it itself (the ADE's in-app browser).
+		 *  `system`: Shift was held too (Orca: ⇧⌘-click goes to the system browser). */
+		onopenurl?: (url: string, system: boolean) => boolean;
 		onfocus?: () => void;
 	} = $props();
+	/** Follows a web link: the owner's handler first, else the system's opener. */
+	function followUrl(url: string, system = false) {
+		if (onopenurl?.(url, system)) return;
+		void openUrl(url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
+	}
 	let root: HTMLDivElement;
 	let host: HTMLDivElement;
 
@@ -251,7 +260,7 @@
 		if (node.id.startsWith('fix:')) {
 			const f = d.fixes[Number(node.id.slice(4))];
 			if (f?.kind === 'run') runCommandText(f.command);
-			else if (f?.kind === 'open' && schemeAllowed(f.url)) void openUrl(f.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
+			else if (f?.kind === 'open' && schemeAllowed(f.url)) followUrl(f.url);
 		} else if (node.id === 'rerun') runCommandText(d.command.command);
 		else if (node.id === 'copyCommand') void navigator.clipboard?.writeText(d.command.command).catch(() => {});
 		else if (node.id === 'copyOutput') void navigator.clipboard?.writeText(integration.output(d.command)).catch(() => {});
@@ -283,7 +292,7 @@
 			// OSC 8 hyperlinks follow the same modifier rule as detected links.
 			linkHandler: {
 				activate: (e, uri) => {
-					if (linkModifierDown(e, isMac, altModifier()) && schemeAllowed(uri)) void openUrl(uri, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
+					if (linkModifierDown(e, isMac, altModifier()) && schemeAllowed(uri)) followUrl(uri, e.shiftKey);
 				},
 				hover: (e, uri) => showHint(e, linkHint('url', isMac, altModifier()) + ` ${uri}`),
 				leave: () => (hint = null)
@@ -611,7 +620,7 @@
 				activate(e) {
 					if (!linkModifierDown(e, isMac, altModifier())) return;
 					if (l.kind === 'url') {
-						if (schemeAllowed(l.url)) void openUrl(l.url, setting<string[]>('terminal.integrated.allowedLinkSchemes')).catch((err) => status.flash(tr('legacySettings.terminal.openLinkFailed', { error: String(err) })));
+						if (schemeAllowed(l.url)) followUrl(l.url, e.shiftKey);
 					}
 					else if (rel) onopenfile?.(rel, l.line, l.column);
 				},

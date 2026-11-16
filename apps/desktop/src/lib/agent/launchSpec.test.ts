@@ -67,6 +67,53 @@ describe('resolveLaunchSpec — ADE golden', () => {
 	});
 });
 
+/** A deep-frozen settings object whose getter fails the test on any write (frozen objects throw in strict mode). */
+function readOnly(s: Record<string, unknown>) {
+	const freeze = (v: unknown): unknown => (v && typeof v === 'object' ? Object.freeze(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, freeze(x)]))) : v);
+	const frozen = freeze(s) as Record<string, unknown>;
+	const reads: string[] = [];
+	return { get: (k: string) => (reads.push(k), frozen[k]), reads, frozen };
+}
+
+describe('resolveLaunchSpec — reads settings, never writes them', () => {
+	const settings = {
+		'kingu.agent.cli': 'claude',
+		'kingu.agent.cliPermissions': 'yolo',
+		[agentArgsSetting('claude')]: '--verbose',
+		[agentEnvSetting('claude')]: { FOO: 'bar' },
+		'kingu.agent.cmdOverrides': { claude: '/opt/claude' },
+		'kingu.agent.claudeAgentTeams': 'in-process',
+		'kingu.agent.runtime': 'codex',
+		'kingu.agent.model': 'opus',
+		'kingu.agent.permissionMode': 'plan',
+		'kingu.chat.reasoningEffort': { codex: 'high' }
+	};
+
+	test('both surfaces on deep-frozen settings: no throw, values unchanged, a fresh spec each call', () => {
+		const { get, reads, frozen } = readOnly(settings);
+		const before = JSON.stringify(frozen);
+		const ade = resolveLaunchSpec({ surface: 'ade', get }) as AdeLaunchSpec;
+		const ide = resolveLaunchSpec({ surface: 'ide', get });
+		expect(JSON.stringify(frozen)).toBe(before);
+		expect(reads.length).toBeGreaterThan(0);
+		// The spec owns its arrays: changing it does not reach the settings.
+		ade.env.push('X=1');
+		ade.argv.push('--more');
+		expect(JSON.stringify(frozen)).toBe(before);
+		expect((resolveLaunchSpec({ surface: 'ade', get }) as AdeLaunchSpec).argv).toEqual(['claude', '--verbose']);
+		expect([ide.runtime, ide.model, ide.effort, ide.permissionMode]).toEqual(['codex', 'opus', 'high', 'plan']);
+	});
+
+	test('the ADE spec reads only ADE settings and the chat spec only chat ones', () => {
+		const ade = readOnly(settings);
+		resolveLaunchSpec({ surface: 'ade', get: ade.get });
+		expect(ade.reads.every((k) => !['kingu.agent.runtime', 'kingu.agent.model', 'kingu.chat.reasoningEffort'].includes(k))).toBe(true);
+		const ide = readOnly(settings);
+		resolveLaunchSpec({ surface: 'ide', get: ide.get });
+		expect(new Set(ide.reads)).toEqual(new Set(['kingu.agent.runtime', 'kingu.agent.model', 'kingu.agent.permissionMode', 'kingu.chat.reasoningEffort']));
+	});
+});
+
 describe('resolveLaunchSpec — chat', () => {
 	test('defaults: Claude, no model, default mode, no effort', () => {
 		expect(resolveLaunchSpec({ surface: 'ide', get: getter({}) })).toEqual({

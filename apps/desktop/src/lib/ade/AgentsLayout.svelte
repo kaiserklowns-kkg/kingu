@@ -6,6 +6,9 @@
 	// Tasks shows the board, Automations its page) | right side bar (Explorer, Agents, Source Control, Checks and Review of that worktree). Terminals stay
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
+	import AgentPick from './AgentPick.svelte';
+	import { dropTarget, rectStyle, splittable, type SplitDir } from './adeSplit';
+	import { dividers, leaves, paneRects, type Divider, type Rect } from '#lib/terminal/paneLayout.ts';
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
 	import AdeEditor from './AdeEditor.svelte';
@@ -77,12 +80,81 @@
 	/** Agent hibernation (attempts.svelte.ts) closed the task's idle CLI then. */
 	const hibernatedAt = $derived(slug ? adeTasks.find(slug)?.meta.hibernated_at : null);
 
+	/**
+	 * Orca's link routing (openLinksInApp): a web link followed in a worktree terminal opens as that
+	 * worktree's browser tab (an open tab of the same page is reused); Shift inverts the setting.
+	 */
+	function openLinkInApp(k: string, url: string, system: boolean): boolean {
+		if (!/^https?:\/\//i.test(url)) return false;
+		const inApp = settings.get<boolean>('kingu.browser.openLinksInApp') !== false;
+		if (inApp === system) return false;
+		const same = adeLayout.browsers[k]?.find((b) => b.url === url);
+		if (same) adeLayout.select(k, same.id);
+		else adeLayout.newBrowser(k, url);
+		return true;
+	}
+
+	// Orca's tab groups: the center splits into regions (adeSplit.ts), each showing one tab; the
+	// active tab is one of them. Views move by style only, so nothing is remounted.
+	const tree = $derived(adeLayout.board ? null : adeLayout.treeOf(key));
+	const rects = $derived(tree ? paneRects(tree) : null);
+	const regionOf = (k: string, id: string): Rect | 'full' | null => (adeLayout.board || k !== key ? null : rects ? (rects.get(id) ?? null) : id === activeTab ? 'full' : null);
+	const place = (r: Rect | 'full' | null) => (r && r !== 'full' ? rectStyle(r) : undefined);
+	/** File and diff tabs shown in a region other than the active one (the active one uses the editor below). */
+	const sideFiles = $derived(tree ? leaves(tree).filter((id) => id !== activeTab && keyOfTabId(id) !== null) : []);
+	let center: HTMLDivElement | undefined = $state();
+	let dropAt = $state<{ id: string; dir: SplitDir; rect: Rect } | null>(null);
+	function onCenterDragOver(e: DragEvent) {
+		const id = adeLayout.draggingTab;
+		if (!id || !splittable(id) || !center) return;
+		const r = center.getBoundingClientRect();
+		const all = rects ?? new Map([[activeTab, { x: 0, y: 0, w: 1, h: 1 }]]);
+		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+		dropAt = hit ? { ...hit, rect: all.get(hit.id)! } : null;
+		if (dropAt) e.preventDefault();
+	}
+	function onCenterDrop(e: DragEvent) {
+		const id = adeLayout.draggingTab;
+		if (id && dropAt) {
+			e.preventDefault();
+			adeLayout.splitTab(key, id, dropAt.dir, dropAt.id);
+		}
+		dropAt = null;
+		adeLayout.draggingTab = null;
+	}
+	function dragDivider(e: PointerEvent, d: Divider) {
+		const box = center?.getBoundingClientRect();
+		if (!box) return;
+		const el = e.currentTarget as HTMLElement;
+		el.setPointerCapture(e.pointerId);
+		const move = (ev: PointerEvent) => {
+			const a = d.area;
+			const ratio = d.direction === 'vertical' ? ((ev.clientX - box.left) / box.width - a.x) / a.w : ((ev.clientY - box.top) / box.height - a.y) / a.h;
+			adeLayout.setSplitRatio(key, d.path, ratio);
+		};
+		const up = () => (el.removeEventListener('pointermove', move), el.removeEventListener('pointerup', up));
+		el.addEventListener('pointermove', move);
+		el.addEventListener('pointerup', up);
+	}
+	const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
+
 	// The folder's "new task" composer (Orca: a new worktree with an agent).
 	let draft = $state('');
 	let draftFiles = $state<Attachment[]>([]);
 	let base = $state('');
-	let busy = $state(false);
+	/** The composer's agent pick (AgentPick.svelte); '' = kingu.agent.cli. */
+	let agentPick = $state('');
 	let focusKey = $derived(appMode.composeRequest);
+	// The jump palette's "Create worktree" row hands its text to the composer.
+	$effect(() => {
+		const text = adeTasks.prefill;
+		if (text === null) return;
+		untrack(() => {
+			draft = text;
+			adeTasks.prefill = null;
+			nudge++;
+		});
+	});
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
 
 	$effect(() => {
@@ -129,18 +201,13 @@
 		nudge++; // remounts the composer, which autofocuses
 	}
 
-	async function start(text: string, attachments: Attachment[]) {
-		busy = true;
-		try {
-			const created = await adeTasks.create({ title: taskTitleFromPrompt(text), prompt: text, base, attachments });
-			if (created) {
-				draft = '';
-				draftFiles = [];
-				adeLayout.show(created);
-			}
-		} finally {
-			busy = false;
-		}
+	// Orca: creation runs in the background — the composer clears at once, the side bar shows a
+	// progress row (with Retry on failure), and the new task opens when its worktree exists.
+	function start(text: string, attachments: Attachment[]) {
+		adeTasks.startCreate({ title: taskTitleFromPrompt(text), prompt: text, base, attachments, agent: agentPick || undefined });
+		draft = '';
+		draftFiles = [];
+		nudge++;
 	}
 	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
 	const FRAME = 'min-h-0 overflow-hidden rounded-[8px] border border-(--vscode-widget-border)';
@@ -199,8 +266,11 @@
 
 	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
 		<AdeTabBar />
-		<div class="relative min-h-0 flex-1">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="relative min-h-0 flex-1" bind:this={center} ondragover={onCenterDragOver} ondragleave={(e) => e.currentTarget === e.target && (dropAt = null)} ondrop={onCenterDrop}>
 		<RecentTabSwitcher />
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class={rects ? 'absolute' : 'contents'} style={place(regionOf(key, activeTab))}>
 		{#if adeLayout.page === 'now'}
 			<NowPage />
 		{:else if adeLayout.page === 'automations'}
@@ -272,15 +342,13 @@
 								<p class="text-[13px] text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.composerText')}</p>
 							</div>
 							{#key `${focusKey}:${nudge}`}
-								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder={t('legacyAde.agentsLayout.composerPlaceholder')} {busy} onsubmit={start}>
+								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder={t('legacyAde.agentsLayout.composerPlaceholder')} onsubmit={start}>
 									{#snippet left()}
-										<span class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 text-xs text-(--vscode-descriptionForeground)" title="Agent runs in the worktree terminal">
-											<Icon name="terminal" size={12} /> Terminal · {cliSetting || 'claude'}
-										</span>
+										<AgentPick bind:value={agentPick} />
 										<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('legacyAde.agentsLayout.forkFromBranch')}>
 											<Icon name="branch" size={12} />
 											<span class="sr-only">{t('legacyAde.agentsLayout.forkFromBranch')}</span>
-											<select class="max-w-48 bg-transparent outline-none focus-visible:outline-none" bind:value={base} disabled={busy}>
+											<select class="max-w-48 bg-transparent outline-none focus-visible:outline-none" bind:value={base}>
 												{#each adeTasks.branches as b (b)}<option value={b}>{b}</option>{/each}
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 											</select>
@@ -290,7 +358,7 @@
 							{/key}
 							<div class="flex flex-wrap gap-1.5">
 								{#each STARTERS as s (s.label)}
-									<button class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" disabled={busy} onclick={() => starter(s.text)}>
+									<button class="flex h-7 items-center gap-1.5 rounded-full border border-(--vscode-widget-border) px-3 text-xs text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)" onclick={() => starter(s.text)}>
 										<Icon name={s.icon} size={13} />{s.label}
 									</button>
 								{/each}
@@ -322,9 +390,12 @@
 				</div>
 			{/if}
 		{/if}
+		</div>
 		<!-- Agent CLIs (each task's main tab when it runs the Orca way), then every worktree's terminals. -->
 		{#each Object.entries(cliSessions.sessions) as [s, sess] (s + sess.startedAt)}
-			<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || s !== key || activeTab !== 'main') && 'hidden']}>
+			{@const r = regionOf(s, 'main')}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class={['absolute bg-(--vscode-terminal-background,var(--vscode-panel-background))', !place(r) && 'inset-0', !r && 'hidden']} style={place(r)} onpointerdowncapture={() => rects && adeLayout.focusRegion(s, 'main')}>
 				<Terminal
 					key={cliSessions.ptyKey(s, sess.startedAt)}
 					slug={s}
@@ -335,6 +406,7 @@
 					ontitle={(title) => cliSessions.title(s, title)}
 					onbell={() => terminalBells.ring(s, 'main')}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
+					onopenurl={(url, system) => openLinkInApp(s, url, system)}
 				/>
 				<!-- Quick reply while the CLI asks a question (top right: the CLI draws its question at the bottom). -->
 				<CliQuestion slug={s} class="absolute top-2 right-4 z-10 max-h-[70%] w-80 overflow-y-auto text-xs shadow-lg shadow-black/30" />
@@ -342,14 +414,18 @@
 		{/each}
 		{#each Object.entries(adeLayout.browsers) as [k, list] (k)}
 			{#each list as b (b.id)}
-				<div class={['absolute inset-0', (adeLayout.board || k !== key || activeTab !== b.id) && 'hidden']}>
+				{@const r = regionOf(k, b.id)}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class={['absolute', !place(r) && 'inset-0', !r && 'hidden']} style={place(r)} onpointerdowncapture={() => rects && adeLayout.focusRegion(k, b.id)}>
 					<AdeBrowser worktree={k} id={b.id} />
 				</div>
 			{/each}
 		{/each}
 		{#each Object.entries(adeLayout.terminals) as [k, list] (k)}
 			{#each list as t (t.id)}
-				<div class={['absolute inset-0 bg-(--vscode-terminal-background,var(--vscode-panel-background))', (adeLayout.board || k !== key || activeTab !== t.id) && 'hidden']}>
+				{@const r = regionOf(k, t.id)}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class={['absolute bg-(--vscode-terminal-background,var(--vscode-panel-background))', !place(r) && 'inset-0', !r && 'hidden']} style={place(r)} onpointerdowncapture={() => rects && adeLayout.focusRegion(k, t.id)}>
 					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
 					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} active={activePane(t)} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
 						{#snippet pane(p)}
@@ -367,12 +443,60 @@
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}
 								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}
+								onopenurl={(url, system) => openLinkInApp(k, url, system)}
 							/>
 						{/snippet}
 					</PaneSplitView>
 				</div>
 			{/each}
 		{/each}
+		<!-- File and diff tabs in the other regions (the active one is the editor above). -->
+		{#each sideFiles as id (id)}
+			{@const file = keyOfTabId(id)!}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="absolute" style={place(regionOf(key, id))} onpointerdowncapture={() => adeLayout.focusRegion(key, id)}>
+				{#if isDiffKey(file)}
+					<DiffHost active={file} onfail={(k) => adeLayout.closeFile(key, k)} />
+				{:else if !textFiles.placeholder(file)}
+					<AdeEditor path={file} onedit={() => adeLayout.pin(key, file)} onfail={(e) => textFiles.openFailed(file, e)} />
+				{/if}
+			</div>
+		{/each}
+		{#if tree && rects}
+			<!-- The regions' dividers (drag to resize), the active region's outline and each region's close button. -->
+			{#each dividers(tree) as d (d.path.join(''))}
+				{@const v = d.direction === 'vertical'}
+				<div
+					role="separator"
+					aria-orientation={v ? 'vertical' : 'horizontal'}
+					aria-label={t('ade.split.resize')}
+					class={['absolute z-10 bg-(--vscode-widget-border) hover:bg-(--vscode-focusBorder)', v ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize']}
+					style={v
+						? `left:calc(${pct(d.area.x + d.area.w * d.ratio)} - 2px);top:${pct(d.area.y)};height:${pct(d.area.h)}`
+						: `top:calc(${pct(d.area.y + d.area.h * d.ratio)} - 2px);left:${pct(d.area.x)};width:${pct(d.area.w)}`}
+					onpointerdown={(e) => dragDivider(e, d)}
+				></div>
+			{/each}
+			{#each [...rects] as [id, r] (id)}
+				{#if id === activeTab}<div class="pointer-events-none absolute z-10 rounded-sm border border-(--vscode-focusBorder)/60" style={rectStyle(r)}></div>{/if}
+				<button
+					class="absolute z-10 grid size-5 place-items-center rounded bg-(--vscode-editor-background)/80 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+					style={`top:calc(${pct(r.y)} + 4px);left:calc(${pct(r.x + r.w)} - 26px)`}
+					aria-label={t('ade.split.closeRegion')}
+					title={t('ade.split.closeRegion')}
+					onclick={() => adeLayout.closeRegion(key, id)}><Icon name="close" size={12} /></button
+				>
+			{/each}
+		{/if}
+		{#if adeLayout.draggingTab && dropAt}
+			{@const r = dropAt.rect}
+			<div
+				class="pointer-events-none absolute z-20 rounded border-2 border-(--vscode-focusBorder) bg-(--vscode-focusBorder)/15"
+				style={dropAt.dir === 'right' ? rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 }) : rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 })}
+			>
+				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{dropAt.dir === 'right' ? t('ade.split.dropRight') : t('ade.split.dropDown')}</span>
+			</div>
+		{/if}
 		</div>
 	</main>
 

@@ -16,6 +16,7 @@
 	import { attemptSlugs, MAX_ATTEMPTS, MODEL_SUGGESTIONS, resizeModels, validModel } from './attempts';
 	import { branchChoices, branchTitle, looksLikePr, prTitle, type BranchChoice, type PrHead } from './worktreeSource';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui';
+	import AgentPick from './AgentPick.svelte';
 
 	type Kind = 'new' | 'branch' | 'pr';
 	let kind = $state<Kind>('new');
@@ -25,10 +26,46 @@
 	let branch = $state('');
 	let pr = $state('');
 	let busy = $state(false);
+	/** AgentPick.svelte: '' = kingu.agent.cli. */
+	let agentPick = $state('');
 	let input: HTMLInputElement | undefined = $state();
 	let choices = $state<BranchChoice[] | null>(null);
 	let prs = $state<PrHead[] | null>(null);
 	let prsError = $state('');
+	/** Sparse checkout (Orca's sparsePresets): only some folders, typed or from a saved preset. */
+	type SparsePreset = { id: string; name: string; directories: string[] };
+	let sparseOn = $state(false);
+	let sparseText = $state('');
+	let presets = $state<SparsePreset[]>([]);
+	let presetId = $state('');
+	let presetName = $state('');
+	let naming = $state(false);
+	let sparseError = $state('');
+	const sparseDirs = $derived(sparseText.split(/[\n,]/).map((d) => d.trim()).filter(Boolean));
+	const loadPresets = () => invoke<SparsePreset[]>('sparse_presets_list').then((p) => (presets = p)).catch(() => (presets = []));
+	function pickPreset(id: string) {
+		presetId = id;
+		const p = presets.find((x) => x.id === id);
+		if (p) sparseText = p.directories.join('\n');
+	}
+	async function savePreset() {
+		sparseError = '';
+		try {
+			const p = await invoke<SparsePreset>('sparse_presets_save', { id: presetId || null, name: presetName || presets.find((x) => x.id === presetId)?.name || '', directories: sparseDirs });
+			await loadPresets();
+			presetId = p.id;
+			naming = false;
+			presetName = '';
+		} catch (e) {
+			sparseError = String(e);
+		}
+	}
+	async function removePreset() {
+		if (!presetId) return;
+		await invoke('sparse_presets_remove', { id: presetId }).catch((e) => (sparseError = String(e)));
+		presetId = '';
+		await loadPresets();
+	}
 	/** Best-of-N: one model per attempt (`''`: the agent's default). */
 	let models = $state<string[]>(['']);
 	const count = $derived(models.length);
@@ -50,6 +87,7 @@
 	const mac = keyLabel('cmd+a').startsWith('⌘');
 
 	onMount(() => {
+		void loadPresets();
 		void adeTasks.refreshBranches().then(() => {
 			if (!base) base = adeTasks.defaultBase();
 		});
@@ -77,6 +115,12 @@
 	async function submit(e?: Event) {
 		e?.preventDefault();
 		if (!ready || busy) return;
+		// A plain new task is created in the background (Orca): the form closes at once.
+		if (kind === 'new' && !parent && count === 1) {
+			adeTasks.startCreate({ title, prompt, base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined });
+			adeTasks.composing = false;
+			return;
+		}
 		busy = true;
 		try {
 			const created =
@@ -86,9 +130,7 @@
 						? await adeTasks.createFromPr(picked ?? pr.trim(), { title, prompt })
 						: parent
 							? await attempts.createStacked(parent.meta.slug, { title, prompt })
-							: count > 1
-								? await attempts.createAttempts({ title, prompt, base, models })
-								: await adeTasks.create({ title, prompt, base, model: models[0].trim() || undefined });
+							: await attempts.createAttempts({ title, prompt, base, models });
 			if (created) adeTasks.composing = false;
 		} finally {
 			busy = false;
@@ -182,6 +224,46 @@
 				{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 			</select>
 		</label>
+	{/if}
+	{#if kind === 'new' && !parent && count === 1}
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('ade.agentPick.label')}</span>
+			<AgentPick bind:value={agentPick} disabled={busy} />
+		</div>
+	{/if}
+	{#if kind === 'new' && !parent && count === 1}
+		<!-- Sparse checkout (Orca): the task's worktree holds only these folders. -->
+		<label class="flex items-center gap-2">
+			<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.sparse')}</span>
+			<select class={[INPUT, 'py-0.5']} aria-label={t('adeWorktrees.form.sparse')} value={sparseOn ? 'some' : 'all'} disabled={busy} onchange={(e) => (sparseOn = e.currentTarget.value === 'some')}>
+				<option value="all">{t('adeWorktrees.form.sparseAll')}</option>
+				<option value="some">{t('adeWorktrees.form.sparseSome')}</option>
+			</select>
+		</label>
+		{#if sparseOn}
+			<div class="space-y-1 rounded-sm border border-(--vscode-widget-border) p-1.5">
+				{#if presets.length}
+					<div class="flex items-center gap-1">
+						<select class={[INPUT, 'py-0.5']} aria-label={t('adeWorktrees.form.sparsePreset')} value={presetId} disabled={busy} onchange={(e) => pickPreset(e.currentTarget.value)}>
+							<option value="">{t('adeWorktrees.form.sparseNoPreset')}</option>
+							{#each presets as p (p.id)}<option value={p.id}>{p.name}</option>{/each}
+						</select>
+						{#if presetId}<button type="button" class="grid size-5 shrink-0 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('adeWorktrees.form.sparseRemove')} title={t('adeWorktrees.form.sparseRemove')} disabled={busy} onclick={removePreset}><Icon name="trash" size={11} /></button>{/if}
+					</div>
+				{/if}
+				<textarea class={[INPUT, 'h-14 resize-none font-mono']} placeholder={t('adeWorktrees.form.sparsePlaceholder')} aria-label={t('adeWorktrees.form.sparseSome')} bind:value={sparseText} disabled={busy} spellcheck="false"></textarea>
+				<div class="text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.sparseHint')}</div>
+				{#if naming}
+					<div class="flex items-center gap-1">
+						<input class={INPUT} placeholder={t('adeWorktrees.form.sparsePresetName')} aria-label={t('adeWorktrees.form.sparsePresetName')} bind:value={presetName} maxlength="80" disabled={busy} />
+						<button type="button" class={BUTTON_SECONDARY} disabled={busy || !presetName.trim() || !sparseDirs.length} onclick={savePreset}>{t('adeWorktrees.form.sparseSave')}</button>
+					</div>
+				{:else}
+					<button type="button" class="text-[11px] text-(--vscode-textLink-foreground) hover:underline disabled:opacity-50" disabled={busy || !sparseDirs.length} onclick={() => (naming = true)}>{t('adeWorktrees.form.sparseSaveAs')}</button>
+				{/if}
+				{#if sparseError}<div class="truncate text-[11px] text-(--vscode-errorForeground)" title={sparseError}>{sparseError}</div>{/if}
+			</div>
+		{/if}
 	{/if}
 	{#if slug}<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ kingu/{slug}</div>{/if}
 	<div class="flex items-center gap-1.5">

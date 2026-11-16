@@ -86,12 +86,19 @@ pub struct WindowSession {
   /// Default), over its folder's association (user_profiles.rs).
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub profile: Option<String>,
+  /// A worktree on an SSH host opened as the workspace (remote_ws.rs); `folders` is then empty,
+  /// so every command without a remote side refuses instead of touching a local path.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub remote: Option<crate::remote_ws::RemoteRoot>,
 }
 
 impl WindowSession {
   /// The workspace's identity (VS Code's workspace id): the workspace file, an untitled
   /// workspace's id, or the single folder. `None` for an empty window.
   pub fn identity(&self) -> Option<String> {
+    if let Some(r) = &self.remote {
+      return Some(r.uri());
+    }
     if let Some(f) = &self.file {
       return Some(f.display().to_string());
     }
@@ -116,6 +123,8 @@ pub struct WindowState {
   pub searches: Arc<Searches>,
   pub worktree_searches: Arc<Searches>,
   pub editor_searches: Arc<Searches>,
+  /// Quick Open's `%` text search (its own slot, so it never cancels the Search view's).
+  pub quick_searches: Arc<Searches>,
   /// One file watcher per root folder.
   watchers: Mutex<Vec<(PathBuf, FileWatcher)>>,
   /// The first folder's repository (branches and worktrees for the ADE).
@@ -198,9 +207,18 @@ impl Workspace {
     self.state.session.read().unwrap_or_else(|e| e.into_inner()).folders.first().map(|f| f.path.clone())
   }
 
-  /// The first root folder, or an error for commands that need a folder.
+  /// The first root folder, or an error for commands that need a folder (a folder on an SSH
+  /// host says that this needs a folder on this computer).
   pub fn root(&self) -> Result<PathBuf, String> {
+    if self.remote().is_some() {
+      return Err(tr!(WorkspaceMsg::NotOnRemote));
+    }
     self.current().ok_or_else(|| tr!(FilesMsg::NoFolder))
+  }
+
+  /// The worktree on an SSH host this window has open as its workspace, if any.
+  pub fn remote(&self) -> Option<crate::remote_ws::RemoteRoot> {
+    self.state.session.read().unwrap_or_else(|e| e.into_inner()).remote.clone()
   }
 
   /// See [`WindowSession::storage_key`].
@@ -323,6 +341,7 @@ impl Workspace {
     self.state.searches.cancel();
     self.state.worktree_searches.cancel();
     self.state.editor_searches.cancel();
+    self.state.quick_searches.cancel();
     self.state.watchers.lock().unwrap_or_else(|e| e.into_inner()).clear();
     let _ = self.state.git.watch(None, || {});
   }

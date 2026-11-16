@@ -127,7 +127,30 @@ export const YOLO_ARGS: Readonly<Record<string, readonly string[]>> = {
 	amp: ['--dangerously-allow-all'],
 	droid: ['--auto', 'high'],
 	qwen: ['--approval-mode', 'yolo'],
-	aider: ['--yes-always']
+	aider: ['--yes-always'],
+	// The rest of Orca's YOLO_TUI_AGENT_ARGS (shared/agent-launch/permissions/tui-agent-permissions.ts).
+	codebuddy: ['--dangerously-skip-permissions'],
+	openclaude: ['--dangerously-skip-permissions'],
+	qoder: ['--dangerously-skip-permissions'],
+	'qoder-cn': ['--dangerously-skip-permissions'],
+	antigravity: ['--dangerously-skip-permissions'],
+	kiro: ['--trust-all-tools'],
+	crush: ['--yolo'],
+	autohand: ['--unrestricted'],
+	cline: ['--auto-approve', 'true'],
+	'command-code': ['--yolo'],
+	continue: ['--allow', '*'],
+	// Kimi Code's --yolo is "ask when needed"; --auto never asks.
+	kimi: ['--auto'],
+	muse: ['--yolo'],
+	zcode: ['--mode', 'yolo'],
+	'mistral-vibe': ['--agent', 'auto-approve'],
+	rovo: ['--yolo'],
+	hermes: ['--yolo'],
+	grok: ['--permission-mode', 'bypassPermissions'],
+	devin: ['--permission-mode', 'bypass', '--respect-workspace-trust', 'false'],
+	ante: ['--yolo'],
+	trae: ['--yolo']
 };
 
 /**
@@ -148,4 +171,15 @@ export function agentCommand(get: (id: string) => string | undefined): string[] 
 	}
 	const args = parseCliCommand(extra);
 	return args ? [...base, ...args] : null;
+}
+
+/**
+ * The `kingu.agent.cli` value a new task uses when the create form picked `pick` (a program from
+ * the picker): the default command itself when it runs that program (it keeps its flags, e.g.
+ * `claude --model opus`), else the bare program. Orca's create-time agent selector.
+ */
+export function agentForPick(pick: string, current: string): string {
+	const cur = parseCliCommand(current.trim() || 'claude');
+	if (cur && profileOf(cur).id === profileOf([pick]).id) return current.trim() || 'claude';
+	return pick;
 }

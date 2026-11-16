@@ -193,7 +193,11 @@ fn mark_untracked_dirs(dir: &Path, entries: &mut [crate::fs::DirEntry]) {
 
 pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
   let started = std::time::Instant::now();
-  let out = command()
+  // Every local git waits for a slot (git_admission: many worktrees polling at once must not
+  // swamp the machine); reads are killed after Orca's read timeout.
+  let _slot = crate::git_admission::admit(args, root, None)?;
+  let mut cmd = command();
+  cmd
     .arg("-C")
     .arg(root)
     .arg("--literal-pathspecs")
@@ -201,12 +205,22 @@ pub(crate) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     // refresh it, or they collide with a commit or stage running beside them; writes are queued
     // in `git_queue`. Only optional locks are skipped: a write still locks what it writes.
     .arg("--no-optional-locks")
-    .args(args)
-    .output()
-    .map_err(|e| {
-      crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
-      format!("git: {e}")
-    })?;
+    .args(args);
+  let result = if crate::git_admission::is_read(args) {
+    crate::git_admission::output_limited(&mut cmd, crate::git_admission::READ_TIMEOUT).map(|(out, killed)| (out, killed.then_some(crate::git_admission::READ_TIMEOUT)))
+  } else {
+    cmd.output().map(|out| (out, None))
+  };
+  let (out, timed_out) = result.map_err(|e| {
+    crate::git_output::record(args, started.elapsed(), Some(&e.to_string()));
+    format!("git: {e}")
+  })?;
+  if let Some(limit) = timed_out {
+    let op = args.first().copied().unwrap_or("");
+    let msg = tr!(crate::i18n::msg::GitMsg::TimedOut, op, secs = limit.as_secs());
+    crate::git_output::record(args, started.elapsed(), Some(&msg));
+    return Err(msg);
+  }
   if !out.status.success() {
     // `git commit` reports "nothing to commit" on stdout.
     let err = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr });
@@ -637,6 +651,7 @@ pub fn log(root: &Path, limit: u32) -> Result<Vec<Commit>, String> {
 /// Network operations must fail rather than wait for a password nobody can type.
 fn run_remote(root: &Path, args: &[&str]) -> Result<(), String> {
   let started = std::time::Instant::now();
+  let _slot = crate::git_admission::admit(args, root, None)?;
   let out = crate::shell_env::command("git")
     .env("GIT_TERMINAL_PROMPT", "0")
     .arg("-C")

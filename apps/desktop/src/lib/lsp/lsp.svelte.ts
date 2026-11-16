@@ -723,7 +723,11 @@ class Lsp {
 		return this.#root;
 	}
 
+	/** The window's workspace is on an SSH host (remote_ws.rs): language servers would run on this computer against files they cannot see, so none starts (not available on remote yet). */
+	remote = false;
+
 	async #open(doc: Doc) {
+		if (this.remote) return;
 		const info = this.servers.find((s) => s.key === doc.key);
 		if (!info || isDisabled(info, parseDisabled(userSettings.get('kingu.lsp.disabled')))) return;
 		const session = await this.#sessionFor(info, doc.rel);

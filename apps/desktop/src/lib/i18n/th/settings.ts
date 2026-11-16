@@ -236,5 +236,8 @@ export const settings = {
 	'settings.pane.adeTerminal': 'หน้าตาและการทำงานของเทอร์มินัลในโหมด ADE',
 	'settings.pane.sourceControlAi': 'ข้อความ commit, รายละเอียด pull request และชื่อ branch ที่ AI เขียนให้',
 	'settings.pane.pullRequests': 'การสร้าง pull request และบอตที่ไม่นับในรีวิว',
+	'settings.defaults.settingsHeader': 'ค่าเริ่มต้นของการตั้งค่า (อ่านอย่างเดียว) ถ้าจะเปลี่ยน ให้คัดลอกไปใส่ใน settings.json ของคุณ',
+	'settings.defaults.keybindingsHeader': 'ปุ่มลัดเริ่มต้น (อ่านอย่างเดียว) ถ้าจะเปลี่ยน ให้ตั้งทับใน keybindings.json ของคุณ',
+	'settings.defaults.layout': 'เฉพาะ layout {layout}',
 	'settings.pane.project': 'การตั้งค่าเฉพาะ {name} ที่ Kingu เก็บไว้บนเครื่องนี้ และมีผลเหนือการตั้งค่าของผู้ใช้'
 } satisfies Record<keyof typeof en, string>;

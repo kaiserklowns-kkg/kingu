@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveSettings } from '#lib/settings/registry.ts';
-import { cleanAnswer, commitMessage, commitPrompt, prDetails, prPrompt } from './aiText';
+import { cleanAnswer, commitMessage, commitPrompt, issueReferences, prDetails, prFields, prPrompt } from './aiText';
 import { botOverrides, byAudience, isBotAuthor, type ReviewThread } from './prComments';
 
 describe('source-control AI (Orca Git page)', () => {
@@ -28,10 +28,19 @@ describe('source-control AI (Orca Git page)', () => {
 		expect(p).toContain('```diff\n+x\n```');
 		expect(p.endsWith('Use Conventional Commits')).toBe(true);
 		expect(commitPrompt({ branch: null, summary: 'M\ta', patch: '' })).toContain('patch is not included');
-		const pr = prPrompt({ branch: 'kingu/x', commits: '- Add a', summary: 'A\ta', patch: '+a' }, 'main', '## Summary\n', '');
-		expect(pr).toContain('into main');
-		expect(pr).toContain('## Summary');
-		expect(pr).not.toContain('Additional instructions');
+		const ctx = { branch: 'kingu/x', commits: '- Add a', summary: 'A\ta', patch: '+a' };
+		const input = { base: 'main', currentTitle: '', currentBody: '', currentDraft: false, issue: null, template: '## Summary\n' };
+		const pr = prPrompt(ctx, input);
+		expect(pr).toContain('Current base: main');
+		expect(pr).toContain('Current description: ## Summary');
+		expect(pr).toContain('- No GitHub issue is linked; do not invent one.');
+		expect(pr).not.toContain('Additional user prompt');
+		expect(pr.endsWith('No prose or code fences.')).toBe(true);
+		const linked = prPrompt(ctx, { ...input, issue: { provider: 'linear', number: 123, key: 'ENG-123', title: 'Login' }, instructions: 'Be brief' });
+		expect(linked).toContain('`Fixes ENG-123` only for a complete fix; otherwise say it is partial and use `Refs ENG-123`');
+		expect(linked).toContain('Linked Linear issue: ENG-123 Login');
+		expect(linked).toContain('Additional user prompt:\nBe brief');
+		expect(issueReferences({ provider: 'gitlab', number: 4, title: '' })).toEqual({ complete: 'Closes #4', partial: 'Related to #4' });
 	});
 
 	test('answers become a commit message or PR details', () => {
@@ -43,6 +52,8 @@ describe('source-control AI (Orca Git page)', () => {
 		expect(prDetails('# Title: Add search\n\n## Summary\n- a')).toEqual({ title: 'Add search', body: '## Summary\n- a' });
 		expect(prDetails('Only a title.')).toEqual({ title: 'Only a title', body: '' });
 		expect(prDetails('')).toBeNull();
+		expect(prFields('```json\n{"base":"dev","title":"Add search.","body":"## Problem\\nx","draft":true}\n```', 'main')).toEqual({ base: 'dev', title: 'Add search', body: '## Problem\nx', draft: true });
+		expect(prFields('Add search\n\nbody', 'main')).toEqual({ base: 'main', title: 'Add search', body: 'body', draft: false });
 	});
 
 	test('bot review comments (kingu.pr.botAuthors)', () => {
