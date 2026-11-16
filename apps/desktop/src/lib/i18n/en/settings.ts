@@ -229,6 +229,7 @@ export const settings = {
 	'settings.pane.agentChat': 'How agent chats look and behave.',
 	'settings.pane.notifications': 'Desktop notifications for agent events.',
 	'settings.pane.worktrees': 'Branch names, base branch, scripts and visibility of worktrees.',
+	'settings.pane.workspaceCleanup': 'Remove finished workspaces automatically, with rules for all projects or one.',
 	'settings.pane.repository': 'Scripts, name, icon and colour of a repository.',
 	'settings.pane.adeSidebar': 'What the ADE sidebar and board list, and how.',
 	'settings.pane.adeTerminal': 'Look and behaviour of terminals in the ADE.',

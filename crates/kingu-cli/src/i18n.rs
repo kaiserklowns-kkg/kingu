@@ -57,7 +57,18 @@ pub enum Msg {
   BadMode,
   TaskOpenNeedsSlug,
   TaskOpenOneSlug,
+  TaskSetNeedsComment,
   UnknownTaskCommand,
+  CleanupNeedsSubcommand,
+  UnknownCleanupCommand,
+  CleanupBadRequestId,
+  CleanupReceiptNeedsId,
+  CleanupNothing,
+  CleanupPreviewHead,
+  CleanupRunDone,
+  CleanupReplayed,
+  CleanupRequestId,
+  CleanupFailedRow,
   OpenNeedsPath,
   OpenOnePath,
   NotifyNeedsMessage,
@@ -125,7 +136,18 @@ impl Msg {
     Msg::BadMode,
     Msg::TaskOpenNeedsSlug,
     Msg::TaskOpenOneSlug,
+    Msg::TaskSetNeedsComment,
     Msg::UnknownTaskCommand,
+    Msg::CleanupNeedsSubcommand,
+    Msg::UnknownCleanupCommand,
+    Msg::CleanupBadRequestId,
+    Msg::CleanupReceiptNeedsId,
+    Msg::CleanupNothing,
+    Msg::CleanupPreviewHead,
+    Msg::CleanupRunDone,
+    Msg::CleanupReplayed,
+    Msg::CleanupRequestId,
+    Msg::CleanupFailedRow,
     Msg::OpenNeedsPath,
     Msg::OpenOnePath,
     Msg::NotifyNeedsMessage,
@@ -194,7 +216,18 @@ impl Msg {
       Msg::BadMode => ("--mode must be terminal or timeline, not `{mode}`", "--mode ต้องเป็น terminal หรือ timeline ไม่ใช่ `{mode}`"),
       Msg::TaskOpenNeedsSlug => ("`kingu task open` needs a task slug (see `kingu task list`)", "`kingu task open` ต้องมี slug ของงาน (ดูได้จาก `kingu task list`)"),
       Msg::TaskOpenOneSlug => ("`kingu task open` takes one slug", "`kingu task open` รับ slug ได้ทีละหนึ่ง"),
-      Msg::UnknownTaskCommand => ("unknown task command `{command}` (list, create, open)", "ไม่รู้จักคำสั่ง task `{command}` (มี list, create, open)"),
+      Msg::TaskSetNeedsComment => ("`kingu task set` needs --comment <text> (\"\" clears it)", "`kingu task set` ต้องมี --comment <ข้อความ> (\"\" คือลบออก)"),
+      Msg::UnknownTaskCommand => ("unknown task command `{command}` (list, create, open, set)", "ไม่รู้จักคำสั่ง task `{command}` (มี list, create, open, set)"),
+      Msg::CleanupNeedsSubcommand => ("`kingu cleanup` needs preview, run or receipt", "`kingu cleanup` ต้องตามด้วย preview, run หรือ receipt"),
+      Msg::UnknownCleanupCommand => ("unknown cleanup command `{command}` (preview, run, receipt)", "ไม่รู้จักคำสั่ง cleanup `{command}` (มี preview, run, receipt)"),
+      Msg::CleanupBadRequestId => ("request id `{id}` must be 1-64 letters, digits, - or _", "request id `{id}` ต้องยาว 1-64 ตัว เป็นตัวอักษร ตัวเลข - หรือ _"),
+      Msg::CleanupReceiptNeedsId => ("`kingu cleanup receipt` needs one request id", "`kingu cleanup receipt` ต้องมี request id หนึ่งค่า"),
+      Msg::CleanupNothing => ("no tasks to clean up", "ไม่มีงานให้ล้าง"),
+      Msg::CleanupPreviewHead => ("{ready} to remove, {kept} kept (rules: {rules})", "จะลบ {ready} เก็บไว้ {kept} (กฎ: {rules})"),
+      Msg::CleanupRunDone => ("removed {removed}, failed {failed}, kept {kept}", "ลบแล้ว {removed} ล้มเหลว {failed} เก็บไว้ {kept}"),
+      Msg::CleanupReplayed => ("(replayed: this request id already ran, nothing was removed again)", "(ตอบซ้ำ: request id นี้เคยรันแล้ว ไม่ได้ลบซ้ำ)"),
+      Msg::CleanupRequestId => ("request id: {id} (to retry safely: kingu cleanup run --request-id {id})", "request id: {id} (ลองใหม่อย่างปลอดภัย: kingu cleanup run --request-id {id})"),
+      Msg::CleanupFailedRow => ("failed {slug}: {error}", "ล้มเหลว {slug}: {error}"),
       Msg::OpenNeedsPath => ("`kingu open` needs a path", "`kingu open` ต้องมี path"),
       Msg::OpenOnePath => ("`kingu open` takes one path", "`kingu open` รับ path ได้ทีละหนึ่ง"),
       Msg::NotifyNeedsMessage => ("`kingu notify` needs a message", "`kingu notify` ต้องมีข้อความ"),
@@ -288,6 +321,12 @@ Usage:
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
                                      start a task in a new worktree; prints its slug
   kingu task open <slug>             show a task in Kingu
+  kingu task set [<slug>] --comment <text>
+                                     the note on a task's card (no slug: this worktree's task)
+  kingu cleanup preview              what the cleanup rules would remove (Settings › Workspace Cleanup)
+  kingu cleanup run [--request-id <id>]
+                                     remove it; the same id again replays the first receipt
+  kingu cleanup receipt <id>         the receipt of an earlier run
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
                                      (starts Kingu with it when it is not running)
   kingu notify <message…> [--title <title>]
@@ -338,6 +377,12 @@ const USAGE_TH: &str = "kingu: เปิดไฟล์และโฟลเด�
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
                                      เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
   kingu task open <slug>             แสดงงานใน Kingu
+  kingu task set [<slug>] --comment <text>
+                                     หมายเหตุบนการ์ดงาน (ไม่ใส่ slug คืองานของ worktree นี้)
+  kingu cleanup preview              ดูว่ากฎล้างจะลบอะไร (Settings › Workspace Cleanup)
+  kingu cleanup run [--request-id <id>]
+                                     ลบตามกฎ ใช้ id เดิมซ้ำจะได้ใบเสร็จครั้งแรกกลับมา ไม่ลบซ้ำ
+  kingu cleanup receipt <id>         ใบเสร็จของการรันก่อนหน้า
   kingu open <path>[:line[:column]]  เปิดไฟล์ (ในโฟลเดอร์ที่เปิด) หรือโฟลเดอร์ใน Kingu
                                      (เปิด Kingu พร้อม path นั้นถ้ายังไม่ได้เปิดอยู่)
   kingu notify <message…> [--title <title>]
@@ -404,7 +449,7 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 13);
+    assert_eq!(commands(USAGE_EN).len(), 17);
     let flags = |s: &str| s.lines().filter(|l| l.trim_start().starts_with('-')).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(flags(USAGE_EN), flags(USAGE_TH));
     assert!(flags(USAGE_EN).len() > 12);

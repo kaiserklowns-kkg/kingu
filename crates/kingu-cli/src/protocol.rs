@@ -12,6 +12,14 @@ pub const METHOD_STATUS: &str = "status";
 pub const METHOD_TASK_LIST: &str = "task.list";
 pub const METHOD_TASK_CREATE: &str = "task.create";
 pub const METHOD_TASK_OPEN: &str = "task.open";
+/// Orca's `worktree set --comment`: the note on a task's card.
+pub const METHOD_TASK_SET: &str = "task.set";
+/// Workspace Cleanup (Orca's `workspace-cleanup` RPC): `preview` says what the rules would remove,
+/// `run` removes it. `run` is a durable change, so it carries a `requestId`: the same id again
+/// answers with the first run's receipt instead of removing twice; `receipt` reads one back.
+pub const METHOD_CLEANUP_PREVIEW: &str = "workspaceCleanup.preview";
+pub const METHOD_CLEANUP_RUN: &str = "workspaceCleanup.run";
+pub const METHOD_CLEANUP_RECEIPT: &str = "workspaceCleanup.receipt";
 pub const METHOD_OPEN: &str = "open";
 pub const METHOD_NOTIFY: &str = "notify";
 pub const METHOD_ARTIFACT_PUBLISH: &str = "artifact.publish";
@@ -25,6 +33,11 @@ pub const METHOD_ACCOUNT_REMOVE_DATA: &str = "accounts.removeData";
 /// holds a `waitId` that `editor.wait` blocks on until the editors (or their window) close.
 pub const METHOD_EDITOR_OPEN: &str = "editor.open";
 pub const METHOD_EDITOR_WAIT: &str = "editor.wait";
+
+/// A request id: 1..=64 of letters, digits, `-` and `_`.
+pub fn valid_request_id(id: &str) -> bool {
+  (1..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
 
 /// Error codes. `unauthorized`: missing or wrong token; `bad_request`: unreadable line or bad
 /// params; `unknown_method`; `unavailable`: the window did not answer; `failed`: the app refused.

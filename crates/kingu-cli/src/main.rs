@@ -97,6 +97,10 @@ fn main() {
     _ => client::request_of(&command, &cwd, stdin_prompt).unwrap_or_else(|e| fail(EXIT_USAGE, e)),
   };
   let Some((method, params)) = request else { return };
+  // A durable change: the id goes out first, so a lost answer can be retried (`--request-id`) or read back (`receipt`).
+  if method == protocol::METHOD_CLEANUP_RUN && !inv.json {
+    eprintln!("kingu: {}", tr(Msg::CleanupRequestId, &[("id", &params["requestId"].as_str().unwrap_or(""))]));
+  }
   let path = runtime::runtime_path().unwrap_or_else(|| fail(EXIT_UNAVAILABLE, tr(Msg::NoDataFolder, &[])));
   let res = match send(&path, method, params.clone(), Some(client::ANSWER_TIMEOUT)) {
     Ok(res) => res,

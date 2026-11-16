@@ -3,6 +3,7 @@ mod agent;
 mod artifacts;
 mod attachments;
 mod backup;
+mod cli_ledger;
 mod cli_server;
 mod dap;
 mod dialog;
@@ -74,6 +75,7 @@ mod workspace;
 mod workspace_trust;
 
 use std::collections::BTreeMap;
+mod workspace_cleanup;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -1718,6 +1720,7 @@ pub fn run() {
       gitlab::gitlab_issue_comment,
       gitlab::gitlab_issue_open,
       jira::jira_status,
+      workspace_cleanup::workspace_cleanup_scan,
       jira::jira_connect,
       jira::jira_disconnect,
       jira::jira_issues_list,

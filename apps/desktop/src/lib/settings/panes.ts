@@ -24,7 +24,8 @@ export const PANES: Readonly<Record<string, Pane>> = {
 	'ADE Sidebar': { icon: 'sidebarLeft', description: 'settings.pane.adeSidebar' },
 	'ADE Terminal': { icon: 'terminal', description: 'settings.pane.adeTerminal' },
 	'Source Control AI': { icon: 'sparkle', description: 'settings.pane.sourceControlAi' },
-	'Pull Requests': { icon: 'pullRequest', description: 'settings.pane.pullRequests' }
+	'Pull Requests': { icon: 'pullRequest', description: 'settings.pane.pullRequests' },
+	'Workspace Cleanup': { icon: 'trash', description: 'settings.pane.workspaceCleanup' }
 };
 
 export const isPane = (group: string | null): group is string => group !== null && Object.hasOwn(PANES, group);
@@ -58,7 +59,7 @@ export const ORCA_NAV: readonly {
 		items: [{ group: 'Agent' }, { page: 'arkai' }, { page: 'accounts' }, { group: 'Orchestration' }, { page: 'voice' }, { page: 'mcp' }, { page: 'skills' }, { page: 'memories' }, { group: 'Local AI' }]
 	},
 	{ id: 'setup', label: 'settings.nav.setup', items: [{ page: 'setup' }, { page: 'account' }, { pane: 'general' }] },
-	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }] },
+	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }, { page: 'workspaceCleanup' }] },
 	{
 		id: 'interface',
 		label: 'settings.nav.interface',
@@ -69,7 +70,7 @@ export const ORCA_NAV: readonly {
 ];
 
 /** Groups a dedicated page shows (the Voice page draws the Voice group's settings). */
-export const PAGE_GROUPS: readonly string[] = ['Voice'];
+export const PAGE_GROUPS: readonly string[] = ['Voice', 'Workspace Cleanup'];
 
 /** Sections of the registry's table of contents that ORCA_NAV shows instead. */
 export const ORCA_SECTION_IDS = new Set(['ai', 'ade']);

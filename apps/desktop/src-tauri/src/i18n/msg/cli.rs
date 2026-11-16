@@ -26,6 +26,26 @@ crate::i18n::messages! {
       en: "Unknown run mode: {mode} (terminal or timeline)",
       th: "ไม่รู้จักวิธีรัน: {mode} (terminal หรือ timeline)",
     },
+    NoTaskHere {
+      en: "Not inside a task's worktree: name the task (kingu task set <slug> --comment …)",
+      th: "ไม่ได้อยู่ใน worktree ของงาน ระบุชื่องานด้วย (kingu task set <slug> --comment …)",
+    },
+    CommentTooLong {
+      en: "The comment can be at most {max} characters",
+      th: "หมายเหตุยาวได้ไม่เกิน {max} ตัวอักษร",
+    },
+    CleanupRunning {
+      en: "Cleanup request {id} is still running",
+      th: "คำขอล้าง {id} ยังรันอยู่",
+    },
+    CleanupNoReceipt {
+      en: "No receipt for cleanup request {id} (it never ran, or Kingu restarted since)",
+      th: "ไม่มีใบเสร็จของคำขอล้าง {id} (ยังไม่เคยรัน หรือ Kingu เริ่มใหม่แล้ว)",
+    },
+    CleanupBadRequestId {
+      en: "Request id {id} must be 1-64 letters, digits, - or _",
+      th: "request id {id} ต้องยาว 1-64 ตัว เป็นตัวอักษร ตัวเลข - หรือ _",
+    },
     UnknownTask {
       en: "No task {slug} in the open folder (see kingu task list)",
       th: "ไม่มีงาน {slug} ในโฟลเดอร์ที่เปิดอยู่ (ดู kingu task list)",

@@ -52,6 +52,8 @@ pub struct CliServer {
   /// Requests for windows whose page is still loading (a new window): fetched with `cli_queued`.
   queued: Mutex<HashMap<String, Vec<Value>>>,
   waits: Waits,
+  /// `workspaceCleanup.run` requests by id (cli_ledger.rs).
+  cleanup_runs: Mutex<crate::cli_ledger::Ledger>,
 }
 
 /// `kingu --wait`: each wait has the window it opened in; it ends when the window reports its
@@ -531,6 +533,41 @@ pub fn window_closed(app: &AppHandle, label: &str) {
   }
 }
 
+fn request_id(params: &Value) -> Result<String, RpcError> {
+  let id = str_param(params, "requestId").unwrap_or_default();
+  if protocol::valid_request_id(id) { Ok(id.to_owned()) } else { Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::CleanupBadRequestId, id))) }
+}
+
+/// `kingu cleanup run`: the window scans, decides with the one evaluator and removes; this keeps the
+/// request id's ledger so a retry gets the first receipt instead of running again.
+fn cleanup_run(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
+  let id = request_id(params)?;
+  folder(app, params)?;
+  let server = app.state::<CliServer>();
+  let begin = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner()).begin(&id);
+  match begin {
+    crate::cli_ledger::Begin::Running => return Err(rpc(ERR_FAILED, tr!(CliMsg::CleanupRunning, id))),
+    crate::cli_ledger::Begin::Replay(mut receipt) => {
+      receipt["replayed"] = json!(true);
+      return Ok(receipt);
+    }
+    crate::cli_ledger::Begin::New => {}
+  }
+  let answer = ask_window(app, cwd_of(params).as_deref(), protocol::METHOD_CLEANUP_RUN, json!({ "requestId": id }), false);
+  let mut ledger = server.cleanup_runs.lock().unwrap_or_else(|e| e.into_inner());
+  match answer {
+    Ok(mut receipt) => {
+      receipt["requestId"] = json!(id);
+      ledger.finish(&id, receipt.clone());
+      Ok(receipt)
+    }
+    Err(e) => {
+      ledger.abort(&id);
+      Err(e)
+    }
+  }
+}
+
 fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcError> {
   match method {
     protocol::METHOD_STATUS => {
@@ -560,6 +597,16 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
         return Err(rpc(ERR_FAILED, tr!(CliMsg::UnknownTask, slug)));
       }
       ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug }), true)
+    }
+    protocol::METHOD_CLEANUP_PREVIEW => {
+      folder(app, params)?;
+      ask_window(app, cwd_of(params).as_deref(), method, json!({}), false)
+    }
+    protocol::METHOD_CLEANUP_RUN => cleanup_run(app, params),
+    protocol::METHOD_CLEANUP_RECEIPT => {
+      let id = request_id(params)?;
+      let receipt = app.state::<CliServer>().cleanup_runs.lock().unwrap_or_else(|e| e.into_inner()).receipt(&id);
+      receipt.ok_or_else(|| rpc(ERR_FAILED, tr!(CliMsg::CleanupNoReceipt, id)))
     }
     protocol::METHOD_OPEN => {
       let checked = check_open(params)?;

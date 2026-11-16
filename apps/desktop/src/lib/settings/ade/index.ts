@@ -5,12 +5,13 @@
 import type { SettingSchema } from '../registry';
 import { AGENT_SETTINGS } from './agents';
 import { APPEARANCE_SETTINGS } from './appearance';
+import { CLEANUP_SETTINGS } from './cleanup';
 import { GIT_SETTINGS } from './git';
 import { REPO_SETTINGS } from './repo';
 import { SIDEBAR_SETTINGS } from './sidebar';
 import { TERMINAL_SETTINGS } from './terminal';
 
-export const ADE_SETTINGS: SettingSchema[] = [...AGENT_SETTINGS, ...REPO_SETTINGS, ...SIDEBAR_SETTINGS, ...TERMINAL_SETTINGS, ...GIT_SETTINGS, ...APPEARANCE_SETTINGS];
+export const ADE_SETTINGS: SettingSchema[] = [...AGENT_SETTINGS, ...REPO_SETTINGS, ...SIDEBAR_SETTINGS, ...TERMINAL_SETTINGS, ...GIT_SETTINGS, ...APPEARANCE_SETTINGS, ...CLEANUP_SETTINGS];
 
 /**
  * The AI Capabilities section's groups (Orca's AI Capabilities: its Agents, Orchestration and
@@ -19,7 +20,7 @@ export const ADE_SETTINGS: SettingSchema[] = [...AGENT_SETTINGS, ...REPO_SETTING
 export const AI_SECTION_GROUPS = ['Agent', 'Orchestration', 'Voice', 'Local AI'];
 
 /** The ADE section's groups, in Orca's settings page order. */
-export const ADE_SECTION_GROUPS = ['Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests'];
+export const ADE_SECTION_GROUPS = ['Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests', 'Workspace Cleanup'];
 
 /** Groups of the System section that come from Orca's Appearance / General pages. */
 export const SYSTEM_SECTION_GROUPS = ['Appearance'];

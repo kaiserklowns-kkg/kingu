@@ -53,6 +53,7 @@ import { chatCustomize } from './en/chatCustomize';
 import { chatToolRules } from './en/chatToolRules';
 import { composer } from './en/composer';
 import { voice } from './en/voice';
+import { workspaceCleanup } from './en/workspaceCleanup';
 import { usage } from './en/usage';
 import { keybindings } from './en/keybindings';
 import { markdownPreview } from './en/markdownPreview';
@@ -78,6 +79,6 @@ import { legacySettings } from './en/legacySettings';
 import { legacyMisc } from './en/legacyMisc';
 
 
-export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome } as const;
+export const en = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...workspaceCleanup, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome } as const;
 
 export type MessageKey = keyof typeof en;

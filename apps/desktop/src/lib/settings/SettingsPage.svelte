@@ -29,6 +29,7 @@
 	import SkillsPage from '#lib/skills/SkillsPage.svelte';
 	import MemoriesPage from '#lib/agent/MemoriesPage.svelte';
 	import VoicePage from './pages/VoicePage.svelte';
+	import WorkspaceCleanupPage from './pages/WorkspaceCleanupPage.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from './settings.svelte';
 	import type { IconName } from '#lib/workbench/Icon.svelte';
@@ -88,6 +89,13 @@
 				return t('voice.title');
 			},
 			icon: 'mic'
+		},
+		{
+			id: 'workspaceCleanup',
+			get label() {
+				return t('workspaceCleanup.title');
+			},
+			icon: 'trash'
 		},
 		{
 			id: 'shortcuts',
@@ -388,6 +396,7 @@
 				</SettingsEditor>
 			{:else if paneGroup}<SettingsEditor pane={{ title: paneGroup, description: t(PANES[paneGroup].description), groups: [paneGroup], scope: 'user' }} bind:query />
 			{:else if projectPane}<OrcaPane spec={PROJECT} scope="repo" title={projectName} description={t('settings.pane.project', { name: projectName })} {query} />
+			{:else if page === 'workspaceCleanup'}<WorkspaceCleanupPage />
 			{:else if commonlyUsed}<SettingsEditor ids={COMMONLY_USED} heading="Commonly Used" bind:query hideSearch />
 			{:else if vsNode}<SettingsEditor groups={nodeGroups(vsNode, settingSchemas.all)} bind:query hideSearch />
 			{:else}<SettingsEditor group={selected} bind:query hideSearch />{/if}
