@@ -24,6 +24,8 @@
 	import { FIND_TERMINAL_OPTIONS, HIGHLIGHT_LIMIT } from './find.ts';
 	import { cellText, detectLinks, linkHint, linkModifierDown, MAX_LINE, type TerminalLink } from './links.ts';
 	import { linkTarget, openUrl } from './pty.ts';
+	import { isStaleAttach, reactToDaemonEvent, type DaemonEvent } from './daemonGeneration.ts';
+	import { listenWindow } from '#lib/workbench/windowEvents.ts';
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
@@ -97,7 +99,7 @@
 	let root: HTMLDivElement;
 	let host: HTMLDivElement;
 
-	type Attached = { replay: string; spawned: boolean };
+	type Attached = { replay: string; spawned: boolean; epoch?: number };
 
 	let term: Terminal | undefined = $state();
 	let search: SearchAddon | undefined = $state();
@@ -365,6 +367,8 @@
 		});
 		// Live output can arrive before the attach or spawn call returns its replay: hold it until then.
 		let early: string[] = [];
+		// The daemon generation this terminal's session was last shown in (0: unknown), for re-attaching.
+		let epoch = 0;
 		// A fresh channel per call: Tauri ends a channel when its Rust side is dropped.
 		function channel() {
 			const ch = new Channel<string>();
@@ -380,6 +384,7 @@
 		}
 		function connected(a: Attached) {
 			if (disposed) return;
+			if (a.epoch) epoch = a.epoch;
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;
@@ -433,6 +438,32 @@
 				.catch(failed);
 		}
 
+		// The app's connection to the terminal daemon came back (`pty-daemon`): the same daemon keeps
+		// the session, so re-attach (the output stopped when the connection dropped); a restarted one
+		// does not, so say so and start over (an agent's terminal is resumed from its task instead).
+		function startOver() {
+			epoch = 0;
+			live = false;
+			t.write(`\r\n[${tr('terminalDaemon.restartedNotice')}]\r\n`);
+			if (key.startsWith('cli:')) return;
+			spawning = false;
+			start();
+		}
+		const daemonEvents = listenWindow<DaemonEvent>('pty-daemon', (e) => {
+			const reaction = reactToDaemonEvent(e.payload, epoch, live);
+			if (disposed || reaction === 'ignore') return;
+			if (reaction === 'start-over') return startOver();
+			live = false;
+			early = [];
+			invoke<Attached | null>('pty_attach', { key, cols: sized() ? t.cols : null, rows: sized() ? t.rows : null, onData: channel(), epoch: epoch || null })
+				.then((a) => {
+					if (!a) return startOver();
+					// The daemon replays the whole screen: start from a clean one so nothing shows twice.
+					t.reset();
+					connected(a);
+				})
+				.catch((err) => (isStaleAttach(err) ? startOver() : failed(err)));
+		}).catch(() => () => {});
 		const input = t.onData((data) => {
 			if (live) invoke('pty_write', { key, data }).catch(() => {});
 		});
@@ -625,6 +656,7 @@
 		// No pty_kill here: an unmount is also what a page reload does, and the shell must outlive it.
 		return () => {
 			disposed = true;
+			void daemonEvents.then((stop) => stop());
 			if (stickyFrame) cancelAnimationFrame(stickyFrame);
 			stopIntegrationSettings();
 			si.dispose();

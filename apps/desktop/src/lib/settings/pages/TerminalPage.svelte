@@ -7,6 +7,7 @@
 	import Stepper from './Stepper.svelte';
 	import Switch from './Switch.svelte';
 	import SettingChoice from './SettingChoice.svelte';
+	import TerminalDaemon from '#lib/terminal/TerminalDaemon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 
 	const family = $derived(settings.get<string>('terminal.integrated.fontFamily') ?? '');
@@ -35,6 +36,9 @@
 				/>
 			</label>
 		</div>
+
+		<h2 class={SECTION}>{t('terminalDaemon.title')}</h2>
+		<TerminalDaemon />
 
 		<h2 class={SECTION}>Floating Workspace</h2>
 		<p class="mb-2 text-xs text-(--vscode-descriptionForeground)">{t('legacySettings.terminalPage.floatingIntro')}</p>
