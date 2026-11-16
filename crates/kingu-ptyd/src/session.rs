@@ -158,6 +158,9 @@ type Sessions = Arc<Mutex<HashMap<String, Session>>>;
 pub struct Attached {
   pub replay: String,
   pub spawned: bool,
+  /// The daemon generation it lives in (`protocol` module docs); 0 in-process and from older daemons.
+  #[serde(default)]
+  pub epoch: u64,
 }
 
 /// One live session, for `list`.
@@ -260,7 +263,7 @@ impl Host {
         let _ = s.master.resize(size(cols, rows));
       }
     }
-    Some(Attached { replay, spawned: false })
+    Some(Attached { replay, spawned: false, epoch: 0 })
   }
 
   /// Attaches to the live session `key`, else starts a login shell for it (`ShellSpec`).
@@ -373,7 +376,7 @@ impl Host {
     if let Some(old) = self.sessions.lock().unwrap().insert(key.to_string(), session) {
       old.kill();
     }
-    Ok(Attached { replay: String::new(), spawned: true })
+    Ok(Attached { replay: String::new(), spawned: true, epoch: 0 })
   }
 
   pub fn write(&self, key: &str, data: &[u8]) -> Result<(), String> {

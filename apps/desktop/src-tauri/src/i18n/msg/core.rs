@@ -57,6 +57,15 @@ crate::i18n::messages! {
       en: "The terminal daemon disconnected",
       th: "terminal daemon หลุดการเชื่อมต่อ",
     },
+    /// pty.rs restart: the daemon changed between the status the user confirmed and the restart.
+    DaemonRestartStale {
+      en: "The terminal daemon was already restarted or replaced since its status was read; nothing was stopped. Check its status again",
+      th: "terminal daemon ถูก restart หรือเปลี่ยนตัวไปแล้วหลังจากอ่านสถานะ จึงไม่ได้หยุดอะไร ลองดูสถานะอีกครั้ง",
+    },
+    DaemonRestartLocal {
+      en: "Terminals run inside Kingu here (no terminal daemon), so there is nothing to restart",
+      th: "terminal ทำงานอยู่ใน Kingu เอง (ไม่มี terminal daemon) จึงไม่มีอะไรให้ restart",
+    },
     PtydOverrideMissing {
       en: "KINGU_PTYD={path}: file not found",
       th: "KINGU_PTYD={path}: ไม่พบไฟล์",

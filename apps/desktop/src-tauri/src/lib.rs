@@ -1542,6 +1542,8 @@ pub fn run() {
       pty::pty_attach,
       pty::pty_list,
       pty::pty_backend,
+      pty::pty_daemon_status,
+      pty::pty_daemon_restart,
       pty::pty_foreground,
       terminal_links::terminal_link_target,
       shell_integration::terminal_shell_history,
