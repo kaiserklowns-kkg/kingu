@@ -18,6 +18,10 @@
 //!   left to lose, so it counts as `merged` and its commits as published. Git alone sees this by
 //!   content (every file the branch touched is identical in the base); a later change to one of
 //!   those files on the base makes it look unmerged, which only ever keeps a workspace;
+//! - `pr_merged`: Git cannot see the merge (the base moved on), but GitHub says a PR for this branch
+//!   was merged and its head commit is exactly this worktree's HEAD (`gh pr list --state merged`).
+//!   Any later commit differs from the PR head and keeps the workspace. No `gh`, no login, a
+//!   non-GitHub remote, an error or a timeout all mean "no information", never a failure;
 //! - `unknown_base`: no default branch could be found, so neither can be told;
 //! - `last_activity_at`: the newest of the HEAD commit, the worktree's HEAD and index files.
 //!
@@ -63,6 +67,8 @@ pub struct Candidate {
   pub merged: bool,
   pub unchanged: bool,
   pub squash_merged: bool,
+  /// A merged GitHub PR whose head commit is this worktree's HEAD (sets `merged`, clears `unpushed`).
+  pub pr_merged: bool,
   pub unknown_base: bool,
   pub base: Option<String>,
   pub error: Option<String>,
@@ -171,7 +177,48 @@ fn mtime_ms(path: &Path) -> u64 {
     .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// Total time one scan may spend asking GitHub; later candidates are skipped once it is used up.
+const GH_BUDGET: Duration = Duration::from_secs(8);
+/// One `gh` call's limit (a slow network must not stall the scan).
+const GH_CALL_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// True when `json` (`gh pr list --json number,headRefOid`) lists a PR whose head commit is
+/// `head`. Anything unexpected (bad JSON, no list, no match) is false: only ever "keep".
+pub fn pr_head_matches(json: &str, head: &str) -> bool {
+  let head = head.trim();
+  if head.is_empty() {
+    return false;
+  }
+  let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return false };
+  v.as_array().is_some_and(|list| list.iter().any(|pr| pr.get("headRefOid").and_then(|o| o.as_str()).is_some_and(|o| o.eq_ignore_ascii_case(head))))
+}
+
+/// Asks GitHub (through `fetch`, which returns the `gh` JSON for a branch) whether a merged PR's
+/// head is `head`. Injected so tests need no `gh`.
+pub fn pr_merged_at(branch: &str, head: &str, fetch: &mut dyn FnMut(&str) -> Option<String>) -> bool {
+  fetch(branch).is_some_and(|json| pr_head_matches(&json, head))
+}
+
+/// The real lookup: `gh pr list --head <branch> --state merged` in the worktree, within what is
+/// left of `budget`. `None` for any failure.
+fn gh_merged_prs(gh: &Path, dir: &Path, branch: &str, budget: &mut Duration) -> Option<String> {
+  let timeout = (*budget).min(GH_CALL_TIMEOUT);
+  if timeout.is_zero() {
+    return None;
+  }
+  let start = Instant::now();
+  let args: Vec<String> = ["pr", "list", "--head", branch, "--state", "merged", "--json", "number,headRefOid", "--limit", "5"].iter().map(|s| (*s).to_owned()).collect();
+  let out = crate::agent::pr::gh_run(gh, dir, &args, timeout, None).ok();
+  *budget = budget.saturating_sub(start.elapsed());
+  out
+}
+
 fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate {
+  inspect_with(info, is_main, base, &mut |_| None)
+}
+
+/// `inspect`, with `fetch` answering the GitHub question for a branch not merged by Git.
+fn inspect_with(info: &WorktreeInfo, is_main: bool, base: Option<&str>, fetch: &mut dyn FnMut(&str) -> Option<String>) -> Candidate {
   let dir = Path::new(&info.path);
   let mut c = Candidate {
     path: info.path.clone(),
@@ -188,6 +235,7 @@ fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate 
     merged: false,
     unchanged: false,
     squash_merged: false,
+    pr_merged: false,
     unknown_base: base.is_none(),
     base: base.map(str::to_owned),
     error: None,
@@ -227,6 +275,18 @@ fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate 
       c.unpushed = false;
     }
   }
+  if !c.merged && !c.unchanged && !c.detached {
+    // Safety: only the exact PR head counts. A commit made after the PR was merged differs, so
+    // that unpublished work keeps the workspace.
+    let head = git(dir, &["rev-parse", "HEAD"]).ok();
+    if let (Some(branch), Some(head)) = (c.branch.clone(), head) {
+      if pr_merged_at(&branch, &head, fetch) {
+        c.merged = true;
+        c.pr_merged = true;
+        c.unpushed = false;
+      }
+    }
+  }
   let commit = git(dir, &["log", "-1", "--format=%ct"]).ok().and_then(|s| s.trim().parse::<u64>().ok()).map_or(0, |s| s * 1000);
   let gitdir = git(dir, &["rev-parse", "--absolute-git-dir"]).ok().map(|s| PathBuf::from(s.trim()));
   let files = gitdir.map_or(0, |g| mtime_ms(&g.join("HEAD")).max(mtime_ms(&g.join("index"))));
@@ -246,12 +306,16 @@ pub fn scan(root: &Path, mut emit: impl FnMut(usize, usize, Option<String>)) -> 
   let main = list.first().map(|w| w.path.clone());
   let todo: Vec<WorktreeInfo> = list.into_iter().filter(|w| !w.prunable && !w.bare).collect();
   let base = find_base(root);
+  let gh = crate::agent::review::gh_bin();
+  let mut budget = GH_BUDGET;
   let total = todo.len();
   let mut candidates = Vec::with_capacity(total);
   emit(0, total, None);
   for (i, info) in todo.iter().enumerate() {
     emit(i, total, Some(display_name(info)));
-    candidates.push(inspect(info, main.as_deref() == Some(info.path.as_str()), base.as_deref()));
+    let dir = PathBuf::from(&info.path);
+    let mut fetch = |branch: &str| gh.as_deref().and_then(|g| gh_merged_prs(g, &dir, branch, &mut budget));
+    candidates.push(inspect_with(info, main.as_deref() == Some(info.path.as_str()), base.as_deref(), &mut fetch));
   }
   emit(total, total, None);
   Ok(Scan { scanned_at: now_ms(), candidates })
@@ -509,6 +573,42 @@ mod tests {
     let got = sizes(repo.path(), Duration::from_secs(30), |_, _, _| {}).unwrap();
     assert_eq!(got.len(), 1);
     assert!(got[0].path.ends_with("/wt") && got[0].size_bytes.unwrap() >= 100_000, "{got:?}");
+  }
+
+  #[test]
+  fn only_a_merged_pr_with_this_exact_head_counts() {
+    let json = r#"[{"number":7,"headRefOid":"abc123"},{"number":3,"headRefOid":"def456"}]"#;
+    assert!(pr_head_matches(json, "abc123"));
+    assert!(pr_head_matches(json, "def456\n"));
+    assert!(!pr_head_matches(json, "zzz999"), "later commits are unpublished work");
+    assert!(!pr_head_matches("[]", "abc123"));
+    assert!(!pr_head_matches("not json", "abc123"));
+    assert!(!pr_head_matches("{\"headRefOid\":\"abc123\"}", "abc123"));
+    assert!(!pr_head_matches(json, ""));
+  }
+
+  #[test]
+  fn a_pr_merged_branch_is_recognised_when_the_base_moved_on_but_not_after_new_commits() {
+    let dir = feature();
+    squash_into_main(dir.path());
+    run(dir.path(), &["checkout", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a3").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "later"]);
+    run(dir.path(), &["checkout", "-q", "feat"]);
+    let head = git(dir.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+    let json = format!(r#"[{{"number":1,"headRefOid":"{head}"}}]"#);
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut |b| (b == "feat").then(|| json.clone()));
+    assert_eq!((c.merged, c.pr_merged, c.squash_merged, c.unpushed), (true, true, false, false));
+    // No answer from GitHub: unchanged behaviour.
+    let none = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut |_| None);
+    assert_eq!((none.merged, none.pr_merged, none.unpushed), (false, false, true));
+    // A commit after the PR head keeps the workspace.
+    std::fs::write(dir.path().join("c.txt"), "c").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "after"]);
+    let after = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut |_| Some(json.clone()));
+    assert_eq!((after.merged, after.pr_merged, after.unpushed), (false, false, true));
   }
 
   #[test]

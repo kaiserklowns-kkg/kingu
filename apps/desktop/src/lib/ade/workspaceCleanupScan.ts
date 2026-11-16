@@ -30,6 +30,8 @@ export type CleanupCandidate = {
 	unchanged: boolean;
 	/** Squash / rebase merged: everything the branch changed is in the base with the same content (Rust sets `merged` and clears `unpushed` with it). */
 	squashMerged: boolean;
+	/** A merged GitHub PR whose head commit is this worktree's HEAD (Rust sets `merged` and clears `unpushed` with it). */
+	prMerged: boolean;
 	unknownBase: boolean;
 	base: string | null;
 	error: string | null;
