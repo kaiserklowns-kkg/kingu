@@ -43,8 +43,7 @@ async function listModels(runtime: { kind: 'acp' | 'codex'; command: string; arg
 type _rpc_line = string;
 
 describe('live model probes (installed CLIs)', () => {
-	test('opencode names its models through a real throwaway session', async () => {
-		test.skipIf(!OPENCODE);
+	test.skipIf(!OPENCODE)('opencode names its models through a real throwaway session', async () => {
 		const models = await listModels({ kind: 'acp', command: OPENCODE!, args: ['acp'] }, 90_000);
 		expect(Array.isArray(models)).toBe(true);
 		expect(models.length).toBeGreaterThan(0);
@@ -55,8 +54,7 @@ describe('live model probes (installed CLIs)', () => {
 		}
 	});
 
-	test('codex names its models with their effort levels', async () => {
-		test.skipIf(!CODEX);
+	test.skipIf(!CODEX)('codex names its models with their effort levels', async () => {
 		const models = await listModels({ kind: 'codex', command: CODEX!, args: ['app-server'] }, 90_000);
 		expect(models.length).toBeGreaterThan(0);
 		for (const m of models) {
