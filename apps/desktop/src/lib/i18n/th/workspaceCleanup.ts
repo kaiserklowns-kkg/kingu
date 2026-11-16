@@ -45,5 +45,15 @@ export const workspaceCleanup = {
 	'workspaceCleanup.dialog.readyCount': 'พร้อมลบตามกฎของคุณ {count} รายการ',
 	'workspaceCleanup.dialog.noneReady': 'ตอนนี้ไม่มีรายการที่ตรงกับกฎ',
 	'workspaceCleanup.review': 'ตรวจ workspace…',
+	'workspaceCleanup.auto.title': 'ล้างอัตโนมัติ',
+	'workspaceCleanup.auto.label': 'ล้างให้อัตโนมัติ',
+	'workspaceCleanup.auto.hint': 'ตรวจทุกชั่วโมงขณะเปิดโฟลเดอร์ และลบเฉพาะที่กฎของคุณอนุญาต ปิดอยู่จนกว่าจะเปิดเอง',
+	'workspaceCleanup.auto.flash': 'ล้าง workspace ที่เสร็จแล้ว {count} รายการ',
+	'workspaceCleanup.activity.title': 'กิจกรรม',
+	'workspaceCleanup.activity.empty': 'ยังไม่มีการล้างตั้งแต่เปิดหน้าต่างนี้',
+	'workspaceCleanup.activity.row': '{source}: ลบ {removed} ล้มเหลว {failed} เก็บไว้ {kept}',
+	'workspaceCleanup.activity.source.auto': 'อัตโนมัติ',
+	'workspaceCleanup.activity.source.cli': 'บรรทัดคำสั่ง',
+	'workspaceCleanup.activity.source.dialog': 'หน้าต่างรีวิว',
 	'workspaceCleanup.saveFailed': 'บันทึกไม่ได้: {error}'
 } as const;

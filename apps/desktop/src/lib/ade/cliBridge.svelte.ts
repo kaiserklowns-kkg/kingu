@@ -43,7 +43,7 @@ async function handle(req: CliRequest): Promise<unknown> {
 		case 'workspaceCleanup.preview':
 			return cleanup.preview();
 		case 'workspaceCleanup.run':
-			return cleanup.runRules();
+			return cleanup.runRules('cli');
 		case 'open': {
 			const p = req.params as OpenParams;
 			const target = openTarget(workspace.root, p);

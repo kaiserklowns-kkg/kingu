@@ -26,6 +26,9 @@
 	import { settings } from '../settings.svelte';
 	import Segmented from '../Segmented.svelte';
 	import Toggle from '../Toggle.svelte';
+	import Switch from './Switch.svelte';
+	import { timeAgo } from '#lib/ade/model.ts';
+	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
 
 	const RULES_ID = 'kingu.workspaceCleanup.rules';
 	const PROJECT_ID = 'kingu.workspaceCleanup.project';
@@ -190,6 +193,29 @@
 				onchange={(k) => void setKeep(k)}
 			/>
 			<p class="mt-2 {HINT}">{editing.keepWhen === 'uncommitted' ? t('workspaceCleanup.keepUncommittedHint') : t('workspaceCleanup.keepAnyLocalHint')}</p>
+		{/if}
+
+		<h2 class={SECTION}>{t('workspaceCleanup.auto.title')}</h2>
+		<div class={CARD}>
+			<Switch id="kingu.workspaceCleanup.auto" label={t('workspaceCleanup.auto.label')} hint={t('workspaceCleanup.auto.hint')} />
+		</div>
+
+		<h2 class={SECTION}>{t('workspaceCleanup.activity.title')}</h2>
+		{#if cleanup.activity.length}
+			<ul class={CARD}>
+				{#each cleanup.activity as a (a.at)}
+					<li class="px-4 py-2.5 text-[13px]">
+						<div>
+							{t('workspaceCleanup.activity.row', { source: t(`workspaceCleanup.activity.source.${a.source}`), removed: a.removed.length, failed: a.failed.length, kept: a.kept })}
+							<span class={HINT}>· {timeAgo(a.at, adeTasks.now)}</span>
+						</div>
+						{#if a.removed.length}<div class="truncate font-mono {HINT}">{a.removed.join(', ')}</div>{/if}
+						{#each a.failed as f (f.slug)}<div class="truncate text-xs text-(--vscode-errorForeground)">{f.slug}: {f.error}</div>{/each}
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class={HINT}>{t('workspaceCleanup.activity.empty')}</p>
 		{/if}
 	</div>
 </div>

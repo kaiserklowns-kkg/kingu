@@ -45,5 +45,15 @@ export const workspaceCleanup = {
 	'workspaceCleanup.dialog.readyCount': '{count} ready to remove by your rules.',
 	'workspaceCleanup.dialog.noneReady': 'Nothing matches your rules right now.',
 	'workspaceCleanup.review': 'Review workspaces…',
+	'workspaceCleanup.auto.title': 'Automatic cleanup',
+	'workspaceCleanup.auto.label': 'Clean up automatically',
+	'workspaceCleanup.auto.hint': 'Checks once an hour while a folder is open and removes only what your rules allow. Off until you turn it on.',
+	'workspaceCleanup.auto.flash': 'Cleaned up {count} finished workspaces',
+	'workspaceCleanup.activity.title': 'Activity',
+	'workspaceCleanup.activity.empty': 'No cleanup has run since this window opened.',
+	'workspaceCleanup.activity.row': '{source}: removed {removed}, failed {failed}, kept {kept}',
+	'workspaceCleanup.activity.source.auto': 'Automatic',
+	'workspaceCleanup.activity.source.cli': 'Command line',
+	'workspaceCleanup.activity.source.dialog': 'Review dialog',
 	'workspaceCleanup.saveFailed': 'Could not save: {error}'
 } as const;

@@ -47,6 +47,7 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 			'kingu.worktree.openIn',
 			'kingu.worktree.alwaysForceDelete',
 			'kingu.workspaceCleanup.rules',
+			'kingu.workspaceCleanup.auto',
 			'kingu.terminal.quickCommands',
 			'kingu.agent.notifications.hiddenWorkspaces',
 			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.env.')).map((s) => s.id)

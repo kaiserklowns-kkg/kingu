@@ -14,6 +14,7 @@ import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
 import { cleanupReceipt, cleanupPreview, evaluateScan, slugsToRemove, type CleanupProgress, type CleanupScan, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
 import { hasEnabledWorkspaceCleanupRule } from './workspaceCleanupPolicy';
+import { withActivity, type CleanupActivity, type CleanupSource } from './autoCleanup';
 
 const RULES_ID = 'kingu.workspaceCleanup.rules';
 const PROJECT_ID = 'kingu.workspaceCleanup.project';
@@ -27,6 +28,12 @@ class Cleanup {
 	scanning = $state(false);
 	progress = $state<CleanupProgress | null>(null);
 	error = $state<string | null>(null);
+	/** Runs since the window opened, newest first (Settings › Workspace Cleanup › Activity). */
+	activity = $state.raw<CleanupActivity[]>([]);
+	/** A run is going (the removal loop), so an automatic one never starts on top of it. */
+	running = $state(false);
+	/** When the last run started, for the automatic schedule. */
+	lastRunAt = $state<number | null>(null);
 
 	/** The rules that apply to the open folder: its own override, else the global rules (all off by default). */
 	policy = $derived(
@@ -50,6 +57,11 @@ class Cleanup {
 			dirtyEditor: tabs.some((p) => editors.isDirty(p)),
 			updatedAt: adeTasks.find(slug)?.meta.updated_at
 		};
+	}
+
+	/** Adds a run to Activity (the dialog removes tasks itself; the others go through `runRules`). */
+	record(source: CleanupSource, removed: string[], failed: { slug: string; error: string }[], kept: number) {
+		this.activity = withActivity(this.activity, { at: Date.now(), source, removed, failed, kept });
 	}
 
 	#inflight: Promise<CleanupScan | null> | null = null;
@@ -90,7 +102,18 @@ class Cleanup {
 	 * remove goes through the normal removal (its own guards and branch setting). Nothing the
 	 * evaluator keeps is touched, so an unattended run cannot remove more than the preview showed.
 	 */
-	async runRules() {
+	async runRules(source: CleanupSource = 'cli') {
+		if (this.running) throw new Error('A cleanup run is already going');
+		this.running = true;
+		this.lastRunAt = Date.now();
+		try {
+			return await this.#run(source);
+		} finally {
+			this.running = false;
+		}
+	}
+
+	async #run(source: CleanupSource) {
 		const scan = await this.rescan();
 		if (!scan) throw new Error(this.error ?? 'No folder is open');
 		const verdicts = evaluateScan(scan, this.policy, (slug) => this.#context(slug));
@@ -106,7 +129,9 @@ class Cleanup {
 				failed.push({ slug, error: e instanceof Error ? e.message : String(e) });
 			}
 		}
-		return cleanupReceipt(removed, failed, verdicts.size - targets.length);
+		const kept = verdicts.size - targets.length;
+		this.record(source, removed, failed, kept);
+		return cleanupReceipt(removed, failed, kept);
 	}
 
 	/** The dialog with just `slugs` (the losing attempts of a best-of-N group). */

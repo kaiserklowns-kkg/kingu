@@ -25,6 +25,15 @@ export const CLEANUP_RULES_SCHEMA: JsonSchema = {
 
 export const CLEANUP_SETTINGS: SettingSchema[] = [
 	{
+		id: 'kingu.workspaceCleanup.auto',
+		group: 'Workspace Cleanup',
+		type: 'boolean',
+		default: false,
+		description:
+			'ล้าง workspace อัตโนมัติตามกฎ (Orca: auto cleanup) ปิดไว้ก่อน เมื่อเปิด Kingu จะตรวจทุกชั่วโมงขณะเปิดโฟลเดอร์ แล้วลบเฉพาะ task ที่กฎบอกว่าลบได้ และไม่แตะงานที่ยังไม่ commit/push หรือ agent ที่ยังเปิดอยู่ (Remove finished workspaces by your rules without asking: off by default; checks hourly while a folder is open and never touches unsaved work or a live agent.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.workspaceCleanup.rules',
 		group: 'Workspace Cleanup',
 		type: 'json',

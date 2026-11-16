@@ -242,6 +242,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['worktreeVisibilityDefaults.sourcePreferences', 'kingu.worktree.agentVisibility', 'added'],
 	['autoRenameBranchFromWork', 'kingu.worktree.autoRenameBranch', 'added', 'renames the branch only; the worktree folder and your task title stay'],
 	['workspaceCleanupPolicy', 'kingu.workspaceCleanup.rules', 'added', 'Settings › Workspace Cleanup; every rule is off by default and archive is not supported yet'],
+	['workspaceCleanupAuto', 'kingu.workspaceCleanup.auto', 'added', 'checks hourly while a folder is open; off by default'],
 	['repo.workspaceCleanupPolicy', 'kingu.workspaceCleanup.project', 'added', 'inherit, off, or the project\'s own rules'],
 	['workspaceDir', null, 'needs-feature', 'worktrees outside .kingu/worktrees (for now .kingu/ is kept out of git status by info/exclude)'],
 	['jiraIssueKeyCasing', null, 'needs-feature', 'Jira'],
