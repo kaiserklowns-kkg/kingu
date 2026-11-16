@@ -8,7 +8,7 @@ import type { CleanupCandidate } from './workspaceCleanupScan';
 const NOW = Date.UTC(2026, 10, 16);
 const DAY = 86_400_000;
 const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, ...over });
-const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({ path: '/p', branch: 'kingu/a', head: 'x', slug: 'a', isMain: false, detached: false, locked: false, checkedAt: NOW, clean: true, ignoredFiles: false, unpushed: false, merged: true, unchanged: false, unknownBase: false, base: 'main', error: null, lastActivityAt: NOW - DAY, ...over });
+const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({ path: '/p', branch: 'kingu/a', head: 'x', slug: 'a', isMain: false, detached: false, locked: false, checkedAt: NOW, clean: true, ignoredFiles: false, unpushed: false, merged: true, unchanged: false, squashMerged: false, unknownBase: false, base: 'main', error: null, lastActivityAt: NOW - DAY, ...over });
 const filters = () => createDefaultWorkspaceCleanupFilterState();
 const ok = (r: CleanupRowFacts, patch: (f: ReturnType<typeof filters>) => void) => {
 	const f = filters();

@@ -13,6 +13,11 @@
 //! - `merged` / `unchanged`: HEAD is contained in the default branch; `unchanged` when the branch
 //!   never had a commit of its own (its reflog only says it was created), else `merged`. Squash
 //!   merges are not detected from Git alone;
+//! - `squash_merged`: HEAD is not in the default branch, but everything the branch changed is there
+//!   with the same content (a squash or rebase merge, or a cherry-pick): then the branch has nothing
+//!   left to lose, so it counts as `merged` and its commits as published. Git alone sees this by
+//!   content (every file the branch touched is identical in the base); a later change to one of
+//!   those files on the base makes it look unmerged, which only ever keeps a workspace;
 //! - `unknown_base`: no default branch could be found, so neither can be told;
 //! - `last_activity_at`: the newest of the HEAD commit, the worktree's HEAD and index files.
 //!
@@ -57,6 +62,7 @@ pub struct Candidate {
   pub unpushed: bool,
   pub merged: bool,
   pub unchanged: bool,
+  pub squash_merged: bool,
   pub unknown_base: bool,
   pub base: Option<String>,
   pub error: Option<String>,
@@ -137,6 +143,26 @@ pub fn only_created(reflog_messages: &str) -> bool {
   any
 }
 
+/// Files per `git diff` call (the command line has a limit).
+const PATHSPEC_CHUNK: usize = 200;
+/// A branch touching more files than this is not compared (it is not a small squash-merged change).
+const PATHSPEC_MAX: usize = 4000;
+
+/// True when every file the branch changed since it forked from `base` has the same content in
+/// `base` now (`git diff --name-only base...HEAD`, then `git diff --quiet base HEAD -- <files>`).
+pub fn content_in_base(dir: &Path, base: &str) -> bool {
+  let Ok(list) = git(dir, &["diff", "--name-only", "--no-renames", "-z", &format!("{base}...HEAD")]) else { return false };
+  let files: Vec<&str> = list.split('\0').filter(|f| !f.is_empty()).collect();
+  if files.len() > PATHSPEC_MAX {
+    return false;
+  }
+  files.chunks(PATHSPEC_CHUNK).all(|chunk| {
+    let mut args = vec!["diff", "--quiet", "--no-renames", base, "HEAD", "--"];
+    args.extend(chunk.iter().copied());
+    git_ok(dir, &args)
+  })
+}
+
 fn mtime_ms(path: &Path) -> u64 {
   std::fs::metadata(path)
     .and_then(|m| m.modified())
@@ -161,6 +187,7 @@ fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate 
     unpushed: false,
     merged: false,
     unchanged: false,
+    squash_merged: false,
     unknown_base: base.is_none(),
     base: base.map(str::to_owned),
     error: None,
@@ -192,6 +219,12 @@ fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate 
       } else {
         c.merged = true;
       }
+    } else if content_in_base(dir, base) {
+      // Squash / rebase merged: nothing on the branch is missing from the base, so no commit of it
+      // is unpublished work either.
+      c.merged = true;
+      c.squash_merged = true;
+      c.unpushed = false;
     }
   }
   let commit = git(dir, &["log", "-1", "--format=%ct"]).ok().and_then(|s| s.trim().parse::<u64>().ok()).map_or(0, |s| s * 1000);
@@ -369,6 +402,71 @@ mod tests {
     // No remote: the commit counts as unpushed, so it is never offered as published work.
     assert!(c.unpushed);
     assert!(c.checked_at.is_some() && c.last_activity_at > 0);
+  }
+
+  /// main with a.txt; a branch `feat` that adds b.txt and edits a.txt.
+  fn feature() -> tempfile::TempDir {
+    let dir = repo();
+    run(dir.path(), &["checkout", "-q", "-b", "feat"]);
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a2").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "feat"]);
+    dir
+  }
+
+  /// Main gets the same change as one new commit (what a squash merge leaves): `feat` is not an ancestor of it.
+  fn squash_into_main(dir: &Path) {
+    run(dir, &["checkout", "-q", "main"]);
+    std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+    std::fs::write(dir.join("a.txt"), "a2").unwrap();
+    run(dir, &["add", "."]);
+    run(dir, &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "squash feat"]);
+    run(dir, &["checkout", "-q", "feat"]);
+  }
+
+  #[test]
+  fn a_squash_merged_branch_is_merged_by_content_and_its_commits_are_not_unpublished() {
+    let dir = feature();
+    // Not merged yet: the base lacks b.txt.
+    assert!(!content_in_base(dir.path(), "main"));
+    let before = inspect(&info(dir.path(), "feat"), false, Some("main"));
+    assert_eq!((before.merged, before.squash_merged, before.unpushed), (false, false, true));
+    squash_into_main(dir.path());
+    assert!(content_in_base(dir.path(), "main"));
+    let after = inspect(&info(dir.path(), "feat"), false, Some("main"));
+    assert_eq!((after.merged, after.squash_merged, after.unpushed, after.clean), (true, true, false, Some(true)));
+  }
+
+  #[test]
+  fn a_later_change_to_a_touched_file_on_the_base_only_ever_keeps_the_branch() {
+    let dir = feature();
+    squash_into_main(dir.path());
+    run(dir.path(), &["checkout", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a3").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "later"]);
+    run(dir.path(), &["checkout", "-q", "feat"]);
+    assert!(!content_in_base(dir.path(), "main"));
+    let c = inspect(&info(dir.path(), "feat"), false, Some("main"));
+    assert_eq!((c.merged, c.squash_merged, c.unpushed), (false, false, true));
+  }
+
+  #[test]
+  fn a_deleted_file_counts_when_the_base_deleted_it_too() {
+    let dir = repo();
+    std::fs::write(dir.path().join("gone.txt"), "x").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "gone"]);
+    run(dir.path(), &["checkout", "-q", "-b", "feat"]);
+    run(dir.path(), &["rm", "-q", "gone.txt"]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "rm"]);
+    assert!(!content_in_base(dir.path(), "main"), "main still has the file");
+    run(dir.path(), &["checkout", "-q", "main"]);
+    run(dir.path(), &["rm", "-q", "gone.txt"]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "rm too"]);
+    run(dir.path(), &["checkout", "-q", "feat"]);
+    assert!(content_in_base(dir.path(), "main"));
   }
 
   #[test]

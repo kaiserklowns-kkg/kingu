@@ -20,6 +20,7 @@ const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({
 	unpushed: false,
 	merged: true,
 	unchanged: false,
+	squashMerged: false,
 	unknownBase: false,
 	base: 'origin/main',
 	error: null,
@@ -51,6 +52,14 @@ describe('workspace cleanup scan → evaluator input', () => {
 
 	test('a clean, pushed, merged task is removed once its rule is on', () => {
 		expect(slugsToRemove(verdicts(scan(cand())))).toEqual(['a']);
+	});
+
+	test('a squash-merged branch (Rust: merged, nothing unpublished) is removed by the merged rule', () => {
+		const c = cand({ merged: true, squashMerged: true, unpushed: false });
+		expect(candidateInput(c, undefined).reasons).toEqual(['merged']);
+		expect(slugsToRemove(verdicts(scan(c)))).toEqual(['a']);
+		// The same branch before the squash: not merged, and its commits are unpublished work.
+		expect(verdicts(scan(cand({ merged: false, unpushed: true }))).get('a')!.evaluation).toMatchObject({ action: 'keep' });
 	});
 
 	test('nothing is removed while every rule is off', () => {

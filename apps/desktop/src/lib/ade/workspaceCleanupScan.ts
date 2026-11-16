@@ -28,6 +28,8 @@ export type CleanupCandidate = {
 	unpushed: boolean;
 	merged: boolean;
 	unchanged: boolean;
+	/** Squash / rebase merged: everything the branch changed is in the base with the same content (Rust sets `merged` and clears `unpushed` with it). */
+	squashMerged: boolean;
 	unknownBase: boolean;
 	base: string | null;
 	error: string | null;
