@@ -226,7 +226,7 @@ External
 | done | auto-run (opt-in `kingu.workspaceCleanup.auto`): ตรวจหลังเปิดหน้าต่าง 2 นาทีแล้วทุกชั่วโมง ไม่รันตอน dialog เปิดหรือมี run อยู่; รายการ Activity ในหน้า settings | `ade/autoCleanup.ts`, `ade/autoCleanup.svelte.ts` |
 | open | ยังไม่ได้ลองกับแอปที่รันจริง: ผ่านเฉพาะ unit test, `bun run check` และ test ใน worktree สะอาด (UI, ตัวตั้งเวลา, `kingu cleanup` ผ่าน socket ยังไม่เคยเห็นของจริง) | — |
 | open | ledger ของ request id อยู่ในหน่วยความจำ (หายเมื่อ restart); มี `agent/op_ledger.rs` ที่ port จาก Orca อยู่แล้ว ควรตัดสินใจว่ารวมเป็นตัวเดียวหรือไม่ | `cli_ledger.rs` vs `agent/op_ledger.rs` |
-| open | คำขอผ่าน window มี timeout 30 วินาที: `kingu cleanup run` ที่ลบหลาย task อาจหมดเวลาทั้งที่ window ยังลบอยู่ (ledger ถูกยกเลิก ลองใหม่ด้วย id เดิมได้แต่ไม่ได้ใบเสร็จครั้งแรก) | `cli_server.rs` `cleanup_run` |
+| done | `kingu cleanup run` รอได้ 10 นาทีฝั่งแอป (11 นาทีฝั่งคำสั่ง) แทน 30 วินาที | `cli_server.rs` `CLEANUP_RUN_TIMEOUT`, `kingu-cli/src/client.rs` `answer_timeout` |
 | open | facet ที่ยังไม่เปิดใน dialog: ขนาด (ต้องต่อผล Workspace Space), สถานะ PR/review, ticket, host/repo, pinned/archived; ตรรกะ port ไว้แล้วใน `workspaceCleanupFilters.ts` | `ade/workspaceCleanupFilters.ts` |
 | open | กฎ `automationRuns` / `orchestrationWorkers` ยังไม่มีข้อมูลป้อน จึงไม่ match; กฎ `inactive` แบบ archive ยังไม่รองรับ (เก็บไว้ ไม่ลบ); squash merge ตรวจจาก Git อย่างเดียวไม่ได้ | `ade/workspaceCleanupScan.ts` |
 | open | Activity อยู่ในหน่วยความจำ (หายเมื่อปิดหน้าต่าง); หลายหน้าต่างบนโฟลเดอร์เดียวกันต่างคนต่างรัน (task ที่ลบแล้วไม่ถูกเห็นอีก จึงไม่ลบซ้ำ) | `ade/cleanup.svelte.ts` |
