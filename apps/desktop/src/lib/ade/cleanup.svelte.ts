@@ -43,9 +43,9 @@ class Cleanup {
 		)
 	);
 	rulesOn = $derived(this.policy.source !== 'project-off' && hasEnabledWorkspaceCleanupRule(this.policy.rules));
-	verdicts: Map<string, CleanupVerdict> = $derived(this.scan ? evaluateScan(this.scan, this.policy, (slug) => this.#context(slug)) : new Map());
+	verdicts: Map<string, CleanupVerdict> = $derived(this.scan ? evaluateScan(this.scan, this.policy, (slug) => this.taskContext(slug)) : new Map());
 
-	#context(slug: string): CleanupTaskContext {
+	taskContext(slug: string): CleanupTaskContext {
 		const tabs = tabsOfTask(
 			editors.allTabs().map((t) => t.path),
 			slug,
@@ -94,7 +94,7 @@ class Cleanup {
 	async preview() {
 		const scan = await this.rescan();
 		if (!scan) throw new Error(this.error ?? 'No folder is open');
-		return cleanupPreview(this.policy, evaluateScan(scan, this.policy, (slug) => this.#context(slug)));
+		return cleanupPreview(this.policy, evaluateScan(scan, this.policy, (slug) => this.taskContext(slug)));
 	}
 
 	/**
@@ -116,7 +116,7 @@ class Cleanup {
 	async #run(source: CleanupSource) {
 		const scan = await this.rescan();
 		if (!scan) throw new Error(this.error ?? 'No folder is open');
-		const verdicts = evaluateScan(scan, this.policy, (slug) => this.#context(slug));
+		const verdicts = evaluateScan(scan, this.policy, (slug) => this.taskContext(slug));
 		const targets = slugsToRemove(verdicts);
 		const removed: string[] = [];
 		const failed: { slug: string; error: string }[] = [];

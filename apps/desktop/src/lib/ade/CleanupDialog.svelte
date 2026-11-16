@@ -14,15 +14,32 @@
 	import { systemSettings } from '#lib/settings/systemSettings.svelte.ts';
 	import { formatWorkspaceCleanupKeepCause, formatWorkspaceCleanupRuleReason } from './workspaceCleanupVerdict';
 	import { slugsToRemove } from './workspaceCleanupScan';
+	import CleanupFilterBar from './CleanupFilterBar.svelte';
+	import { cleanupBrowse } from './cleanupBrowse.svelte';
+	import { browseCleanupRows, rowFacts } from './workspaceCleanupBrowse';
 
 	const ORDER = { done: 0, review: 1, failed: 2, waiting: 3, running: 4 } as const;
 	const only = untrack(() => cleanup.only);
 	const ready = $derived(new Set(slugsToRemove(cleanup.verdicts)));
-	// What the rules would remove comes first, then the usual order.
+	// What the rules would remove comes first, then the filter bar's sort; its filters hide the rest
+	// (a hidden task is never picked or removed). The losing attempts of Pick winner are never filtered.
+	const candidates = $derived(new Map((cleanup.scan?.candidates ?? []).flatMap((c) => (c.slug ? [[c.slug, c] as const] : []))));
+	const base = $derived([...adeTasks.views].filter((v) => !only || only.includes(v.meta.slug)));
+	const facts = $derived(
+		base.map((v) =>
+			rowFacts(
+				{ slug: v.meta.slug, title: v.meta.title, branch: adeTasks.branchOf(v.meta.slug), status: v.status, working: runtime.isWorking(v.meta.slug), createdAt: v.meta.created_at, updatedAt: v.meta.updated_at },
+				candidates.get(v.meta.slug),
+				cleanup.taskContext(v.meta.slug)
+			)
+		)
+	);
+	const order = $derived(only ? facts : browseCleanupRows(facts, cleanupBrowse.filters, cleanupBrowse.sort, adeTasks.now));
+	const byRank = $derived(new Map(order.map((r, i) => [r.slug, i])));
 	const rows = $derived(
-		[...adeTasks.views]
-			.filter((v) => !only || only.includes(v.meta.slug))
-			.sort((a, b) => Number(ready.has(b.meta.slug)) - Number(ready.has(a.meta.slug)) || ORDER[a.status] - ORDER[b.status] || b.meta.updated_at - a.meta.updated_at)
+		base
+			.filter((v) => byRank.has(v.meta.slug))
+			.sort((a, b) => Number(ready.has(b.meta.slug)) - Number(ready.has(a.meta.slug)) || (only ? ORDER[a.status] - ORDER[b.status] || b.meta.updated_at - a.meta.updated_at : byRank.get(a.meta.slug)! - byRank.get(b.meta.slug)!))
 	);
 	let picked = $state<Record<string, boolean>>(untrack(() => Object.fromEntries(adeTasks.views.filter((v) => (only ? only.includes(v.meta.slug) : v.status === 'done')).map((v) => [v.meta.slug, true]))));
 	let deleteBranch = $state(false);
@@ -103,6 +120,7 @@
 				>
 			</div>
 		{/if}
+		{#if !only}<CleanupFilterBar shown={rows.length} total={base.length} />{/if}
 		<ul class="min-h-0 flex-1 overflow-y-auto border-y border-(--vscode-widget-border) py-1">
 			{#each rows as v (v.meta.slug)}
 				{@const slug = v.meta.slug}
@@ -126,7 +144,7 @@
 					</label>
 				</li>
 			{:else}
-				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{t('adeAttempts.cleanup.empty')}</li>
+				<li class="px-5 py-8 text-center text-[13px] text-(--vscode-descriptionForeground)">{base.length ? t('workspaceCleanup.filter.noMatch') : t('adeAttempts.cleanup.empty')}</li>
 			{/each}
 		</ul>
 		<footer class="flex items-center gap-3 px-5 py-3">
