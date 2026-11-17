@@ -57,8 +57,8 @@ async function handle(req: CliRequest): Promise<unknown> {
 			return cleanup.runRules('cli');
 		case 'workspaceCleanup.report': {
 			// Orca's `workspace cleanup report`: the rules, the schedule and recent runs. Activity is kept
-			// in localStorage, so it outlives a restart and includes other windows' runs, but it is per app
-			// profile, not per project. Before the first run the next check is "as soon as a folder is
+			// in localStorage, so it outlives a restart and includes other windows' runs, and it is kept per
+			// folder. Before the first run the next check is "as soon as a folder is
 			// open" (null with `auto` on).
 			cleanup.reloadActivity();
 			const auto = settings.get<boolean>(AUTO_CLEANUP_ID) === true;
