@@ -24,6 +24,10 @@ import { dirOf, editorOpens, openTarget, profileFor, waitOver, type CliRequest, 
 import { setBuiltInPluginProvider } from './mcp.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { cleanup } from './cleanup.svelte.ts';
+import { AUTO_CLEANUP_ID } from './autoCleanup.svelte.ts';
+import { AUTO_CHECK_MS } from './autoCleanup.ts';
+import { WORKSPACE_CLEANUP_RULE_KEYS } from './workspaceCleanupPolicy.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
 
 async function handle(req: CliRequest): Promise<unknown> {
 	switch (req.method) {
@@ -51,6 +55,23 @@ async function handle(req: CliRequest): Promise<unknown> {
 			return cleanup.preview();
 		case 'workspaceCleanup.run':
 			return cleanup.runRules('cli');
+		case 'workspaceCleanup.report': {
+			// Orca's `workspace cleanup report`: the rules, the schedule and recent runs. Activity is kept
+			// in localStorage, so it outlives a restart and includes other windows' runs, but it is per app
+			// profile, not per project. Before the first run the next check is "as soon as a folder is
+			// open" (null with `auto` on).
+			cleanup.reloadActivity();
+			const auto = settings.get<boolean>(AUTO_CLEANUP_ID) === true;
+			const { lastRunAt } = cleanup;
+			return {
+				rules: WORKSPACE_CLEANUP_RULE_KEYS.filter((k) => cleanup.policy.rules[k].enabled),
+				source: cleanup.policy.source,
+				auto,
+				lastRunAt,
+				nextRunAt: auto && lastRunAt !== null ? lastRunAt + AUTO_CHECK_MS : null,
+				activity: cleanup.activity
+			};
+		}
 		case 'open': {
 			const p = req.params as OpenParams;
 			const target = openTarget(workspace.root, p);

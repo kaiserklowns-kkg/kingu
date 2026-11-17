@@ -262,6 +262,11 @@ pub(crate) fn connected(host: &str) -> Result<Http, String> {
   client(host, stored_token(host).ok_or_else(|| tr!(TrackerMsg::GitlabNotConnected, host))?)
 }
 
+/// A client with `token` and a whole-request limit of `total` (Workspace Cleanup's bounded lookups).
+pub(crate) fn client_with_timeout(host: &str, token: String, total: std::time::Duration) -> Result<Http, String> {
+  Http::with_timeout(SERVICE, &format!("https://{host}/api/v4"), "PRIVATE-TOKEN", token, total)
+}
+
 /// `project`, or the open folder's remote on `host` (origin first).
 fn resolve_project(ws: &crate::workspace::Workspace, host: &str, project: Option<String>) -> Result<String, String> {
   if let Some(p) = project.as_deref().map(str::trim).filter(|p| !p.is_empty()) {

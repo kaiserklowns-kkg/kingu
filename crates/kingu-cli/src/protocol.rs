@@ -20,6 +20,9 @@ pub const METHOD_TASK_SET: &str = "task.set";
 pub const METHOD_CLEANUP_PREVIEW: &str = "workspaceCleanup.preview";
 pub const METHOD_CLEANUP_RUN: &str = "workspaceCleanup.run";
 pub const METHOD_CLEANUP_RECEIPT: &str = "workspaceCleanup.receipt";
+/// Orca's `workspace cleanup report`: the rules, automatic cleanup, the last run and the next check,
+/// and the runs the window has seen since it opened (in memory, not kept across restarts).
+pub const METHOD_CLEANUP_REPORT: &str = "workspaceCleanup.report";
 pub const METHOD_OPEN: &str = "open";
 pub const METHOD_NOTIFY: &str = "notify";
 pub const METHOD_ARTIFACT_PUBLISH: &str = "artifact.publish";

@@ -31,12 +31,14 @@ pub enum Command {
     slug: Option<String>,
     comment: String,
   },
-  /// `kingu cleanup preview`: what the cleanup rules would remove, and why the rest stays.
+  /// `kingu cleanup preview`: what the cleanup rules would do (remove or archive), and why the rest stays.
   CleanupPreview,
-  /// `kingu cleanup run [--request-id <id>]`: removes it; the same id again replays the first receipt.
+  /// `kingu cleanup run [--request-id <id>]`: does it; the same id again replays the first receipt.
   CleanupRun {
     request_id: Option<String>,
   },
+  /// `kingu cleanup report`: the rules, the schedule and this window's recent runs.
+  CleanupReport,
   /// `kingu cleanup receipt <id>`: the receipt of an earlier run (recovery after a lost answer).
   CleanupReceipt {
     request_id: String,
@@ -377,6 +379,7 @@ fn cleanup(args: &[String]) -> Result<Command, String> {
   let rest = &args[1..];
   match sub.as_str() {
     "preview" => no_more(rest, Command::CleanupPreview),
+    "report" => no_more(rest, Command::CleanupReport),
     "run" => {
       let (pos, flags) = split(rest, &["--request-id"], &[])?;
       if let Some(extra) = pos.first() {
@@ -624,6 +627,8 @@ mod tests {
     assert_eq!(c(&["cleanup", "receipt", "nightly_1"]), Command::CleanupReceipt { request_id: "nightly_1".into() });
     assert!(p(&["cleanup"]).is_err() && p(&["cleanup", "delete"]).is_err() && p(&["cleanup", "preview", "x"]).is_err());
     assert!(p(&["cleanup", "run", "--request-id", "a b"]).is_err() && p(&["cleanup", "run", "--request-id"]).is_err());
+    assert_eq!(c(&["cleanup", "report"]), Command::CleanupReport);
+    assert!(p(&["cleanup", "report", "x"]).is_err());
     assert!(p(&["cleanup", "receipt"]).is_err() && p(&["cleanup", "receipt", "../x"]).is_err());
   }
 

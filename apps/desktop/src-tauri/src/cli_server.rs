@@ -634,7 +634,7 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
       }
       ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug, "comment": comment }), false)
     }
-    protocol::METHOD_CLEANUP_PREVIEW => {
+    protocol::METHOD_CLEANUP_PREVIEW | protocol::METHOD_CLEANUP_REPORT => {
       folder(app, params)?;
       ask_window(app, cwd_of(params).as_deref(), method, json!({}), false)
     }

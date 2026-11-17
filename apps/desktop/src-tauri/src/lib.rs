@@ -1732,6 +1732,7 @@ pub fn run() {
       worktree_refresh_base,
       worktree_list,
       workspace_cleanup::workspace_cleanup_scan,
+      workspace_cleanup::workspace_cleanup_inspect,
       workspace_cleanup::workspace_cleanup_sizes,
       workspace_space::workspace_space_analyze,
       workspace_space::workspace_space_cancel,

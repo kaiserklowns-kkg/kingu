@@ -1,7 +1,7 @@
 // Workspace Cleanup, automatic runs: opt-in (`kingu.workspaceCleanup.auto`, off by default). While a
 // window is open and the setting is on, it looks once an hour (and shortly after opening) and, when a
 // rule is on for the open folder, runs the same cleanup as `kingu cleanup run`: the rules decide, the
-// normal removal does it, and what was removed is flashed and listed under Activity. Other windows
+// normal removal (or archive) does it, and what was removed/archived is flashed and listed under Activity. Other windows
 // run their own folders; a folder two windows share is safe because a removed task is gone for both.
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -26,7 +26,8 @@ async function tick() {
 	if (!due) return;
 	try {
 		const receipt = await cleanup.runRules('auto');
-		if (receipt.removed.length) status.flash(t('workspaceCleanup.auto.flash', { count: receipt.removed.length }), 8000);
+		const count = receipt.removed.length + receipt.archived.length;
+		if (count) status.flash(t('workspaceCleanup.auto.flash', { count }), 8000);
 	} catch {
 		// A failed scan is already in cleanup.error; the next check tries again.
 	}

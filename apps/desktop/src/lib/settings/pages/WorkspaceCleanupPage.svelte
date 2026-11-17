@@ -15,7 +15,6 @@
 		hasEnabledWorkspaceCleanupRule,
 		normalizeRepoWorkspaceCleanupPolicy,
 		normalizeWorkspaceCleanupRules,
-		WORKSPACE_ARCHIVE_SUPPORTED,
 		WORKSPACE_CLEANUP_POLICY_MAX_DAYS,
 		WORKSPACE_CLEANUP_POLICY_MIN_DAYS,
 		type RepoWorkspaceCleanupPolicy,
@@ -122,10 +121,8 @@
 						onchange={(a) => void setAction(a)}
 					/>
 				</div>
-				{#if editing.inactive.action === 'archive' && !WORKSPACE_ARCHIVE_SUPPORTED}
-					<div class="mt-2 flex items-start gap-1.5 text-xs text-(--vscode-editorWarning-foreground)">
-						<Icon name="warning" size={13} /><span>{t('workspaceCleanup.archiveUnavailable')}</span>
-					</div>
+				{#if editing.inactive.action === 'archive'}
+					<div class="mt-2 text-xs text-(--vscode-descriptionForeground)">{t('workspaceCleanup.archiveHint')}</div>
 				{/if}
 			{/if}
 		</div>
@@ -206,10 +203,11 @@
 				{#each cleanup.activity as a (a.at)}
 					<li class="px-4 py-2.5 text-[13px]">
 						<div>
-							{t('workspaceCleanup.activity.row', { source: t(`workspaceCleanup.activity.source.${a.source}`), removed: a.removed.length, failed: a.failed.length, kept: a.kept })}
+							{t('workspaceCleanup.activity.row', { source: t(`workspaceCleanup.activity.source.${a.source}`), removed: a.removed.length, archived: a.archived.length, failed: a.failed.length, kept: a.kept })}
 							<span class={HINT}>· {timeAgo(a.at, adeTasks.now)}</span>
 						</div>
 						{#if a.removed.length}<div class="truncate font-mono {HINT}">{a.removed.join(', ')}</div>{/if}
+						{#if a.archived.length}<div class="truncate font-mono {HINT}">{a.archived.join(', ')}</div>{/if}
 						{#each a.failed as f (f.slug)}<div class="truncate text-xs text-(--vscode-errorForeground)">{f.slug}: {f.error}</div>{/each}
 					</li>
 				{/each}

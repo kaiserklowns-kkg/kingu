@@ -1,6 +1,6 @@
-// Clean Up Tasks (Orca's WorkspaceCleanupDialog): which tasks to remove in one go. The dialog also
-// scans the project (Rust `workspace_cleanup_scan`) and asks the one evaluator which tasks the
-// cleanup rules would remove now and why the others stay (workspaceCleanupScan.ts).
+// Clean Up Tasks (Orca's WorkspaceCleanupDialog): which tasks to remove or archive in one go. The
+// dialog also scans the project (Rust `workspace_cleanup_scan`) and asks the one evaluator which
+// tasks the cleanup rules would act on now and why the others stay (workspaceCleanupScan.ts).
 import { invoke } from '@tauri-apps/api/core';
 import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { editors } from '#lib/workbench/editors.svelte.ts';
@@ -8,17 +8,36 @@ import { parseTaskDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeTasks } from './tasks.svelte';
+import { adeLayout } from './adeLayout.svelte';
 import { runtime } from './runtime.svelte';
 import { prStatuses } from './prStatus.svelte';
 import { tabsOfTask } from './agentGuard';
+import { sidebarPrefs } from './sidebarPrefs.svelte';
 import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
-import { cleanupReceipt, cleanupPreview, evaluateScan, slugsToRemove, type CleanupProgress, type CleanupScan, type CleanupSize, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
+import { applyRechecked, candidateVerdict, cleanupReceipt, cleanupPreview, cleanupTargets, evaluateScan, type CleanupCandidate, type CleanupProgress, type CleanupScan, type CleanupSize, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
 import { hasEnabledWorkspaceCleanupRule } from './workspaceCleanupPolicy';
-import { withActivity, type CleanupActivity, type CleanupSource } from './autoCleanup';
+import { ACTIVITY_KEY, parseStoredActivity, serializeActivity, withActivity, withActivityLock, type CleanupActivity, type CleanupSource, type StoredActivity } from './autoCleanup';
 
 const RULES_ID = 'kingu.workspaceCleanup.rules';
 const PROJECT_ID = 'kingu.workspaceCleanup.project';
+
+/** null when storage is unavailable, so a failure never wipes what this window holds. */
+function readStored(): StoredActivity | null {
+	try {
+		return parseStoredActivity(localStorage.getItem(ACTIVITY_KEY));
+	} catch {
+		return null;
+	}
+}
+
+function writeStored(s: StoredActivity) {
+	try {
+		localStorage.setItem(ACTIVITY_KEY, serializeActivity(s));
+	} catch {
+		// Storage full or unavailable: Activity stays in this window only.
+	}
+}
 
 class Cleanup {
 	open = $state(false);
@@ -36,7 +55,7 @@ class Cleanup {
 	/** Pull requests read for the review facet: `scanned` of `total` tasks; null when no read is going. */
 	prProgress = $state<CleanupProgress | null>(null);
 	#prRun = 0;
-	/** Runs since the window opened, newest first (Settings › Workspace Cleanup › Activity). */
+	/** Recent runs of every window, newest first (Settings › Workspace Cleanup › Activity); kept in localStorage. */
 	activity = $state.raw<CleanupActivity[]>([]);
 	/** A run is going (the removal loop), so an automatic one never starts on top of it. */
 	running = $state(false);
@@ -64,6 +83,10 @@ class Cleanup {
 			liveAgent: runtime.isLive(slug) || runtime.isWorking(slug),
 			active: !!editors.active && slugOfTaskKey(editors.active) === slug,
 			dirtyEditor: tabs.some((p) => editors.isDirty(p)),
+			// Any terminal tab of the task is a live PTY; removing the worktree would kill it.
+			runningTerminal: (adeLayout.terminals[slug]?.length ?? 0) > 0,
+			pinned: sidebarPrefs.pinned(workspace.root ?? '').includes(slug),
+			archived: !!view?.meta.archived_at,
 			updatedAt: view?.meta.updated_at,
 			origin: view?.meta.origin ?? null,
 			dispatchedBy: view?.meta.dispatched_by ?? null,
@@ -71,9 +94,38 @@ class Cleanup {
 		};
 	}
 
-	/** Adds a run to Activity (the dialog removes tasks itself; the others go through `runRules`). */
-	record(source: CleanupSource, removed: string[], failed: { slug: string; error: string }[], kept: number) {
-		this.activity = withActivity(this.activity, { at: Date.now(), source, removed, failed, kept });
+	constructor() {
+		this.reloadActivity();
+		if (typeof window !== 'undefined') window.addEventListener('storage', (e) => e.key === ACTIVITY_KEY && this.reloadActivity());
+	}
+
+	/** Re-reads Activity and the last run, so runs from other windows show (and are not run twice). */
+	reloadActivity() {
+		const stored = readStored();
+		if (!stored) return;
+		this.activity = stored.activity;
+		if (stored.lastRunAt !== null && (this.lastRunAt === null || stored.lastRunAt > this.lastRunAt)) this.lastRunAt = stored.lastRunAt;
+	}
+
+	#serial<T>(fn: () => T): Promise<T> {
+		return withActivityLock(fn);
+	}
+
+	async #markRun(at: number) {
+		await this.#serial(() => {
+			this.reloadActivity();
+			this.lastRunAt = at;
+			writeStored({ activity: this.activity, lastRunAt: at });
+		});
+	}
+
+	/** Adds a run to Activity (the dialog acts on tasks itself; the others go through `runRules`). */
+	async record(source: CleanupSource, removed: string[], archived: string[], failed: { slug: string; error: string }[], kept: number) {
+		await this.#serial(() => {
+			this.reloadActivity();
+			this.activity = withActivity(this.activity, { at: Date.now(), source, removed, archived, failed, kept });
+			writeStored({ activity: this.activity, lastRunAt: this.lastRunAt });
+		});
 	}
 
 	/** Measures every task worktree (`du`, one after another): slow, so the dialog asks after the Git facts are shown. */
@@ -121,7 +173,7 @@ class Cleanup {
 
 	#inflight: Promise<CleanupScan | null> | null = null;
 
-	/** Reads Git for every worktree of the open folder; one scan at a time (a second ask shares it). */
+	/** Reads Git for every worktree of the open folder; one scan at a time (a second ask shares it). Each window scans on its own. */
 	rescan(): Promise<CleanupScan | null> {
 		if (!workspace.root) return Promise.resolve(null);
 		return (this.#inflight ??= this.#scan().finally(() => (this.#inflight = null)));
@@ -137,6 +189,8 @@ class Cleanup {
 			return this.scan;
 		} catch (e) {
 			this.error = String(e);
+			// No stale rows after a failed scan: the dialog must not offer what it can no longer vouch for.
+			this.scan = null;
 			return null;
 		} finally {
 			unlisten?.();
@@ -154,13 +208,13 @@ class Cleanup {
 
 	/**
 	 * `kingu cleanup run`: a fresh scan, the same decision as the dialog, then each task the rules
-	 * remove goes through the normal removal (its own guards and branch setting). Nothing the
-	 * evaluator keeps is touched, so an unattended run cannot remove more than the preview showed.
+	 * act on is removed (its own guards and branch setting) or archived. Nothing the evaluator keeps
+	 * is touched, so an unattended run cannot do more than the preview showed.
 	 */
 	async runRules(source: CleanupSource = 'cli') {
 		if (this.running) throw new Error('A cleanup run is already going');
 		this.running = true;
-		this.lastRunAt = Date.now();
+		await this.#markRun(Date.now());
 		try {
 			return await this.#run(source);
 		} finally {
@@ -172,21 +226,21 @@ class Cleanup {
 		const scan = await this.rescan();
 		if (!scan) throw new Error(this.error ?? 'No folder is open');
 		const verdicts = evaluateScan(scan, this.policy, (slug) => this.taskContext(slug));
-		const targets = slugsToRemove(verdicts);
-		const removed: string[] = [];
-		const failed: { slug: string; error: string }[] = [];
-		for (const slug of targets) {
-			try {
-				const ok = await adeTasks.removeConfirmed(slug, { deleteBranch: adeTasks.defaultBranchRemoval(slug), force: false });
-				if (ok) removed.push(slug);
-				else failed.push({ slug, error: 'not removed (see Kingu)' });
-			} catch (e) {
-				failed.push({ slug, error: e instanceof Error ? e.message : String(e) });
+		const targets = cleanupTargets(verdicts);
+		const recheck = async ({ slug, action }: (typeof targets)[number]) => {
+			const fresh = await invoke<CleanupCandidate>('workspace_cleanup_inspect', { path: verdicts.get(slug)!.path });
+			return candidateVerdict(fresh, this.policy, this.taskContext(slug), Date.now())?.evaluation.action === action;
+		};
+		const { removed, archived, failed, skipped } = await applyRechecked(targets, recheck, async ({ slug, action }) => {
+			if (action === 'archive') {
+				await adeTasks.archive(slug);
+				return !!adeTasks.find(slug)?.meta.archived_at;
 			}
-		}
-		const kept = verdicts.size - targets.length;
-		this.record(source, removed, failed, kept);
-		return cleanupReceipt(removed, failed, kept);
+			return adeTasks.removeConfirmed(slug, { deleteBranch: adeTasks.defaultBranchRemoval(slug), force: false });
+		});
+		const kept = verdicts.size - targets.length + skipped;
+		await this.record(source, removed, archived, failed, kept);
+		return cleanupReceipt(removed, archived, failed, kept);
 	}
 
 	/** The dialog with just `slugs` (the losing attempts of a best-of-N group). */

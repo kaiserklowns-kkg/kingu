@@ -18,10 +18,14 @@
 //!   left to lose, so it counts as `merged` and its commits as published. Git alone sees this by
 //!   content (every file the branch touched is identical in the base); a later change to one of
 //!   those files on the base makes it look unmerged, which only ever keeps a workspace;
-//! - `pr_merged`: Git cannot see the merge (the base moved on), but GitHub says a PR for this branch
-//!   was merged and its head commit is exactly this worktree's HEAD (`gh pr list --state merged`).
-//!   Any later commit differs from the PR head and keeps the workspace. No `gh`, no login, a
-//!   non-GitHub remote, an error or a timeout all mean "no information", never a failure;
+//! - `pr_merged`: Git cannot see the merge (the base moved on), but the forge says a PR for this
+//!   branch was merged and its head commit is exactly this worktree's HEAD: GitHub through
+//!   `gh pr list --state merged`, GitLab (an `origin` on a GitLab host, `agent::mr::forge`) through
+//!   its merge requests API with the stored token, in the project a fork's MRs go to, Bitbucket
+//!   Cloud (an `origin` on bitbucket.org) through its pull requests API with the Bitbucket
+//!   credential, only PRs opened from this repository. Any later commit differs from the PR head
+//!   and keeps the workspace. No `gh`, no token, an error or a timeout all mean "no information",
+//!   never a failure;
 //! - `unknown_base`: no default branch could be found, so neither can be told;
 //! - `last_activity_at`: the newest of the HEAD commit, the worktree's HEAD and index files.
 //!
@@ -33,18 +37,15 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::agent::mr::{self, Forge};
 use crate::agent::worktree::{self, WorktreeInfo};
 use crate::projects;
 use crate::workspace::Workspace;
-
-static RUNNING: AtomicBool = AtomicBool::new(false);
-static MEASURING: AtomicBool = AtomicBool::new(false);
 
 /// `du` gets two minutes per worktree (Workspace Space's limit).
 const DU_TIMEOUT: Duration = Duration::from_secs(120);
@@ -67,7 +68,8 @@ pub struct Candidate {
   pub merged: bool,
   pub unchanged: bool,
   pub squash_merged: bool,
-  /// A merged GitHub PR whose head commit is this worktree's HEAD (sets `merged`, clears `unpushed`).
+  /// A merged GitHub PR, GitLab MR or Bitbucket PR whose head commit is this worktree's HEAD (sets `merged`,
+  /// clears `unpushed`).
   pub pr_merged: bool,
   pub unknown_base: bool,
   pub base: Option<String>,
@@ -177,9 +179,9 @@ fn mtime_ms(path: &Path) -> u64 {
     .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Total time one scan may spend asking GitHub; later candidates are skipped once it is used up.
+/// Total time one scan may spend asking the forge; later candidates are skipped once it is used up.
 const GH_BUDGET: Duration = Duration::from_secs(8);
-/// One `gh` call's limit (a slow network must not stall the scan).
+/// One `gh` call's or forge request's limit (a slow network must not stall the scan).
 const GH_CALL_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// True when `json` (`gh pr list --json number,headRefOid`) lists a PR whose head commit is
@@ -202,15 +204,71 @@ pub fn pr_merged_at(branch: &str, head: &str, fetch: &mut dyn FnMut(&str) -> Opt
 /// The real lookup: `gh pr list --head <branch> --state merged` in the worktree, within what is
 /// left of `budget`. `None` for any failure.
 fn gh_merged_prs(gh: &Path, dir: &Path, branch: &str, budget: &mut Duration) -> Option<String> {
+  let args: Vec<String> = ["pr", "list", "--head", branch, "--state", "merged", "--json", "number,headRefOid", "--limit", "5"].iter().map(|s| (*s).to_owned()).collect();
+  timed(budget, |timeout| crate::agent::pr::gh_run(gh, dir, &args, timeout, None).ok())
+}
+
+/// Runs `ask` with a limit of what is left of `budget` (at most `GH_CALL_TIMEOUT`) and takes the
+/// time it used from `budget`; nothing once the budget is spent.
+fn timed<T>(budget: &mut Duration, ask: impl FnOnce(Duration) -> Option<T>) -> Option<T> {
   let timeout = (*budget).min(GH_CALL_TIMEOUT);
   if timeout.is_zero() {
     return None;
   }
   let start = Instant::now();
-  let args: Vec<String> = ["pr", "list", "--head", branch, "--state", "merged", "--json", "number,headRefOid", "--limit", "5"].iter().map(|s| (*s).to_owned()).collect();
-  let out = crate::agent::pr::gh_run(gh, dir, &args, timeout, None).ok();
+  let out = ask(timeout);
   *budget = budget.saturating_sub(start.elapsed());
   out
+}
+
+/// A GitLab MR's or Bitbucket PR's merged head in the `gh pr list` shape [`pr_head_matches`] reads.
+pub fn mr_head_json(sha: &str) -> String {
+  serde_json::json!([{ "headRefOid": sha }]).to_string()
+}
+
+/// One GitLab request with a limit of what is left of `budget` (at most `GH_CALL_TIMEOUT`).
+fn gitlab_timed<T>(host: &str, token: &str, budget: &mut Duration, ask: impl FnOnce(&crate::tracker_http::Http) -> Result<T, String>) -> Option<T> {
+  timed(budget, |timeout| crate::gitlab::client_with_timeout(host, token.to_owned(), timeout).and_then(|c| ask(&c)).ok())
+}
+
+/// The forge question for one scan or inspect: a merged PR/MR of a branch, as `gh pr list` JSON.
+/// The forge is chosen once per repo; the GitLab route is asked once; all calls share one
+/// `GH_BUDGET`. Every error is "no information".
+struct MergedLookup {
+  source: MergedSource,
+  budget: Duration,
+}
+
+enum MergedSource {
+  Gitlab(Option<(String, String, mr::Route)>),
+  Bitbucket(Option<(crate::bitbucket::Credential, crate::bitbucket::Repo)>),
+  Gh(Option<PathBuf>),
+}
+
+impl MergedLookup {
+  fn new(root: &Path) -> Self {
+    let mut budget = GH_BUDGET;
+    let source = match mr::forge(root) {
+      Forge::Gitlab(p) => MergedSource::Gitlab(crate::gitlab::stored_token(&p.host).and_then(|token| {
+        let route = gitlab_timed(&p.host, &token, &mut budget, |c| mr::route(c, &p))?;
+        Some((p.host, token, route))
+      })),
+      Forge::Bitbucket(repo) => MergedSource::Bitbucket(crate::bitbucket::credential().map(|(c, _)| (c, repo))),
+      Forge::Github => MergedSource::Gh(crate::agent::review::gh_bin()),
+    };
+    Self { source, budget }
+  }
+
+  fn fetch(&mut self, dir: &Path, branch: &str) -> Option<String> {
+    match &self.source {
+      MergedSource::Gitlab(Some((host, token, route))) => gitlab_timed(host, token, &mut self.budget, |c| mr::merged_head(c, route, branch)).flatten().map(|sha| mr_head_json(&sha)),
+      MergedSource::Bitbucket(Some((cred, repo))) => {
+        timed(&mut self.budget, |timeout| crate::bitbucket::client_with_timeout(cred, timeout).and_then(|c| crate::bitbucket::merged_head(&c, repo, branch)).ok().flatten()).map(|sha| mr_head_json(&sha))
+      }
+      MergedSource::Gh(Some(g)) => gh_merged_prs(g, dir, branch, &mut self.budget),
+      _ => None,
+    }
+  }
 }
 
 fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate {
@@ -301,24 +359,51 @@ fn display_name(info: &WorktreeInfo) -> String {
 }
 
 /// Every worktree of `root` (the main one first, flagged), one after another.
-pub fn scan(root: &Path, mut emit: impl FnMut(usize, usize, Option<String>)) -> Result<Scan, String> {
+pub fn scan(root: &Path, emit: impl FnMut(usize, usize, Option<String>)) -> Result<Scan, String> {
+  let mut lookup = MergedLookup::new(root);
+  scan_with(root, &mut |dir, branch| lookup.fetch(dir, branch), emit)
+}
+
+/// `scan`, with `fetch` answering the forge question for a worktree's branch.
+fn scan_with(root: &Path, fetch: &mut dyn FnMut(&Path, &str) -> Option<String>, mut emit: impl FnMut(usize, usize, Option<String>)) -> Result<Scan, String> {
   let list = worktree::list(root)?;
   let main = list.first().map(|w| w.path.clone());
   let todo: Vec<WorktreeInfo> = list.into_iter().filter(|w| !w.prunable && !w.bare).collect();
   let base = find_base(root);
-  let gh = crate::agent::review::gh_bin();
-  let mut budget = GH_BUDGET;
   let total = todo.len();
   let mut candidates = Vec::with_capacity(total);
   emit(0, total, None);
   for (i, info) in todo.iter().enumerate() {
     emit(i, total, Some(display_name(info)));
     let dir = PathBuf::from(&info.path);
-    let mut fetch = |branch: &str| gh.as_deref().and_then(|g| gh_merged_prs(g, &dir, branch, &mut budget));
-    candidates.push(inspect_with(info, main.as_deref() == Some(info.path.as_str()), base.as_deref(), &mut fetch));
+    candidates.push(inspect_with(info, main.as_deref() == Some(info.path.as_str()), base.as_deref(), &mut |branch| fetch(&dir, branch)));
   }
   emit(total, total, None);
   Ok(Scan { scanned_at: now_ms(), candidates })
+}
+
+/// One task worktree of `root`, the one at exactly `path` (the main checkout and paths Git does not
+/// list are refused, so this never reads an arbitrary folder). `fetch` answers the forge question.
+pub fn inspect_path(root: &Path, path: &str, fetch: &mut dyn FnMut(&Path, &str) -> Option<String>) -> Result<Candidate, String> {
+  let list = worktree::list(root)?;
+  let main = list.first().map(|w| w.path.clone());
+  let info = list
+    .into_iter()
+    .find(|w| w.path == path && main.as_deref() != Some(w.path.as_str()) && !w.prunable && !w.bare)
+    .ok_or_else(|| format!("Not a task worktree of this project: {path}"))?;
+  let dir = PathBuf::from(&info.path);
+  Ok(inspect_with(&info, false, find_base(root).as_deref(), &mut |branch| fetch(&dir, branch)))
+}
+
+#[tauri::command]
+pub async fn workspace_cleanup_inspect(ws: Workspace, projects: State<'_, projects::Projects>, root: Option<String>, path: String) -> Result<Candidate, String> {
+  let Some(root) = projects::root_arg(&ws, &projects, root)? else { return Err("No folder is open".into()) };
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut lookup = MergedLookup::new(&root);
+    inspect_path(&root, &path, &mut |dir, branch| lookup.fetch(dir, branch))
+  })
+  .await
+  .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -332,19 +417,14 @@ pub async fn workspace_cleanup_scan(
   let Some(root) = projects::root_arg(&ws, &projects, root)? else {
     return Ok(Scan { scanned_at: now_ms(), candidates: Vec::new() });
   };
-  if RUNNING.swap(true, Ordering::SeqCst) {
-    return Err("A workspace cleanup scan is already running.".into());
-  }
   let label = window.label().to_string();
-  let result = tauri::async_runtime::spawn_blocking(move || {
+  tauri::async_runtime::spawn_blocking(move || {
     scan(&root, |scanned, total, current| {
       let _ = app.emit_to(label.as_str(), "workspace-cleanup-progress", Progress { scanned, total, current });
     })
   })
   .await
-  .map_err(|e| e.to_string());
-  RUNNING.store(false, Ordering::SeqCst);
-  result?
+  .map_err(|e| e.to_string())?
 }
 
 /// `du -sk` output (`<kilobytes>\t<path>`): the bytes, or `None` when it does not parse.
@@ -404,19 +484,14 @@ pub async fn workspace_cleanup_sizes(
   root: Option<String>,
 ) -> Result<Vec<Size>, String> {
   let Some(root) = projects::root_arg(&ws, &projects, root)? else { return Ok(Vec::new()) };
-  if MEASURING.swap(true, Ordering::SeqCst) {
-    return Err("Workspace sizes are already being measured.".into());
-  }
   let label = window.label().to_string();
-  let result = tauri::async_runtime::spawn_blocking(move || {
+  tauri::async_runtime::spawn_blocking(move || {
     sizes(&root, DU_TIMEOUT, |scanned, total, current| {
       let _ = app.emit_to(label.as_str(), "workspace-cleanup-size-progress", Progress { scanned, total, current });
     })
   })
   .await
-  .map_err(|e| e.to_string());
-  MEASURING.store(false, Ordering::SeqCst);
-  result?
+  .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]
@@ -576,6 +651,29 @@ mod tests {
   }
 
   #[test]
+  fn inspect_reads_one_task_worktree_and_refuses_main_and_unknown_paths() {
+    let repo = repo();
+    let tree = tempfile::tempdir().unwrap();
+    let wt = tree.path().join("wt");
+    run(repo.path(), &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()]);
+    let list = worktree::list(repo.path()).unwrap();
+    let (main, task) = (list[0].path.clone(), list.iter().find(|w| w.path.ends_with("/wt")).unwrap().path.clone());
+    let mut asked = Vec::new();
+    let c = inspect_path(repo.path(), &task, &mut |_, b| {
+      asked.push(b.to_owned());
+      None
+    })
+    .unwrap();
+    let full = scan_with(repo.path(), &mut |_, _| None, |_, _, _| {}).unwrap().candidates.into_iter().find(|c| c.path == task).unwrap();
+    assert_eq!((c.path.as_str(), c.branch.as_deref(), c.is_main, c.unchanged), (task.as_str(), Some("side"), false, true));
+    assert_eq!((c.clean, c.merged, c.unpushed, c.base.as_deref()), (full.clean, full.merged, full.unpushed, full.base.as_deref()));
+    assert!(asked.is_empty(), "an unchanged branch needs no forge answer");
+    assert!(inspect_path(repo.path(), &main, &mut |_, _| None).is_err());
+    assert!(inspect_path(repo.path(), "/nonexistent/kingu-cleanup", &mut |_, _| None).is_err());
+    assert!(inspect_path(repo.path(), tree.path().to_str().unwrap(), &mut |_, _| None).is_err());
+  }
+
+  #[test]
   fn only_a_merged_pr_with_this_exact_head_counts() {
     let json = r#"[{"number":7,"headRefOid":"abc123"},{"number":3,"headRefOid":"def456"}]"#;
     assert!(pr_head_matches(json, "abc123"));
@@ -609,6 +707,80 @@ mod tests {
     run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "after"]);
     let after = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut |_| Some(json.clone()));
     assert_eq!((after.merged, after.pr_merged, after.unpushed), (false, false, true));
+  }
+
+  #[test]
+  fn a_gitlab_merged_mr_head_marks_the_branch_like_a_merged_pr() {
+    let dir = feature();
+    squash_into_main(dir.path());
+    run(dir.path(), &["checkout", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a3").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "later"]);
+    run(dir.path(), &["checkout", "-q", "feat"]);
+    let head = git(dir.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_uppercase();
+    let list = serde_json::json!([{ "iid": 3, "state": "merged", "source_project_id": 7, "sha": head }]);
+    fn lookup(list: &serde_json::Value) -> impl FnMut(&str) -> Option<String> + '_ {
+      move |_| mr::pick_merged_head(list, 7).map(|sha| mr_head_json(&sha))
+    }
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(&list));
+    assert_eq!((c.merged, c.pr_merged, c.squash_merged, c.unpushed), (true, true, false, false));
+    let other = serde_json::json!([{ "iid": 3, "state": "merged", "source_project_id": 7, "sha": "0123456789abcdef" }]);
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(&other));
+    assert_eq!((c.merged, c.pr_merged, c.unpushed), (false, false, true));
+    let open = serde_json::json!([{ "iid": 3, "state": "opened", "source_project_id": 7, "sha": head }]);
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(&open));
+    assert_eq!((c.merged, c.pr_merged, c.unpushed), (false, false, true));
+  }
+
+  #[test]
+  fn each_forge_request_gets_at_most_what_is_left_of_the_budget() {
+    let mut budget = GH_BUDGET;
+    let mut limits = Vec::new();
+    for _ in 0..3 {
+      timed(&mut budget, |t| {
+        limits.push(t);
+        std::thread::sleep(Duration::from_millis(30));
+        Some(())
+      });
+    }
+    assert_eq!(limits, vec![GH_CALL_TIMEOUT; 3]);
+    let mut budget = Duration::from_millis(50);
+    let mut limits = Vec::new();
+    let mut calls = 0;
+    for _ in 0..5 {
+      timed(&mut budget, |t| {
+        limits.push(t);
+        calls += 1;
+        std::thread::sleep(Duration::from_millis(30));
+        Some(())
+      });
+    }
+    assert_eq!(limits[0], Duration::from_millis(50));
+    assert!(limits[1] <= Duration::from_millis(20), "the second request only gets what is left");
+    assert_eq!(calls, 2, "nothing is asked once the budget is spent");
+    assert_eq!(budget, Duration::ZERO);
+  }
+
+  #[test]
+  fn a_bitbucket_merged_pr_head_marks_the_branch_like_a_merged_pr() {
+    let dir = feature();
+    squash_into_main(dir.path());
+    run(dir.path(), &["checkout", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "a3").unwrap();
+    run(dir.path(), &["add", "."]);
+    run(dir.path(), &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "later"]);
+    run(dir.path(), &["checkout", "-q", "feat"]);
+    let head = git(dir.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_owned();
+    let repo = &crate::bitbucket::Repo { workspace: "acme".into(), slug: "web".into() };
+    let pr = |state: &str, hash: &str| serde_json::json!({"values": [{"state": state, "source": {"branch": {"name": "feat"}, "commit": {"hash": hash}, "repository": {"full_name": "acme/web"}}}]});
+    let lookup = |list: serde_json::Value| move |b: &str| crate::bitbucket::pick_merged_head(&list, repo, b).map(|sha| mr_head_json(&sha));
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(pr("MERGED", &head)));
+    assert_eq!((c.merged, c.pr_merged, c.squash_merged, c.unpushed), (true, true, false, false));
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(pr("MERGED", "0123456789abcdef")));
+    assert_eq!((c.merged, c.pr_merged, c.unpushed), (false, false, true));
+    let c = inspect_with(&info(dir.path(), "feat"), false, Some("main"), &mut lookup(pr("OPEN", &head)));
+    assert_eq!((c.merged, c.pr_merged, c.unpushed), (false, false, true));
   }
 
   #[test]
