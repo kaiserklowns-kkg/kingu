@@ -45,6 +45,9 @@ export function withActivity(list: readonly CleanupActivity[], entry: CleanupAct
 
 /** Activity and the last run, kept per app profile (all windows and folders share it). */
 export const ACTIVITY_KEY = 'kingu.cleanup.activity';
+
+/** Activity and the last run belong to one folder: a run in one project must not delay another's schedule. */
+export const activityKey = (root: string | null): string => (root ? `${ACTIVITY_KEY}:${root}` : ACTIVITY_KEY);
 const ACTIVITY_VERSION = 1;
 
 export type StoredActivity = { activity: CleanupActivity[]; lastRunAt: number | null };
@@ -96,6 +99,6 @@ type LockManagerLike = { request<T>(name: string, cb: () => T): Promise<T> };
  * Runs `fn` under a Web Lock named `name`, so read-modify-write of the shared Activity entry is serial across
  * windows. Without the API (an old WebView) it just runs `fn`.
  */
-export function withActivityLock<T>(fn: () => T, locks: LockManagerLike | undefined = (globalThis.navigator as { locks?: LockManagerLike } | undefined)?.locks): Promise<T> {
-	return locks ? locks.request(ACTIVITY_KEY, fn) : new Promise<T>((resolve) => resolve(fn()));
+export function withActivityLock<T>(fn: () => T, key: string = ACTIVITY_KEY, locks: LockManagerLike | undefined = (globalThis.navigator as { locks?: LockManagerLike } | undefined)?.locks): Promise<T> {
+	return locks ? locks.request(key, fn) : new Promise<T>((resolve) => resolve(fn()));
 }

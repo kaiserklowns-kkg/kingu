@@ -15,6 +15,7 @@ export const AUTO_CLEANUP_ID = 'kingu.workspaceCleanup.auto';
 const POLL_MS = 5 * 60 * 1000;
 
 async function tick() {
+	cleanup.reloadActivity();
 	const due = autoRunDue({
 		enabled: settings.get<boolean>(AUTO_CLEANUP_ID) === true,
 		rulesOn: cleanup.rulesOn,

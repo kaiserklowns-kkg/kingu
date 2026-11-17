@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTIVITY_LIMIT, AUTO_CHECK_MS, autoRunDue, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
+import { ACTIVITY_LIMIT, AUTO_CHECK_MS, autoRunDue, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, activityKey, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
 
 const base: AutoState = { enabled: true, rulesOn: true, hasFolder: true, busy: false, lastRunAt: null, now: 1_000_000 };
 const act = (over: Partial<CleanupActivity> = {}): CleanupActivity => ({ at: 1, source: 'auto', removed: ['a'], archived: [], failed: [], kept: 0, ...over });
@@ -78,12 +78,27 @@ describe('withActivityLock', () => {
 	test('runs under the Activity lock when Web Locks exist', async () => {
 		const names: string[] = [];
 		const locks = { request: <T>(name: string, cb: () => T) => (names.push(name), Promise.resolve(cb())) };
-		expect(await withActivityLock(() => 7, locks)).toBe(7);
+		expect(await withActivityLock(() => 7, ACTIVITY_KEY, locks)).toBe(7);
 		expect(names).toEqual([ACTIVITY_KEY]);
 	});
 
 	test('runs the work directly without the API, and a throw rejects', async () => {
-		expect(await withActivityLock(() => 'ok', undefined)).toBe('ok');
-		await expect(withActivityLock(() => { throw new Error('x'); }, undefined)).rejects.toThrow('x');
+		expect(await withActivityLock(() => 'ok', ACTIVITY_KEY, undefined)).toBe('ok');
+		await expect(withActivityLock(() => { throw new Error('x'); }, ACTIVITY_KEY, undefined)).rejects.toThrow('x');
+	});
+});
+
+describe('activityKey', () => {
+	test('is one key per folder, and the old key when there is none', () => {
+		expect(activityKey(null)).toBe(ACTIVITY_KEY);
+		expect(activityKey('/a')).not.toBe(activityKey('/b'));
+		expect(activityKey('/a')).toBe(activityKey('/a'));
+	});
+
+	test('locks per folder', async () => {
+		const names: string[] = [];
+		const locks = { request: <T>(name: string, cb: () => T) => (names.push(name), Promise.resolve(cb())) };
+		await withActivityLock(() => 0, activityKey('/a'), locks);
+		expect(names).toEqual([activityKey('/a')]);
 	});
 });

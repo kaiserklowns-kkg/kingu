@@ -17,23 +17,23 @@ import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
 import { applyRechecked, candidateVerdict, cleanupReceipt, cleanupPreview, cleanupTargets, evaluateScan, type CleanupCandidate, type CleanupProgress, type CleanupScan, type CleanupSize, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
 import { hasEnabledWorkspaceCleanupRule } from './workspaceCleanupPolicy';
-import { ACTIVITY_KEY, parseStoredActivity, serializeActivity, withActivity, withActivityLock, type CleanupActivity, type CleanupSource, type StoredActivity } from './autoCleanup';
+import { activityKey, parseStoredActivity, serializeActivity, withActivity, withActivityLock, type CleanupActivity, type CleanupSource, type StoredActivity } from './autoCleanup';
 
 const RULES_ID = 'kingu.workspaceCleanup.rules';
 const PROJECT_ID = 'kingu.workspaceCleanup.project';
 
 /** null when storage is unavailable, so a failure never wipes what this window holds. */
-function readStored(): StoredActivity | null {
+function readStored(root: string | null): StoredActivity | null {
 	try {
-		return parseStoredActivity(localStorage.getItem(ACTIVITY_KEY));
+		return parseStoredActivity(localStorage.getItem(activityKey(root)));
 	} catch {
 		return null;
 	}
 }
 
-function writeStored(s: StoredActivity) {
+function writeStored(root: string | null, s: StoredActivity) {
 	try {
-		localStorage.setItem(ACTIVITY_KEY, serializeActivity(s));
+		localStorage.setItem(activityKey(root), serializeActivity(s));
 	} catch {
 		// Storage full or unavailable: Activity stays in this window only.
 	}
@@ -96,26 +96,34 @@ class Cleanup {
 
 	constructor() {
 		this.reloadActivity();
-		if (typeof window !== 'undefined') window.addEventListener('storage', (e) => e.key === ACTIVITY_KEY && this.reloadActivity());
+		if (typeof window !== 'undefined') window.addEventListener('storage', (e) => e.key === activityKey(workspace.root) && this.reloadActivity());
 	}
 
 	/** Re-reads Activity and the last run, so runs from other windows show (and are not run twice). */
 	reloadActivity() {
-		const stored = readStored();
+		const root = workspace.root;
+		const stored = readStored(root);
 		if (!stored) return;
+		// Another folder's last run says nothing about this one: start from what is stored for this folder.
+		if (root !== this.#activityRoot) {
+			this.#activityRoot = root;
+			this.lastRunAt = null;
+		}
 		this.activity = stored.activity;
 		if (stored.lastRunAt !== null && (this.lastRunAt === null || stored.lastRunAt > this.lastRunAt)) this.lastRunAt = stored.lastRunAt;
 	}
 
+	#activityRoot: string | null = null;
+
 	#serial<T>(fn: () => T): Promise<T> {
-		return withActivityLock(fn);
+		return withActivityLock(fn, activityKey(workspace.root));
 	}
 
 	async #markRun(at: number) {
 		await this.#serial(() => {
 			this.reloadActivity();
 			this.lastRunAt = at;
-			writeStored({ activity: this.activity, lastRunAt: at });
+			writeStored(workspace.root, { activity: this.activity, lastRunAt: at });
 		});
 	}
 
@@ -124,7 +132,7 @@ class Cleanup {
 		await this.#serial(() => {
 			this.reloadActivity();
 			this.activity = withActivity(this.activity, { at: Date.now(), source, removed, archived, failed, kept });
-			writeStored({ activity: this.activity, lastRunAt: this.lastRunAt });
+			writeStored(workspace.root, { activity: this.activity, lastRunAt: this.lastRunAt });
 		});
 	}
 

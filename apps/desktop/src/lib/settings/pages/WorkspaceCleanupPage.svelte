@@ -9,6 +9,7 @@
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
+	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import {
 		getDefaultWorkspaceCleanupRules,
@@ -28,6 +29,12 @@
 	import Switch from './Switch.svelte';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+
+	// Activity is per folder: show the open folder's rows, and again when the folder changes.
+	$effect(() => {
+		void workspace.root;
+		untrack(() => cleanup.reloadActivity());
+	});
 
 	const RULES_ID = 'kingu.workspaceCleanup.rules';
 	const PROJECT_ID = 'kingu.workspaceCleanup.project';
