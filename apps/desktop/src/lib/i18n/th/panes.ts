@@ -210,7 +210,7 @@ export const panes = {
 	'panes.experimental.title': 'ทดลอง',
 	'panes.experimental.description': 'ฟีเจอร์ใหม่ที่ยังพัฒนาอยู่ ลองใช้ดูได้',
 	'panes.experimental.sleep': 'ให้ agent พักหลับ',
-	'panes.experimental.sleepHint': 'ปิด agent CLI ที่ว่างหลังทำงานเสร็จเพื่อคืนหน่วยความจำ กดครั้งเดียวก็กลับมาทำ session เดิมต่อ',
+	'panes.experimental.sleepHint': 'ปิด agent CLI ที่ว่างหลังทำงานเสร็จเพื่อคืนหน่วยความจำ กลับมาที่งานเมื่อไรก็ทำ session เดิมต่อเอง',
 	'panes.experimental.sleepAfter': 'พักหลังจาก',
 	'panes.experimental.sleepAfterHint': 'จำนวนนาทีที่ agent CLI ว่างหลังทำงานเสร็จก่อนพัก',
 	'panes.appearance.title': 'หน้าตา',

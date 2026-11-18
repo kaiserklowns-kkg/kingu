@@ -31,6 +31,9 @@
 	import { paneAgents } from './paneAgents.svelte';
 	import { rowCardStatus, rowText } from './agentPresence';
 	import CardStatusDot from './CardStatusDot.svelte';
+	import { paneProgram } from './paneProgram.svelte';
+	import { programLabel, withPercent } from './programStatus';
+	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
@@ -230,9 +233,24 @@
 					{:else}
 						<!-- An agent typed into this terminal (or started from the new-tab menu) shows its own state, like the main agent tab. -->
 						{@const row = t.kind === 'terminal' ? paneAgents.tabRow(key, t.id) : undefined}
+						<!-- OSC 7501 (Orca's progress ring): a reported percentage turns a live state glyph into a ring filled that far. -->
+						{@const program = t.kind === 'terminal' && !row ? paneProgram.tab(key, t.id) : undefined}
 						{#if row}
-							<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={rowText(row)} title={rowText(row)}><CardStatusDot status={rowCardStatus(row)} size="size-2" /></span>
+							{@const percent = paneProgram.agentProgress(row.id, row.state)}
+							{#if percent !== undefined}
+								<span class="grid size-3 shrink-0 place-items-center" title={withPercent(rowText(row), percent)}><ProgressRing {percent} tone={row.state === 'working' ? 'working' : 'attention'} label={withPercent(rowText(row), percent)} /></span>
+							{:else}
+								<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={rowText(row)} title={rowText(row)}><CardStatusDot status={rowCardStatus(row)} size="size-2" /></span>
+							{/if}
 							{#if row.agent}<AgentIcon agent={row.agent} size={14} />{:else}<Icon name="terminal" size={14} />{/if}
+						{:else if program}
+							<!-- A program that is not an agent: a ring for its percentage, else the spinner (no percentage given), a question mark (blocked), a green (done) or red (error) dot. -->
+							{#if program.progress !== undefined}
+								<span class="grid size-3 shrink-0 place-items-center" title={programLabel(program)}><ProgressRing percent={program.progress} tone={program.status === 'working' ? 'working' : 'attention'} label={programLabel(program)} /></span>
+							{:else}
+								<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={programLabel(program)} title={programLabel(program)}><CardStatusDot status={program.status} size="size-2" /></span>
+							{/if}
+							<Icon name="terminal" size={14} />
 						{:else}
 							<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} />
 						{/if}

@@ -68,7 +68,8 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
-import { isNameConflict, nextCandidate } from './createRetry';
+import { createCandidate, isNameConflict, nextCandidate } from './createRetry';
+import { splitBranchOverride } from './taskNaming.ts';
 import { commentOnLink } from './trackerApi.ts';
 import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
@@ -126,6 +127,10 @@ export type CreateInput = {
 	open?: boolean;
 	slugHint?: string;
 	slug?: string;
+	/** New Task → Advanced → Branch name (Orca's branchNameOverride): the whole branch name, `kingu.worktree.branchPrefix` not added. */
+	branch?: string;
+	/** The title is a generated name (taskNaming.ts), not the user's words: an empty prompt stays empty. */
+	nameGenerated?: boolean;
 	issue?: IssueLink;
 	/** `automation`: an automation started it; `cli`: `kingu task create` made the worktree. */
 	origin?: 'automation' | 'cli';
@@ -450,7 +455,7 @@ class AdeTasks {
 
 	async #create(input: CreateInput, title: string, source: TaskSource, slug: string, hooks: CreateHooks, mine: Set<string>, taken: Set<string>): Promise<string | undefined> {
 		// A branch or PR you start from may need no instructions yet: its agent then starts without a prompt.
-		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
+		const prompt = input.prompt.trim() || (source.kind === 'new' && !input.nameGenerated ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
 		const configured = adeCommand(input.agent, (k) => settings.get(k));
@@ -463,6 +468,12 @@ class AdeTasks {
 		const prefix = branchPrefix(settings.get<string>('kingu.worktree.branchPrefix'));
 		if (prefix === null) {
 			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
+			return;
+		}
+		// Orca's branchNameOverride: the typed name is the branch as it stands, without the prefix setting.
+		const override = source.kind === 'new' && input.branch?.trim() ? splitBranchOverride(input.branch) : undefined;
+		if (override === null) {
+			status.flash(t('adeWorktrees.form.badBranchName', { branch: input.branch?.trim() ?? '' }), 10000);
 			return;
 		}
 		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
@@ -480,11 +491,12 @@ class AdeTasks {
 			else if (source.kind === 'pr') pr = (await invoke<{ worktree: WorktreeInfo; pr: PrHead }>('worktree_create_from_pr', { slug, pr: source.pr })).pr;
 			else {
 				// Orca's retry on a name conflict: the branch or folder exists already (made outside
-				// Kingu, or left by an earlier task), so try `name-2`, `name-3`… up to 25 tries.
+				// Kingu, or left by an earlier task), so try `name-2`, `name-3`… up to 25 tries. A typed
+				// branch name takes the same suffix as the folder.
 				const first = slug;
 				for (let attempt = 0; ; ) {
 					try {
-						await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue), sparse: input.sparse?.length ? input.sparse : undefined });
+						await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix: override ? override.prefix : prefix, branch: override ? createCandidate(override.leaf, attempt) : issueBranchLeaf(slug, input.issue), sparse: input.sparse?.length ? input.sparse : undefined });
 						break;
 					} catch (e) {
 						const next = isNameConflict(String(e)) && !hooks.cancelled?.() ? nextCandidate(first, attempt, new Set([...taken, ...this.#reserved])) : null;
@@ -505,9 +517,9 @@ class AdeTasks {
 			status.flash(t('ade.creating.cancelled', { title }));
 			return;
 		}
-		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's or one you picked).
+		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's, one you picked or one you typed).
 		// Attempts keep their `-a`, `-b` branches, so they read as one group.
-		const autoName = source.kind === 'new' && !input.slug && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
+		const autoName = source.kind === 'new' && !input.slug && !override && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
 		const task = newTask(
 			{
 				slug,

@@ -209,7 +209,7 @@ export const panes = {
 	'panes.experimental.title': 'Experimental',
 	'panes.experimental.description': 'New features that are still taking shape. Give them a try.',
 	'panes.experimental.sleep': 'Agent sleep',
-	'panes.experimental.sleepHint': 'Closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session with one click.',
+	'panes.experimental.sleepHint': 'Closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session when you return to it.',
 	'panes.experimental.sleepAfter': 'Sleep after',
 	'panes.experimental.sleepAfterHint': 'Minutes an agent CLI stays idle after its turn before it sleeps.',
 	'panes.appearance.title': 'Appearance',

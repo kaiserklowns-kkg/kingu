@@ -57,7 +57,9 @@
 	import { cliName, cliOf } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
+	import { attempts } from './attempts.svelte';
 	import { paneAgents } from './paneAgents.svelte';
+	import { paneProgram } from './paneProgram.svelte';
 	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
 	import { statusLabel, timeAgo } from './model';
@@ -315,10 +317,15 @@
 							<p>{t('legacyAde.agentsLayout.cliNotRunning', { cli: cliName(cli) })}</p>
 							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">kingu/{slug}</span></p>
 							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
-							<div class="flex justify-center gap-2">
-								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>{t('legacyAde.agentsLayout.continueSession')}</button>{/if}
-								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>{t('legacyAde.agentsLayout.restartCli', { cli: cli.join(' ') })}</button>
-							</div>
+							{#if attempts.resuming[slug]}
+								<!-- A launch is in flight (the return wake of a hibernated CLI, or a click): no second start. -->
+								<p class="text-xs text-(--vscode-descriptionForeground)" role="status">{t('adeAttempts.hibernated.resuming')}</p>
+							{:else}
+								<div class="flex justify-center gap-2">
+									{#if resume}<button class={BUTTON} onclick={() => attempts.resume(slug)}>{t('legacyAde.agentsLayout.continueSession')}</button>{/if}
+									<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => attempts.resume(slug, true)}>{t('legacyAde.agentsLayout.restartCli', { cli: cli.join(' ') })}</button>
+								</div>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -439,6 +446,7 @@
 								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
 								onoutput={() => paneAgents.output(adeLayout.ptyKey(k, p))}
 								ontitle={(title) => paneAgents.title(adeLayout.ptyKey(k, p), title)}
+								onprogram={(e) => paneProgram.apply(adeLayout.ptyKey(k, p), e)}
 								onbell={() => terminalBells.ring(k, t.id)}
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}

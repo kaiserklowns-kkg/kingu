@@ -205,6 +205,14 @@ export const ade = {
 	'ade.agentRow.idle': 'รอคุณ',
 	'ade.agentRow.unknown': 'Agent',
 
+	'ade.program.working': 'กำลังทำงาน',
+	'ade.program.blocked': 'รอคุณ',
+	'ade.program.permission': 'รอคุณอนุมัติ',
+	'ade.program.question': 'รอคำตอบจากคุณ',
+	'ade.program.auth': 'ต้องเข้าสู่ระบบ',
+	'ade.program.done': 'เสร็จแล้ว',
+	'ade.program.failed': 'ล้มเหลว',
+
 	'ade.bell.title': 'Terminal ส่งเสียงเตือน: {task}',
 	'ade.bell.body': '{tab} รอให้คุณดู',
 	'ade.bell.dot': 'ส่งเสียงเตือน',
@@ -261,5 +269,15 @@ export const ade = {
 	'ade.archive.unarchive': 'นำกลับมา',
 	'ade.lineage.sleepAll': 'พักพร้อมงานลูก ({count})',
 	'ade.lineage.deleteAll': 'ลบพร้อมงานลูก ({count})…',
-	'ade.lineage.deleteAsk': 'ลบ {title} และงานลูก {count} งานไหม? {names}'
+	'ade.lineage.deleteAsk': 'ลบ {title} และงานลูก {count} งานไหม? {names}',
+	'ade.amend.item': 'Commit (Amend)',
+	'ade.amend.busy': 'Amend',
+	'ade.amend.unchanged': 'ไม่มีอะไรให้ amend: ยังไม่ได้ stage อะไร และข้อความเหมือนเดิม',
+	'ade.amend.confirmTitle': 'Amend commit ที่ push แล้ว',
+	'ade.amend.confirm': 'commit ล่าสุดอยู่บน {refs} แล้ว การ amend จะแทนที่ด้วย commit ใหม่: remote จะยังเก็บตัวเก่าไว้จนกว่าจะ force push และคนที่ pull ไปแล้วจะมีประวัติไม่ตรงกัน ยืนยัน amend ไหม?',
+	'ade.amend.confirmOk': 'Amend',
+	'ade.amend.forceTitle': 'Force Push',
+	'ade.amend.forceAsk': '{upstream} ยังเป็น commit ตัวเก่าก่อน amend จะ force push แบบ with lease เพื่อแทนที่ไหม? ถ้า remote เปลี่ยนไปหลังการ fetch ครั้งล่าสุด การ push จะถูกปฏิเสธ',
+	'ade.amend.forceOk': 'Force Push',
+	'ade.amend.forceLater': 'ยังไม่ได้ push: ใช้ Force Push ในเมนู commit เพื่ออัปเดต {upstream}'
 } satisfies Record<keyof typeof en, string>;

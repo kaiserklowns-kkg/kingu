@@ -51,5 +51,7 @@ export const adeAttempts = {
 	'adeAttempts.badge.hibernated': 'Agent hibernated {ago}: resume it to continue its session',
 	'adeAttempts.badge.resume': 'Resume agent',
 	// AgentsLayout.svelte
-	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.'
+	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.',
+	'adeAttempts.hibernated.resuming': 'Resuming the agent’s session…',
+	'adeAttempts.hibernated.resumeFailed': 'Could not resume the agent of {title}: {error}'
 } as const;

@@ -29,6 +29,7 @@
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { isPassiveInput, parseProgramStatus, PROGRAM_STATUS_OSC, type ProgramEvent } from '#lib/ade/programStatus.ts';
 	import { INSERT_EVENT } from '#lib/voice/target.ts';
 	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
@@ -67,6 +68,7 @@
 		keyLabels = {},
 		onoutput,
 		ontitle,
+		onprogram,
 		onbell,
 		onaction,
 		onopenfile,
@@ -89,6 +91,8 @@
 		onoutput?: () => void;
 		/** The program set the terminal's title (OSC 0/2): agent status evidence (agentTitle.ts). */
 		ontitle?: (title: string) => void;
+		/** The program reported its own status or progress (OSC 7501), ended, or the user typed (programStatus.ts). */
+		onprogram?: (event: ProgramEvent) => void;
 		/** The program rang the bell (BEL), whatever terminal.integrated.enableVisualBell says. */
 		onbell?: () => void;
 		/** A context menu item the terminal does not run itself (split, rename, kill…). */
@@ -475,6 +479,8 @@
 		}).catch(() => () => {});
 		const input = t.onData((data) => {
 			if (live) invoke('pty_write', { key, data }).catch(() => {});
+			// Typing dismisses a finished program's result on the tab.
+			if (live && onprogram && !isPassiveInput(data)) onprogram({ type: 'input' });
 		});
 		let dimensionsTimer: ReturnType<typeof setTimeout> | undefined;
 		const resized = t.onResize(({ cols, rows }) => {
@@ -497,6 +503,22 @@
 			bellTimer = setTimeout(() => (bell = false), setting<number>('terminal.integrated.bellDuration'));
 		});
 		const titled = t.onTitleChange((title) => ontitle?.(title));
+		// OSC 7501 (Orca's program status): a program reports its state and progress for the tab's ring.
+		// Not while replaying old output after a reload: those reports are about a past moment.
+		// A `?` query gets no reply: answering makes agent CLIs stop marking their state in the title,
+		// which is what the launched agent's status still reads.
+		const program = (event: ProgramEvent) => live && !replaying && onprogram?.(event);
+		const programStatus = [
+			t.parser.registerOscHandler(PROGRAM_STATUS_OSC, (data) => {
+				const m = parseProgramStatus(data);
+				if (m?.type === 'report') program(m);
+				return true;
+			}),
+			// A new shell prompt (OSC 133;A, VS Code's 633;A) ends the program; the shell integration still sees the mark.
+			...[133, 633].map((code) => t.parser.registerOscHandler(code, (data) => ((data === 'A' || data.startsWith('A;')) && program({ type: 'end' }), false))),
+			// RIS (`ESC c`): every record goes.
+			t.parser.registerEscHandler({ final: 'c' }, () => (program({ type: 'reset' }), false))
+		];
 		// terminal.integrated.enableNotifications: OSC 99 desktop notifications from programs in the terminal.
 		const osc99 = new Osc99();
 		const notifier = t.parser.registerOscHandler(99, (data) => {
@@ -675,6 +697,7 @@
 			clearTimeout(bellTimer);
 			rang.dispose();
 			titled.dispose();
+			for (const d of programStatus) d.dispose();
 			notifier.dispose();
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });

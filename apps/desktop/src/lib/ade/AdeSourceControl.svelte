@@ -22,6 +22,8 @@
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
 	import { draftKey, drafts } from './scmDrafts';
+	import { amendBlock, amendPlan, type AmendInfo } from './amend.ts';
+	import { commitOptions } from '#lib/workbench/scmSettings.ts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aiTextEnabled, generateCommitMessage, generatePrDetails, prTemplate } from './aiText.svelte';
@@ -153,6 +155,48 @@
 			if (then) await run(then === 'push' ? 'Push' : 'Sync', 'git_sync', {});
 		}
 	}
+	/**
+	 * Commit (Amend): staged changes and/or the typed message go into the last commit (an empty box
+	 * keeps its message). A commit a remote branch already has is rewritten only after the user
+	 * agrees, and its upstream is only ever updated by a force push with lease the user chooses.
+	 */
+	const amendOff = $derived(amendBlock({ busy: !!busy, head: repo?.head ?? null, detached: !!repo?.detached, operation: repo?.operation ?? null, conflicts, staged, message }));
+	let amending = false;
+	async function amend() {
+		if (amendOff || amending) return;
+		amending = true;
+		try {
+			await amendNow();
+		} finally {
+			amending = false;
+		}
+	}
+	async function amendNow() {
+		const at = draft;
+		const typed = message;
+		let info: AmendInfo | null;
+		try {
+			info = await invoke<AmendInfo | null>('git_amend_info', { slug: slug || null });
+		} catch (e) {
+			error = String(e);
+			return void statusBar.error(String(e), 8000);
+		}
+		if (!info) return;
+		const upstream = repo?.upstream ?? null;
+		const plan = amendPlan(info, { message: typed, staged, upstream });
+		if (plan.kind === 'unchanged') return void statusBar.flash(t('ade.amend.unchanged'), 4000);
+		if (plan.confirm.length && !(await ask(t('ade.amend.confirm', { refs: plan.confirm.join(', ') }), { title: t('ade.amend.confirmTitle'), kind: 'warning', okLabel: t('ade.amend.confirmOk') }))) return;
+		// The worktree was switched or something else started while the question was open.
+		if (busy || draft !== at) return;
+		if (!(await run(t('ade.amend.busy'), 'git_commit', { message: plan.message, options: commitOptions((id) => settings.get(id), { amend: true }) }))) return;
+		if (draft === at && message === typed) message = '';
+		statusBar.flash(t('adeTasks.git.amended', { branch: repo?.branch ?? '' }), 4000);
+		if (!collapsed.history) void loadCommits();
+		if (!plan.forcePush || !upstream || draft !== at) return;
+		if (await ask(t('ade.amend.forceAsk', { upstream }), { title: t('ade.amend.forceTitle'), kind: 'warning', okLabel: t('ade.amend.forceOk') })) {
+			if (!busy && draft === at) await run('Force Push', 'git_force_push', {});
+		} else statusBar.flash(t('ade.amend.forceLater', { upstream }), 6000);
+	}
 	function runPrimary() {
 		const p = primary;
 		if (!p.enabled) return;
@@ -172,6 +216,7 @@
 			menuItem('commit', 'Commit', { enabled: can }),
 			menuItem('commitPush', 'Commit & Push', { enabled: can && !!repo?.upstream }),
 			menuItem('commitSync', 'Commit & Sync', { enabled: can && !!repo?.upstream }),
+			menuItem('amend', t('ade.amend.item'), { enabled: !amendOff }),
 			menuSeparator,
 			menuItem('push', repo?.ahead ? `Push (${repo.ahead})` : 'Push', { enabled: up && !!repo?.ahead }),
 			menuItem('forcePush', repo?.ahead ? `Force Push (${repo.ahead})` : 'Force Push', { enabled: up && !!repo?.ahead && !!repo.behind }),
@@ -191,6 +236,8 @@
 				return void commit('push');
 			case 'commitSync':
 				return void commit('sync');
+			case 'amend':
+				return void amend();
 			case 'push':
 				return void run('Push', 'git_push', {});
 			case 'forcePush':

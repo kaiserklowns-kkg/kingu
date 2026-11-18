@@ -519,6 +519,28 @@ pub fn commit(root: &Path, message: &str, opts: &CommitOptions) -> Result<(), St
   run(root, &args).map(|_| ())
 }
 
+/// What Commit (Amend) is about to rewrite, for the ADE's Source Control: the last commit's
+/// message (kept when the box is empty) and the remote branches that already contain it, so the
+/// webview asks before rewriting a pushed commit (ade/amend.ts).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AmendInfo {
+  pub message: String,
+  /// Remote-tracking branches that contain HEAD (`origin/feat`), as of the last fetch.
+  pub pushed: Vec<String>,
+}
+
+/// `None` before the first commit (nothing to amend).
+pub fn amend_info(root: &Path) -> Result<Option<AmendInfo>, String> {
+  if !has_head(root) {
+    return Ok(None);
+  }
+  let message = String::from_utf8_lossy(&run(root, &["log", "-1", "--format=%B", "HEAD"])?).trim().to_owned();
+  // `origin/HEAD` is a symbolic ref to a branch already listed: skip it.
+  let refs = run(root, &["for-each-ref", "--contains", "HEAD", "--format=%(refname:short)%09%(symref)", "refs/remotes"])?;
+  let pushed = String::from_utf8_lossy(&refs).lines().filter_map(|l| l.split_once('\t')).filter(|(name, symref)| !name.is_empty() && symref.is_empty()).map(|(name, _)| name.to_owned()).collect();
+  Ok(Some(AmendInfo { message, pushed }))
+}
+
 /// `git.requireGitUserConfig`: whether `user.name` and `user.email` are set for `root`.
 pub fn user_configured(root: &Path) -> bool {
   ["user.name", "user.email"].iter().all(|k| run(root, &["config", "--get", k]).is_ok_and(|o| !String::from_utf8_lossy(&o).trim().is_empty()))
@@ -916,6 +938,41 @@ mod tests {
     commit(&repo, "empty", &CommitOptions { empty: true, signoff: true, ..plain }).unwrap();
     let body = Command::new("git").arg("-C").arg(&repo).args(["log", "-1", "--format=%B"]).output().unwrap();
     assert!(String::from_utf8_lossy(&body.stdout).contains("Signed-off-by: t <t@example.com>"), "{}", String::from_utf8_lossy(&body.stdout));
+  }
+
+  #[test]
+  fn amend_info_reads_the_last_message_and_the_remote_branches_that_have_it() {
+    let empty = tempfile::tempdir().unwrap();
+    git(empty.path(), &["init", "-q", "-b", "main"]);
+    assert_eq!(amend_info(empty.path()).unwrap(), None, "nothing to amend before the first commit");
+
+    let (_tmp, repo) = temp_repo();
+    assert_eq!(amend_info(&repo).unwrap(), Some(AmendInfo { message: "init".into(), pushed: vec![] }));
+
+    // Pushed: the remote-tracking branch has the commit (origin/HEAD, a symbolic ref, is not listed).
+    let remote = tempfile::tempdir().unwrap();
+    git(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
+    git(&repo, &["remote", "add", "origin", remote.path().to_str().unwrap()]);
+    git(&repo, &["push", "-q", "-u", "origin", "main"]);
+    git(&repo, &["remote", "set-head", "origin", "main"]);
+    assert_eq!(amend_info(&repo).unwrap().unwrap().pushed, ["origin/main"]);
+
+    // A new local commit is not on the remote; its whole message comes back, trimmed.
+    write(&repo, "a.txt", "changed\n");
+    git(&repo, &["commit", "-q", "-am", "subject\n\nbody line"]);
+    assert_eq!(amend_info(&repo).unwrap(), Some(AmendInfo { message: "subject\n\nbody line".into(), pushed: vec![] }));
+
+    // Amending a pushed commit leaves the remote with the old copy: one ahead, one behind, and
+    // only a force push with lease updates it.
+    git(&repo, &["push", "-q"]);
+    assert_eq!(amend_info(&repo).unwrap().unwrap().pushed, ["origin/main"]);
+    commit(&repo, "subject, amended", &CommitOptions { amend: true, ..Default::default() }).unwrap();
+    assert_eq!(amend_info(&repo).unwrap(), Some(AmendInfo { message: "subject, amended".into(), pushed: vec![] }));
+    let st = status(&repo).unwrap().unwrap();
+    assert_eq!((st.ahead, st.behind), (1, 1));
+    assert!(push(&repo, false).is_err(), "a plain push is rejected");
+    push(&repo, true).unwrap();
+    assert_eq!(amend_info(&repo).unwrap().unwrap().pushed, ["origin/main"]);
   }
 
   #[test]

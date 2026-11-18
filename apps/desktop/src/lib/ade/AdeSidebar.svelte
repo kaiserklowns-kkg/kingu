@@ -13,6 +13,7 @@
 	import { adeDialogs } from './dialogs.svelte.ts';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { menuTargets, rangeSelect, toggleSelect } from './sidebarSelection';
+	import { deleteShortcutHasFocus, deleteShortcutTarget } from './deleteShortcut';
 	import CreatingRows from './CreatingRows.svelte';
 	import { untrack } from 'svelte';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
@@ -404,6 +405,31 @@
 			move(e.key === 'ArrowDown' ? 1 : -1);
 		}
 	}
+	// ⇧⌘⌫ (Orca's workspace.delete): the selected card, or the multi-selection; see deleteShortcut.ts.
+	const deleteTarget = (repeat = false) =>
+		deleteShortcutTarget({
+			selection,
+			current: selectedKey,
+			deletable: (k) => k !== PRIMARY && !!adeTasks.find(k),
+			repeat,
+			overlay: !!menu || !!options || !!repoMenu || !!adeDialogs.current
+		});
+	function deleteKeyHasFocus() {
+		const el = document.activeElement;
+		return deleteShortcutHasFocus({
+			inList: !!list && !!el && list.contains(el),
+			typing: el instanceof HTMLElement && (el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+		});
+	}
+	function deleteSelected() {
+		// Commands run inside the keydown handler: a held key must not delete card after card
+		// (with kingu.worktree.confirmRemove off nothing else would stop it).
+		const e = window.event;
+		const target = deleteTarget(e instanceof KeyboardEvent && e.repeat);
+		// The same paths as the context menu: the remove dialog and its guards, or the bulk confirmation.
+		if (target.kind === 'single') runWorktreeAction(target.key, 'remove');
+		else if (target.kind === 'bulk') void runBulk('bulk:delete', target.keys);
+	}
 	// Registered once (register reads and writes the command list, so not tracked).
 	$effect(() => {
 		const off = untrack(() => [
@@ -414,8 +440,9 @@
 				title: 'Delete Workspace',
 				category: 'Agents',
 				key: 'cmd+shift+backspace',
-				when: () => appMode.isAgents && !!selectedKey && selectedKey !== PRIMARY,
-				run: () => selectedKey && runWorktreeAction(selectedKey, 'remove')
+				when: () => appMode.isAgents && deleteTarget().kind !== 'none',
+				keyWhen: deleteKeyHasFocus,
+				run: deleteSelected
 			}),
 			commands.register({ id: 'kingu.agents.revealActiveWorkspace', title: 'Reveal Active Workspace', category: 'Agents', when: () => appMode.isAgents, run: () => reveal() }),
 			commands.register({ id: 'kingu.agents.focusWorktreeList', title: 'Focus Worktree List', category: 'Agents', key: 'cmd+shift+0', when: () => appMode.isAgents, run: () => list?.focus() })

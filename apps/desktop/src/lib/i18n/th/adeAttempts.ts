@@ -50,5 +50,7 @@ export const adeAttempts = {
 	'adeAttempts.badge.hibernated': 'agent พักไว้เมื่อ {ago} กดทำงานต่อเพื่อใช้ session เดิม',
 	'adeAttempts.badge.resume': 'ให้ agent ทำงานต่อ',
 	// AgentsLayout.svelte
-	'adeAttempts.hibernated.text': 'agent ว่างอยู่นาน Kingu จึงปิดไว้เมื่อ {ago} เพื่อคืนหน่วยความจำ session ยังเก็บไว้อยู่'
+	'adeAttempts.hibernated.text': 'agent ว่างอยู่นาน Kingu จึงปิดไว้เมื่อ {ago} เพื่อคืนหน่วยความจำ session ยังเก็บไว้อยู่',
+	'adeAttempts.hibernated.resuming': 'กำลังให้ agent ทำงานต่อใน session เดิม…',
+	'adeAttempts.hibernated.resumeFailed': 'ให้ agent ของ {title} ทำงานต่อไม่สำเร็จ: {error}'
 } satisfies Record<keyof typeof en, string>;

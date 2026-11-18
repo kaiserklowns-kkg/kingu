@@ -20,6 +20,7 @@
 	import { issueUrlRef, parseIssueUrl, titleAfterLink } from './issueUrl';
 	import { lookupIssueUrl, type LinkedIssue } from './issueUrlLookup';
 	import { taskForLink } from './taskSources';
+	import { splitBranchOverride, suggestCreatureName, taskName } from './taskNaming';
 
 	type Kind = 'new' | 'branch' | 'pr';
 	let kind = $state<Kind>('new');
@@ -81,7 +82,21 @@
 	});
 
 	const taken = $derived(new Set([...adeTasks.list.map((t) => t.slug), ...adeTasks.worktrees.map((w) => w.slug ?? '')]));
-	const slug = $derived(kind === 'new' && title.trim() ? (count > 1 && !parent ? attemptSlugs(title, count, taken).slugs.join(', ') : uniqueSlug(title, taken)) : '');
+	// Default name (Orca): an empty name takes the prompt's first line, else a marine creature no
+	// task uses. The creature stays the same while the form is open, unless a task takes it.
+	let creature = $state('');
+	$effect(() => {
+		if (!creature || taken.has(creature)) creature = suggestCreatureName(taken);
+	});
+	const plain = $derived(kind === 'new' && !parent && count === 1);
+	const named = $derived(taskName(title, prompt, creature));
+	/** Best-of-N and stacked tasks start from words the user wrote: a creature is not a prompt. */
+	const name = $derived(kind === 'new' && (plain || !named.generated) ? named.title : '');
+	/** Advanced → Branch name (Orca's branchNameOverride): the whole branch name of a plain new task. */
+	let advanced = $state(false);
+	let branchName = $state('');
+	const override = $derived(plain && branchName.trim() ? splitBranchOverride(branchName) : undefined);
+	const slug = $derived(name ? (count > 1 && !parent ? attemptSlugs(name, count, taken).slugs.join(', ') : uniqueSlug(name, taken)) : '');
 	const badModel = $derived(kind === 'new' && !parent ? models.find((m) => m.trim() && !validModel(m.trim())) : undefined);
 	const picked = $derived(prs?.find((p) => String(p.number) === pr.trim().replace(/^#/, '')) ?? null);
 	/** Starting from a merge request is not built for GitLab yet; the form says so instead. */
@@ -126,7 +141,7 @@
 	$effect(() => {
 		if (!linkable && linked) linked = null;
 	});
-	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel && lookup?.state !== 'resolving' : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
+	const ready = $derived(kind === 'new' ? !!name && !badModel && override !== null && lookup?.state !== 'resolving' : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
 	function takeLink() {
 		if (lookup?.state !== 'found') return;
 		linked = lookup.issue;
@@ -174,7 +189,7 @@
 		if (!ready || busy) return;
 		// A plain new task is created in the background (Orca): the form closes at once.
 		if (kind === 'new' && !parent && count === 1) {
-			adeTasks.startCreate({ title, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link });
+			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link });
 			adeTasks.composing = false;
 			return;
 		}
@@ -186,8 +201,8 @@
 					: kind === 'pr'
 						? await adeTasks.createFromPr(picked ?? pr.trim(), { title, prompt })
 						: parent
-							? await attempts.createStacked(parent.meta.slug, { title, prompt })
-							: await attempts.createAttempts({ title, prompt, base, models });
+							? await attempts.createStacked(parent.meta.slug, { title: name, prompt })
+							: await attempts.createAttempts({ title: name, prompt, base, models });
 			if (created) adeTasks.composing = false;
 		} finally {
 			busy = false;
@@ -339,7 +354,28 @@
 			</div>
 		{/if}
 	{/if}
-	{#if slug}<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ kingu/{slug}</div>{/if}
+	{#if plain}
+		<!-- Advanced (Orca's composer): a branch name of your own instead of prefix + name. -->
+		<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={advanced} disabled={busy} onclick={() => (advanced = !advanced)}>
+			<Icon name={advanced ? 'chevronDown' : 'chevronRight'} size={11} />{t('adeWorktrees.form.advanced')}
+		</button>
+		{#if advanced}
+			<label class="flex items-center gap-2">
+				<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.branchName')}</span>
+				<input class={[INPUT, 'font-mono']} placeholder={t('adeWorktrees.form.branchNamePlaceholder')} aria-label={t('adeWorktrees.form.branchName')} aria-invalid={override === null} bind:value={branchName} disabled={busy} spellcheck="false" autocapitalize="off" />
+			</label>
+			{#if override === null}
+				<div class="text-[11px] text-(--vscode-errorForeground)" role="alert">{t('adeWorktrees.form.badBranchName', { branch: branchName.trim() })}</div>
+			{:else}
+				<div class="text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.branchNameHint')}</div>
+			{/if}
+		{/if}
+	{/if}
+	{#if override}
+		<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ {override.prefix}{override.leaf}</div>
+	{:else if slug}
+		<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ kingu/{slug}</div>
+	{/if}
 	<div class="flex items-center gap-1.5">
 		<button type="submit" class={BUTTON} disabled={!ready || busy} title={t('adeWorktrees.form.submitTitle', { keys: mac ? '⌘Enter' : 'Ctrl+Enter' })}>{busy ? t('adeWorktrees.form.creating') : t('adeWorktrees.form.create')}</button>
 		<button type="button" class={BUTTON_SECONDARY} onclick={() => ((adeTasks.composing = false), (attempts.stackOn = null))}>{t('common.cancel')}</button>

@@ -522,6 +522,14 @@ async fn git_rebase(ws: Workspace, slug: Option<String>, base: String, repo: Opt
   blocking(move || git::rebase(&root, &base)).await
 }
 
+/// The last commit's message and the remote branches that already have it, before Commit (Amend)
+/// in the ADE's Source Control; `None` before the first commit.
+#[tauri::command]
+async fn git_amend_info(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<Option<git::AmendInfo>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
+  blocking(move || git::amend_info(&root)).await
+}
+
 /// The Commits panel of Source Control.
 #[tauri::command]
 async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>, repo: Option<String>) -> Result<Vec<git::Commit>, String> {
@@ -1614,6 +1622,7 @@ pub fn run() {
       git_user_configured,
       git_numstat,
       git_force_push,
+      git_amend_info,
       git_pull_ff_only,
       git_rebase,
       git_log,

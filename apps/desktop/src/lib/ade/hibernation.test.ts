@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_IDLE_MINUTES, hibernationCandidates, idleMs, type HibernationRow } from './hibernation';
+import { autoResumeOnReturn, DEFAULT_IDLE_MINUTES, hibernationCandidates, idleMs, type HibernationRow, type ReturnedTask } from './hibernation';
 
 const MIN = 60_000;
 const row = (slug: string, over: Partial<HibernationRow> = {}): HibernationRow => ({
@@ -39,5 +39,29 @@ describe('agent hibernation', () => {
 			row('a-quiet', { outputAt: now - idle })
 		];
 		expect(hibernationCandidates(rows, now, idle)).toEqual(['a-quiet', 'quiet']);
+	});
+
+	const asleep = (over: Partial<ReturnedTask> = {}): ReturnedTask => ({ armed: true, hibernated: true, running: false, resumable: true, resuming: false, ...over });
+
+	test('returning to a task this run put to sleep continues its session', () => {
+		expect(autoResumeOnReturn('other', 'task', asleep())).toBe(true);
+		// From the board, another tab or a hidden window: nothing was on screen.
+		expect(autoResumeOnReturn(null, 'task', asleep())).toBe(true);
+	});
+
+	test('only a real return wakes', () => {
+		// The first look after start is not a return, nor is the same terminal again, nor leaving.
+		expect(autoResumeOnReturn(undefined, 'task', asleep())).toBe(false);
+		expect(autoResumeOnReturn('task', 'task', asleep())).toBe(false);
+		expect(autoResumeOnReturn('task', null, asleep())).toBe(false);
+		expect(autoResumeOnReturn('other', 'gone', null)).toBe(false);
+	});
+
+	test('never what was not put to sleep here, cannot continue, or is starting or running already', () => {
+		expect(autoResumeOnReturn('other', 'task', asleep({ armed: false }))).toBe(false);
+		expect(autoResumeOnReturn('other', 'task', asleep({ hibernated: false }))).toBe(false);
+		expect(autoResumeOnReturn('other', 'task', asleep({ resumable: false }))).toBe(false);
+		expect(autoResumeOnReturn('other', 'task', asleep({ running: true }))).toBe(false);
+		expect(autoResumeOnReturn('other', 'task', asleep({ resuming: true }))).toBe(false);
 	});
 });
