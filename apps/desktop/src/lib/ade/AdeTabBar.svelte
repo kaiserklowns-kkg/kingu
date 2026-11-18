@@ -28,6 +28,9 @@
 	import type { AdeTab } from './adeTabs';
 	import { splittable } from './adeSplit';
 	import { terminalBells } from './terminalBell.svelte';
+	import { paneAgents } from './paneAgents.svelte';
+	import { rowCardStatus, rowText } from './agentPresence';
+	import CardStatusDot from './CardStatusDot.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
@@ -225,7 +228,15 @@
 						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? tr('legacyAde.adeTabBar.diffOfTask', { file: fileOf(t.key) }) : t.key}>{t.label}</span>
 						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
-						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
+						<!-- An agent typed into this terminal (or started from the new-tab menu) shows its own state, like the main agent tab. -->
+						{@const row = t.kind === 'terminal' ? paneAgents.tabRow(key, t.id) : undefined}
+						{#if row}
+							<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={rowText(row)} title={rowText(row)}><CardStatusDot status={rowCardStatus(row)} size="size-2" /></span>
+							{#if row.agent}<AgentIcon agent={row.agent} size={14} />{:else}<Icon name="terminal" size={14} />{/if}
+						{:else}
+							<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} />
+						{/if}
+						<span class="truncate">{t.label}</span>
 					{/if}
 					{#if !active && terminalBells.has(key, t.id)}
 						<!-- kingu.agent.notifications.terminalBell: this terminal rang while hidden. -->

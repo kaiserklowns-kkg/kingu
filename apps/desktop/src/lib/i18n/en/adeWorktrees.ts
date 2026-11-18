@@ -43,5 +43,14 @@ export const adeWorktrees = {
 	'adeWorktrees.form.base': 'Base branch',
 	'adeWorktrees.form.submitTitle': 'Create the worktree, then start the agent ({keys})',
 	'adeWorktrees.form.creating': 'Creating…',
-	'adeWorktrees.form.create': 'Create and start'
+	'adeWorktrees.form.create': 'Create and start',
+	'adeWorktrees.link.resolving': 'Looking up {ref}…',
+	'adeWorktrees.link.offer': 'Link {ref}: {title}',
+	'adeWorktrees.link.offerTitle': 'Link this issue to the task (Enter)',
+	'adeWorktrees.link.linked': 'Linked issue {ref}: {title}',
+	'adeWorktrees.link.remove': 'Remove the linked issue',
+	'adeWorktrees.link.exists': 'A task for {ref} already exists: {title}',
+	'adeWorktrees.link.notConnected': 'Connect {service} in Settings to link this issue',
+	'adeWorktrees.link.otherSite': 'This {service} site is not connected ({host})',
+	'adeWorktrees.link.failed': "Couldn't load {ref}: {error}"
 } as const;

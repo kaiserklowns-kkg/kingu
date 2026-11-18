@@ -68,3 +68,28 @@ test('the new-tab menu makes a Markdown tab and previews it', async ({ page }) =
 	await expect(page.getByRole('heading', { name: 'Kingu E2E' })).toBeVisible();
 	expect(errors).toEqual([]);
 });
+
+test('an issue URL in the task name is looked up and linked', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+	await page.getByRole('button', { name: 'New Task', exact: true }).click();
+
+	const name = page.getByRole('textbox', { name: 'Task name' });
+	await name.fill('https://github.com/acme/app/issues/12');
+	const offer = page.getByRole('button', { name: /Link acme\/app#12: Login fails on Safari/ });
+	await expect(offer).toBeVisible();
+
+	// Enter takes the link instead of creating a task named after the URL.
+	await name.press('Enter');
+	await expect(name).toHaveValue('Login fails on Safari');
+	await expect(page.getByLabel('Linked issue acme/app#12: Login fails on Safari')).toBeVisible();
+	expect((await calls(page)).worktree_create ?? 0).toBe(0);
+
+	// Removing the link clears the name it gave.
+	await page.getByRole('button', { name: 'Remove the linked issue' }).click();
+	await expect(name).toHaveValue('');
+	expect(errors).toEqual([]);
+});

@@ -149,6 +149,21 @@ export async function mockTauri(
 				ssh_unrestored_forwards: () => [],
 				ssh_projects_list: () => [],
 				worktree_list: () => [],
+				// Link issue at create: the issue a pasted GitHub URL names.
+				gh_project_issue_view: (args: any) => ({
+					number: 12,
+					title: 'Login fails on Safari',
+					url: args?.url,
+					state: 'OPEN',
+					labels: [],
+					assignees: [],
+					updated_at: '2026-11-01T00:00:00Z',
+					author: 'octo',
+					body: 'Steps to reproduce…',
+					body_truncated: false,
+					comments: [],
+					comments_omitted: 0
+				}),
 				worktree_create: (args: any) => ({
 					path: `${workspace}/.kingu/worktrees/${args?.slug}`,
 					head: null,

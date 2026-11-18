@@ -38,6 +38,7 @@
 	import { newSession } from './agentsMode.svelte';
 	import { jumpToWorktree, sidebarOrder } from './worktreeMenu.svelte';
 	import { rowCardStatus, rowText } from './agentPresence';
+	import CardStatusDot from './CardStatusDot.svelte';
 	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
@@ -551,17 +552,7 @@
 <svelte:window onkeydown={onKey} onkeyup={onKey} onblur={() => (altHeld = false)} />
 
 {#snippet statusDot(s: CardStatus, size = 'size-2')}
-	{#if s === 'working'}
-		<span class="size-2.5 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent"></span>
-	{:else if s === 'permission'}
-		<span class="text-violet-400"><Icon name="question" size={12} filled /></span>
-	{:else if s === 'failed'}
-		<span class="size-1.5 rounded-full bg-red-500"></span>
-	{:else if s === 'done' || s === 'active'}
-		<span class={[size, 'rounded-full bg-emerald-500']}></span>
-	{:else}
-		<span class={[size, 'rounded-full bg-neutral-500/40']}></span>
-	{/if}
+	<CardStatusDot status={s} {size} />
 {/snippet}
 
 {#snippet card(r: Row, groupId: string)}

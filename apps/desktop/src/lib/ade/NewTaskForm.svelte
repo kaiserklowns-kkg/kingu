@@ -17,6 +17,9 @@
 	import { branchChoices, branchTitle, looksLikePr, prTitle, type BranchChoice, type PrHead } from './worktreeSource';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui';
 	import AgentPick from './AgentPick.svelte';
+	import { issueUrlRef, parseIssueUrl, titleAfterLink } from './issueUrl';
+	import { lookupIssueUrl, type LinkedIssue } from './issueUrlLookup';
+	import { taskForLink } from './taskSources';
 
 	type Kind = 'new' | 'branch' | 'pr';
 	let kind = $state<Kind>('new');
@@ -83,8 +86,60 @@
 	const picked = $derived(prs?.find((p) => String(p.number) === pr.trim().replace(/^#/, '')) ?? null);
 	/** Starting from a merge request is not built for GitLab yet; the form says so instead. */
 	const prOnGitlab = $derived(adeTasks.gh?.provider === 'gitlab');
-	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
 	const mac = keyLabel('cmd+a').startsWith('⌘');
+
+	// Link issue at create (Orca's smart name field): an issue URL as the whole name is looked up on
+	// its tracker (200ms after typing stops) and offered as a link; taking it keeps the issue on the
+	// task, names the task after it and starts the agent from the issue when the prompt is empty.
+	// Only a plain new task carries a link: best-of-N and stacked tasks have their own flows.
+	type Lookup = { text: string; ref: string } & ({ state: 'resolving' } | { state: 'found'; issue: LinkedIssue } | { state: 'error'; message: string });
+	const LOOKUP_DEBOUNCE_MS = 200;
+	let linked = $state<LinkedIssue | null>(null);
+	let lookup = $state<Lookup | null>(null);
+	const linkable = $derived(kind === 'new' && !parent && count === 1);
+	const pasted = $derived(linkable && !linked ? parseIssueUrl(title) : null);
+	const linkedRef = $derived(linked ? (linked.link.key ?? `#${linked.link.number}`) : '');
+	const linkedTask = $derived(linked ? taskForLink(adeTasks.list, linked.link) : undefined);
+	$effect(() => {
+		const u = pasted;
+		if (!u) {
+			lookup = null;
+			return;
+		}
+		const text = title;
+		const ref = issueUrlRef(u);
+		lookup = { text, ref, state: 'resolving' };
+		const timer = setTimeout(async () => {
+			let next: Lookup;
+			try {
+				next = { text, ref, state: 'found', issue: await lookupIssueUrl(u) };
+			} catch (e) {
+				const message = e instanceof Error ? e.message : String(e);
+				next = { text, ref, state: 'error', message };
+			}
+			// The answer of a URL the field no longer holds is dropped.
+			if (title === text && !linked) lookup = next;
+		}, LOOKUP_DEBOUNCE_MS);
+		return () => clearTimeout(timer);
+	});
+	// A link does not follow the form to a source that cannot carry it.
+	$effect(() => {
+		if (!linkable && linked) linked = null;
+	});
+	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel && lookup?.state !== 'resolving' : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
+	function takeLink() {
+		if (lookup?.state !== 'found') return;
+		linked = lookup.issue;
+		title = titleAfterLink(title, lookup.text, lookup.issue.link.title);
+		lookup = null;
+	}
+	function removeLink() {
+		if (!linked) return;
+		// The name the link gave goes with it; a name the user typed stays (Orca issue-source-actions.ts).
+		if (title.trim() === linked.link.title.trim()) title = '';
+		linked = null;
+		input?.focus();
+	}
 
 	onMount(() => {
 		void loadPresets();
@@ -114,10 +169,12 @@
 
 	async function submit(e?: Event) {
 		e?.preventDefault();
+		// Enter on a looked-up URL takes the link; it never becomes the task's name by accident.
+		if (lookup?.state === 'found') return takeLink();
 		if (!ready || busy) return;
 		// A plain new task is created in the background (Orca): the form closes at once.
 		if (kind === 'new' && !parent && count === 1) {
-			adeTasks.startCreate({ title, prompt, base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined });
+			adeTasks.startCreate({ title, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link });
 			adeTasks.composing = false;
 			return;
 		}
@@ -192,6 +249,23 @@
 		{#if prsError}<div class="truncate text-[11px] text-(--vscode-errorForeground)" title={prsError}>{prsError}</div>{/if}
 	{/if}
 	<input bind:this={input} class={INPUT} placeholder={titleHint} aria-label={t('adeWorktrees.form.title')} bind:value={title} disabled={busy} />
+	{#if linked}
+		<div class="flex items-center gap-1.5 rounded-sm border border-(--vscode-widget-border) px-1.5 py-1" title={linked.link.url}>
+			<Icon name="bug" size={12} />
+			<span class="min-w-0 flex-1 truncate" aria-label={t('adeWorktrees.link.linked', { ref: linkedRef, title: linked.link.title })}><span class="font-mono text-(--vscode-descriptionForeground)">{linkedRef}</span> {linked.link.title}</span>
+			<button type="button" class="grid size-4 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('adeWorktrees.link.remove')} title={t('adeWorktrees.link.remove')} disabled={busy} onclick={removeLink}><Icon name="close" size={11} /></button>
+		</div>
+		{#if linkedTask}<div class="truncate text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorktrees.link.exists', { ref: linkedRef, title: linkedTask.title })}</div>{/if}
+	{:else if lookup?.state === 'resolving'}
+		<div class="truncate text-[11px] text-(--vscode-descriptionForeground)" role="status">{t('adeWorktrees.link.resolving', { ref: lookup.ref })}</div>
+	{:else if lookup?.state === 'found'}
+		<button type="button" class="flex w-full items-center gap-1.5 rounded-sm border border-(--vscode-focusBorder) px-1.5 py-1 text-left hover:bg-(--vscode-list-hoverBackground)" title={t('adeWorktrees.link.offerTitle')} onclick={takeLink}>
+			<Icon name="bug" size={12} />
+			<span class="min-w-0 flex-1 truncate">{t('adeWorktrees.link.offer', { ref: lookup.ref, title: lookup.issue.link.title })}</span>
+		</button>
+	{:else if lookup?.state === 'error'}
+		<div class="text-[11px] text-(--vscode-errorForeground)" role="alert">{t('adeWorktrees.link.failed', { ref: lookup.ref, error: lookup.message })}</div>
+	{/if}
 	<textarea
 		class={[INPUT, 'h-20 resize-none']}
 		placeholder={kind === 'new' ? t('adeWorktrees.form.promptPlaceholder') : t('adeWorktrees.form.promptOptional')}

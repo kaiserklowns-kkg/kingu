@@ -43,5 +43,14 @@ export const adeWorktrees = {
 	'adeWorktrees.form.base': 'base branch',
 	'adeWorktrees.form.submitTitle': 'สร้าง worktree แล้วเริ่ม agent ({keys})',
 	'adeWorktrees.form.creating': 'กำลังสร้าง…',
-	'adeWorktrees.form.create': 'สร้างและเริ่ม'
+	'adeWorktrees.form.create': 'สร้างและเริ่ม',
+	'adeWorktrees.link.resolving': 'กำลังค้นหา {ref}…',
+	'adeWorktrees.link.offer': 'ลิงก์ {ref}: {title}',
+	'adeWorktrees.link.offerTitle': 'ลิงก์ issue นี้กับงาน (Enter)',
+	'adeWorktrees.link.linked': 'issue ที่ลิงก์ {ref}: {title}',
+	'adeWorktrees.link.remove': 'เอา issue ที่ลิงก์ออก',
+	'adeWorktrees.link.exists': 'มีงานของ {ref} อยู่แล้ว: {title}',
+	'adeWorktrees.link.notConnected': 'เชื่อมต่อ {service} ใน Settings เพื่อลิงก์ issue นี้',
+	'adeWorktrees.link.otherSite': 'ยังไม่ได้เชื่อมต่อ {service} ของไซต์นี้ ({host})',
+	'adeWorktrees.link.failed': 'โหลด {ref} ไม่ได้: {error}'
 } satisfies Record<keyof typeof en, string>;
