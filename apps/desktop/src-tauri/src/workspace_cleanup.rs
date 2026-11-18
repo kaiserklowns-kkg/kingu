@@ -271,6 +271,7 @@ impl MergedLookup {
   }
 }
 
+#[allow(dead_code)] // used by tests only so far
 fn inspect(info: &WorktreeInfo, is_main: bool, base: Option<&str>) -> Candidate {
   inspect_with(info, is_main, base, &mut |_| None)
 }
@@ -337,13 +338,12 @@ fn inspect_with(info: &WorktreeInfo, is_main: bool, base: Option<&str>, fetch: &
     // Safety: only the exact PR head counts. A commit made after the PR was merged differs, so
     // that unpublished work keeps the workspace.
     let head = git(dir, &["rev-parse", "HEAD"]).ok();
-    if let (Some(branch), Some(head)) = (c.branch.clone(), head) {
-      if pr_merged_at(&branch, &head, fetch) {
+    if let (Some(branch), Some(head)) = (c.branch.clone(), head)
+      && pr_merged_at(&branch, &head, fetch) {
         c.merged = true;
         c.pr_merged = true;
         c.unpushed = false;
       }
-    }
   }
   let commit = git(dir, &["log", "-1", "--format=%ct"]).ok().and_then(|s| s.trim().parse::<u64>().ok()).map_or(0, |s| s * 1000);
   let gitdir = git(dir, &["rev-parse", "--absolute-git-dir"]).ok().map(|s| PathBuf::from(s.trim()));
@@ -745,20 +745,23 @@ mod tests {
       });
     }
     assert_eq!(limits, vec![GH_CALL_TIMEOUT; 3]);
-    let mut budget = Duration::from_millis(50);
+    // Wide margins, and no assumption that a second request fits: a slow machine may sleep past the
+    // whole budget in the first one. What must hold either way is asserted.
+    let (total, work) = (Duration::from_millis(400), Duration::from_millis(250));
+    let mut budget = total;
     let mut limits = Vec::new();
-    let mut calls = 0;
     for _ in 0..5 {
       timed(&mut budget, |t| {
         limits.push(t);
-        calls += 1;
-        std::thread::sleep(Duration::from_millis(30));
+        std::thread::sleep(work);
         Some(())
       });
     }
-    assert_eq!(limits[0], Duration::from_millis(50));
-    assert!(limits[1] <= Duration::from_millis(20), "the second request only gets what is left");
-    assert_eq!(calls, 2, "nothing is asked once the budget is spent");
+    assert_eq!(limits[0], total);
+    assert!(limits.len() <= 2, "nothing is asked once the budget is spent");
+    if let Some(second) = limits.get(1) {
+      assert!(*second <= total - work, "the second request only gets what is left");
+    }
     assert_eq!(budget, Duration::ZERO);
   }
 

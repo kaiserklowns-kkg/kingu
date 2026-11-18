@@ -202,11 +202,10 @@ fn run_du(path: &Path) -> Result<String, String> {
     if reader.is_finished() {
       break;
     }
-    if let Ok(Some(_)) = child.try_wait() {
-      if reader.is_finished() {
+    if let Ok(Some(_)) = child.try_wait()
+      && reader.is_finished() {
         break;
       }
-    }
     std::thread::sleep(Duration::from_millis(20));
   }
   let out = match reader.join() {

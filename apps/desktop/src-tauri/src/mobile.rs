@@ -1066,11 +1066,10 @@ impl Backend for AppBackend {
 pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   let mobile = Arc::new(Mobile::load(app.path().app_data_dir()?.join("mobile.json")));
   app.manage(mobile.clone());
-  if mobile.lock().stored.enabled {
-    if let Err(e) = mobile.start(Arc::new(AppBackend(app.handle().clone())), Ipv4Addr::UNSPECIFIED) {
+  if mobile.lock().stored.enabled
+    && let Err(e) = mobile.start(Arc::new(AppBackend(app.handle().clone())), Ipv4Addr::UNSPECIFIED) {
       log::warn!("mobile: {e}");
     }
-  }
   Ok(())
 }
 

@@ -513,6 +513,7 @@ fn strip_group(g: &Value) -> Option<Value> {
 
 /// Takes Kingu's entries out of `config.hooks` and adds `defs` (event, definition) after the
 /// user's own. Returns each event's group index of Kingu's entry. Err: a shape it will not touch.
+#[allow(dead_code)] // used by tests only so far
 pub fn merge(config: &mut Map<String, Value>, defs: Vec<(String, Value)>) -> Result<Vec<(String, usize)>, String> {
   merge_at(config, "hooks", defs)
 }

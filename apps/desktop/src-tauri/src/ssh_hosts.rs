@@ -474,7 +474,7 @@ pub fn test(t: &Target) -> TestResult {
   match result {
     Ok((true, _, _)) => TestResult { success: true, error: None, millis },
     Ok((false, _, err)) => {
-      let msg = err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string();
+      let msg = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string();
       TestResult { success: false, error: Some(msg), millis }
     }
     Err(e) => TestResult { success: false, error: Some(e), millis },
@@ -582,7 +582,7 @@ pub(crate) fn remote_input(t: &Target, script: &str, input: Option<Vec<u8>>, lim
   cmd.arg(format!("sh -c {}", sh_quote(script)));
   match run_with_input(cmd, limit, input)? {
     (true, out, _) => Ok(out),
-    (false, _, err) => Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string()),
+    (false, _, err) => Err(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string()),
   }
 }
 
@@ -622,8 +622,8 @@ pub fn browse_script(path: &str) -> String {
 /// lists the drives (`C:/` …).
 pub fn powershell_browse(path: &str) -> String {
   let p = path.trim();
-  if p.is_empty() || p.chars().all(|c| c == '/' || c == '\\') && !p.is_empty() && p != "~" {
-    if !p.is_empty() {
+  if (p.is_empty() || p.chars().all(|c| c == '/' || c == '\\') && !p.is_empty() && p != "~")
+    && !p.is_empty() {
       return [
         "$ErrorActionPreference = 'Stop'",
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
@@ -632,7 +632,6 @@ pub fn powershell_browse(path: &str) -> String {
       ]
       .join("; ");
     }
-  }
   let ps_quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
   // Orca `jAt` + `MAt`: `~` → $HOME, `/C:` → `C:/`.
   let dir = if p.is_empty() || p == "~" {
@@ -849,7 +848,7 @@ fn remote_raw(t: &Target, command: &str) -> Result<String, String> {
   cmd.arg(command);
   match run_with_timeout(cmd, Duration::from_millis(REMOTE_TIMEOUT_MS))? {
     (true, out, _) => Ok(out),
-    (false, _, err) => Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string()),
+    (false, _, err) => Err(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string()),
   }
 }
 
@@ -1015,7 +1014,7 @@ pub async fn ssh_forward_add(
         if let Some(mut e) = child.stderr.take() {
           let _ = e.read_to_string(&mut err);
         }
-        return (child, Some(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh exited").trim().to_string()));
+        return (child, Some(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh exited").trim().to_string()));
       }
       std::thread::sleep(Duration::from_millis(50));
     }

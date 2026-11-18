@@ -1,3 +1,6 @@
+// Long tuple and closure types are local to one function or test here; a `type` alias per use would hide more than it names.
+#![allow(clippy::type_complexity)]
+
 mod accounts;
 mod agent;
 mod artifacts;
@@ -327,12 +330,11 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<Pa
 #[tauri::command]
 /// `background`: a poll nobody asked for (git_admission's background tier, behind clicks and visible reads).
 async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>, repo: Option<String>, background: Option<bool>) -> Result<Option<git::GitStatus>, String> {
-  if let Some(r) = ws.remote() {
-    if slug.is_none() {
+  if let Some(r) = ws.remote()
+    && slug.is_none() {
       let opts = options.unwrap_or_default();
       return blocking(move || remote_ws::status(&r, &opts)).await;
     }
-  }
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }

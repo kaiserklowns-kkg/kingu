@@ -107,6 +107,7 @@ fn find_snap(app: &AppHandle, ws: &Workspace, r: &SnapServerRef) -> Result<SnapI
     .ok_or_else(|| tr!(SnapContribMsg::SnapNotFound, id = r.id))
 }
 
+#[allow(clippy::large_enum_variant)] // a handful of values per window
 enum Server {
   Builtin(lsp::ServerSpec),
   Snap(Resolved),

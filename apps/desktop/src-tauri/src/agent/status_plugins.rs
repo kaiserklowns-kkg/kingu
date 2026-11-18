@@ -23,6 +23,8 @@
 //! a file that does not parse (or that Kingu did not write, for a file of its own name) is left
 //! alone with an error, writes are atomic with a `.kingu.bak` copy, and every hook or plugin does
 //! nothing outside a Kingu terminal (no `KINGU_AGENT_HOOK_FILE` naming an `agent-hooks/*.jsonl`).
+// Not called by the app yet (only by its own tests): the wiring lands with the supervisor work.
+#![allow(dead_code)]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -547,7 +549,7 @@ def register(ctx):
 
 /// The top-level `key:` line of a block mapping, and the indent of its children; None when the
 /// key is not there. Err when it is there in a form Kingu does not edit (flow style, a scalar).
-fn yaml_block<'a>(lines: &[&'a str], key: &str, from: usize, indent: usize) -> Result<Option<(usize, usize, usize)>, ()> {
+fn yaml_block(lines: &[&str], key: &str, from: usize, indent: usize) -> Result<Option<(usize, usize, usize)>, ()> {
   // (line of `key:`, end line (exclusive) of its block, child indent)
   let mut i = from;
   while i < lines.len() {

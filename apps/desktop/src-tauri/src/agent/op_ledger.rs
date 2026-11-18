@@ -17,6 +17,8 @@
 //!   their tombstone expired); ids older than `MAX_NEW_AGE_MS` are refused unless a row exists.
 //! - Rows are never capped by count, only pruned once expired. Loaded rows still `pending` or
 //!   `unknown` stay `unknown`: the host may have died mid-effect, so a retry must not re-run it.
+// Not called by the app yet (only by its own tests): the wiring lands with the supervisor work.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 

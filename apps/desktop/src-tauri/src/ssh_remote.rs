@@ -891,7 +891,7 @@ mod tests {
         c.args(["-o", "UseKeychain=no"]);
       }
       c.args(["-o", &format!("UserKnownHostsFile={}", dir.join("kh").display()), "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "AddKeysToAgent=no", "-o", "ConnectTimeout=10", "-T"]);
-      c.args(["-o", "ControlMaster=auto", "-o", &"ControlPath=/tmp/kingu-e2e-%C".to_string(), "-o", "ControlPersist=20"]);
+      c.args(["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/kingu-e2e-%C", "-o", "ControlPersist=20"]);
       c.args(["-p", "22222", "-i", dir.join(key).to_str().unwrap(), "--", "127.0.0.1"]);
       c
     };
@@ -958,7 +958,7 @@ mod tests {
     let o = child.wait_with_output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "locked-ok");
-    let _ = Command::new("ssh").args(["-o", &"ControlPath=/tmp/kingu-e2e-%C".to_string(), "-O", "exit", "-p", "22222", "127.0.0.1"]).output();
+    let _ = Command::new("ssh").args(["-o", "ControlPath=/tmp/kingu-e2e-%C", "-O", "exit", "-p", "22222", "127.0.0.1"]).output();
   }
 
   #[test]

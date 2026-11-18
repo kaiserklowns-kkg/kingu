@@ -171,7 +171,6 @@ fn with_server<T>(spec: &Spec, f: impl FnOnce(&mut dyn FnMut(&str, Value, bool) 
     };
     f(&mut op)
   });
-  drop(session);
   let _ = child.kill();
   let _ = child.wait();
   result.map_err(|e| {
