@@ -37,6 +37,16 @@ export function autoRunDue(s: AutoState, intervalMs = AUTO_CHECK_MS): boolean {
 	return s.lastRunAt === null || s.now - s.lastRunAt >= intervalMs;
 }
 
+/**
+ * When the next automatic check is expected, for `kingu cleanup report`: null when automatic cleanup is off,
+ * nothing has run yet, or a check is already due (it then runs at the next look, not at a time in the past).
+ */
+export function nextAutoRunAt(auto: boolean, lastRunAt: number | null, now: number, intervalMs = AUTO_CHECK_MS): number | null {
+	if (!auto || lastRunAt === null) return null;
+	const next = lastRunAt + intervalMs;
+	return next > now ? next : null;
+}
+
 /** Newest first, bounded; a run that found nothing to do is not worth a row unless it was asked for. */
 export function withActivity(list: readonly CleanupActivity[], entry: CleanupActivity): CleanupActivity[] {
 	if (entry.source === 'auto' && !entry.removed.length && !entry.archived.length && !entry.failed.length) return [...list];

@@ -25,7 +25,7 @@ import { setBuiltInPluginProvider } from './mcp.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { cleanup } from './cleanup.svelte.ts';
 import { AUTO_CLEANUP_ID } from './autoCleanup.svelte.ts';
-import { AUTO_CHECK_MS } from './autoCleanup.ts';
+import { nextAutoRunAt } from './autoCleanup.ts';
 import { WORKSPACE_CLEANUP_RULE_KEYS } from './workspaceCleanupPolicy.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 
@@ -64,8 +64,8 @@ async function handle(req: CliRequest): Promise<unknown> {
 		case 'workspaceCleanup.report': {
 			// Orca's `workspace cleanup report`: the rules, the schedule and recent runs. Activity is kept
 			// in localStorage, so it outlives a restart and includes other windows' runs, and it is kept per
-			// folder. Before the first run the next check is "as soon as a folder is
-			// open" (null with `auto` on).
+			// folder. Before the first run, or when a check is overdue, the next check is
+			// "as soon as a folder is open" (null with `auto` on).
 			cleanup.reloadActivity();
 			const auto = settings.get<boolean>(AUTO_CLEANUP_ID) === true;
 			const { lastRunAt } = cleanup;
@@ -74,7 +74,7 @@ async function handle(req: CliRequest): Promise<unknown> {
 				source: cleanup.policy.source,
 				auto,
 				lastRunAt,
-				nextRunAt: auto && lastRunAt !== null ? lastRunAt + AUTO_CHECK_MS : null,
+				nextRunAt: nextAutoRunAt(auto, lastRunAt, Date.now()),
 				activity: cleanup.activity
 			};
 		}

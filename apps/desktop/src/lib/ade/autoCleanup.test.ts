@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTIVITY_LIMIT, AUTO_CHECK_MS, autoRunDue, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, activityKey, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
+import { ACTIVITY_LIMIT, AUTO_CHECK_MS, autoRunDue, nextAutoRunAt, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, activityKey, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
 
 const base: AutoState = { enabled: true, rulesOn: true, hasFolder: true, busy: false, lastRunAt: null, now: 1_000_000 };
 const act = (over: Partial<CleanupActivity> = {}): CleanupActivity => ({ at: 1, source: 'auto', removed: ['a'], archived: [], failed: [], kept: 0, ...over });
@@ -100,5 +100,16 @@ describe('activityKey', () => {
 		const locks = { request: <T>(name: string, cb: () => T) => (names.push(name), Promise.resolve(cb())) };
 		await withActivityLock(() => 0, activityKey('/a'), locks);
 		expect(names).toEqual([activityKey('/a')]);
+	});
+});
+
+describe('nextAutoRunAt', () => {
+	test('is an hour after the last run, and never a time in the past', () => {
+		const now = 10 * AUTO_CHECK_MS;
+		expect(nextAutoRunAt(true, now - 1000, now)).toBe(now - 1000 + AUTO_CHECK_MS);
+		expect(nextAutoRunAt(true, now - AUTO_CHECK_MS, now)).toBeNull();
+		expect(nextAutoRunAt(true, now - 5 * AUTO_CHECK_MS, now)).toBeNull();
+		expect(nextAutoRunAt(true, null, now)).toBeNull();
+		expect(nextAutoRunAt(false, now - 1000, now)).toBeNull();
 	});
 });
