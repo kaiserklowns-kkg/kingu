@@ -209,6 +209,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['ui.hideDetachedHeadWorkspaces', 'kingu.sidebar.hideDetachedHead', 'added'],
 	['ui.hideSleepingWorkspaces', 'kingu.sidebar.hideSleeping', 'added'],
 	['ui.hideAutomationGeneratedWorkspaces', 'kingu.sidebar.hideAutomationTasks', 'added'],
+	['ui.hideCliCreatedWorkspaces', 'kingu.sidebar.hideCliCreatedTasks', 'added'],
 	['ui.worktreeCardProperties', 'kingu.sidebar.cardProperties', 'added'],
 	['compactWorktreeCards', 'kingu.sidebar.compactCards', 'added'],
 	['ui.agentsCompactMode', 'kingu.sidebar.compactCards', 'mapped'],

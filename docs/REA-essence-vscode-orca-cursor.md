@@ -441,10 +441,10 @@ UI) และมี safety model ที่ชัด: opt-in, preview ก่อ�
    RPC/CLI (`kingu cleanup preview|run|report|receipt`); มี safety เพิ่มจากการตรวจงานจริง:
    worker rule ต้อง landed, กัน terminal ที่ยังเปิด, recheck ต่อ worktree ก่อนลบทุก target
    (`workspace_cleanup_inspect`), ตรวจ merged MR/PR ของ GitLab และ Bitbucket Cloud นอกเหนือจาก
-   GitHub, Activity/`lastRunAt` เก็บถาวรใน localStorage (เขียนผ่าน Web Lock ข้ามหน้าต่าง) และ
+   GitHub, Activity/`lastRunAt` เก็บถาวรใน localStorage แยกตามโฟลเดอร์ (เขียนผ่าน Web Lock ต่อโฟลเดอร์) และ
    สแกน/วัดขนาดข้ามหน้าต่างพร้อมกันได้; pinned เป็น blocker; archive และ receipt/Activity แยก
-   `archived`. ยังเหลือ host/repo facets (หน้าต่างหนึ่งมี repo เดียว), Activity ระดับโปรไฟล์,
-   Bitbucket Server/Data Center, และการลองกับแอปที่รันจริง
+   `archived`; Activity/`lastRunAt` แยกตามโฟลเดอร์แล้ว. ยังเหลือ host/repo facets (หน้าต่างหนึ่งมี repo
+   เดียว), Bitbucket Server/Data Center, และการลอง UI ที่เหลือกับแอปจริง
 2. **Subagent / session visibility** — roster + focused view ต่อ subagent (task, live steps,
    final answer) แล้วกลับ main chat; โมเดลควรอยู่ใน session journal ไม่ใช่ UI state
 3. **Harness coverage** — Orca เพิ่ม Kimi Code ใน Chat; Kingu มี Kimi เป็น CLI profile

@@ -96,6 +96,13 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		description: 'ซ่อนงานที่ Automations สร้าง (Orca: hideAutomationGeneratedWorkspaces) (Hide tasks that automations started.)'
 	},
 	{
+		id: 'kingu.sidebar.hideCliCreatedTasks',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนงานที่สร้างจาก CLI (`kingu task create`) (Orca: hideCliCreatedWorkspaces) (Hide worktrees created by the CLI.)'
+	},
+	{
 		id: 'kingu.sidebar.cardProperties',
 		group: G,
 		type: 'array',

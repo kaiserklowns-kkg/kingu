@@ -24,7 +24,7 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
     Command::Help | Command::Version => return Ok(None),
     Command::Status => (protocol::METHOD_STATUS, json!({})),
     Command::TaskList => (protocol::METHOD_TASK_LIST, json!({})),
-    Command::TaskCreate { title, prompt, base, mode, background } => {
+    Command::TaskCreate { title, prompt, base, mode, background, request_id } => {
       let prompt = match prompt.as_deref() {
         Some("-") => stdin_prompt.unwrap_or_default(),
         Some(p) => p.to_owned(),
@@ -34,7 +34,9 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
         return Err(tr(Msg::PromptTooLarge, &[("kb", &(MAX_PROMPT / 1024))]));
       }
       // `cwd`: the app picks the window, and a caller inside a task's worktree dispatches a sub-task.
-      (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() }))
+      let mut params = json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() });
+      if let Some(id) = request_id { params["requestId"] = json!(id); }
+      (protocol::METHOD_TASK_CREATE, params)
     }
     Command::TaskOpen { slug } => (protocol::METHOD_TASK_OPEN, json!({ "slug": slug })),
     // `cwd`: without a slug, the app finds the task whose worktree this runs in.
@@ -415,10 +417,13 @@ mod tests {
     assert_eq!((m, p), (protocol::METHOD_OPEN, json!({ "path": "/repo/src/a.ts", "line": 3, "column": null })));
     let (_, p) = request_of(&Command::Open { path: "/etc/x".into(), line: None, column: None }, cwd, None).unwrap().unwrap();
     assert_eq!(p["path"], "/etc/x");
-    let create = Command::TaskCreate { title: "Fix".into(), prompt: Some("-".into()), base: None, mode: Some("terminal".into()), background: true };
+    let create = Command::TaskCreate { title: "Fix".into(), prompt: Some("-".into()), base: None, mode: Some("terminal".into()), background: true, request_id: None };
     let (m, p) = request_of(&create, cwd, Some("from stdin".into())).unwrap().unwrap();
     assert_eq!((m, p), (protocol::METHOD_TASK_CREATE, json!({ "title": "Fix", "prompt": "from stdin", "base": null, "mode": "terminal", "open": false, "cwd": "/repo" })));
-    let big = Command::TaskCreate { title: "x".into(), prompt: Some("a".repeat(MAX_PROMPT + 1)), base: None, mode: None, background: false };
+    let retry = Command::TaskCreate { title: "Fix".into(), prompt: None, base: None, mode: None, background: false, request_id: Some("retry_1".into()) };
+    let (_, p) = request_of(&retry, cwd, None).unwrap().unwrap();
+    assert_eq!(p["requestId"], "retry_1");
+    let big = Command::TaskCreate { title: "x".into(), prompt: Some("a".repeat(MAX_PROMPT + 1)), base: None, mode: None, background: false, request_id: None };
     assert!(request_of(&big, cwd, None).is_err());
     assert!(request_of(&Command::Help, cwd, None).unwrap().is_none());
     let (m, p) = request_of(&Command::Notify { message: "done".into(), title: None }, cwd, None).unwrap().unwrap();

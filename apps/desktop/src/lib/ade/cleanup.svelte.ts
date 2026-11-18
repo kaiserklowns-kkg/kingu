@@ -102,48 +102,65 @@ class Cleanup {
 	/** Re-reads Activity and the last run, so runs from other windows show (and are not run twice). */
 	reloadActivity() {
 		const root = workspace.root;
-		const stored = readStored(root);
-		if (!stored) return;
 		// Another folder's last run says nothing about this one: start from what is stored for this folder.
 		if (root !== this.#activityRoot) {
 			this.#activityRoot = root;
 			this.lastRunAt = null;
+			this.activity = [];
 		}
+		const stored = readStored(root);
+		if (!stored) return;
 		this.activity = stored.activity;
 		if (stored.lastRunAt !== null && (this.lastRunAt === null || stored.lastRunAt > this.lastRunAt)) this.lastRunAt = stored.lastRunAt;
 	}
 
 	#activityRoot: string | null = null;
 
-	#serial<T>(fn: () => T): Promise<T> {
-		return withActivityLock(fn, activityKey(workspace.root));
+	#serial<T>(root: string | null, fn: () => T): Promise<T> {
+		return withActivityLock(fn, activityKey(root));
 	}
 
-	async #markRun(at: number) {
-		await this.#serial(() => {
-			this.reloadActivity();
+	/** What is stored for `root`; with storage unavailable, what this window holds for the open folder. */
+	#storedFor(root: string | null): StoredActivity {
+		return readStored(root) ?? (root === this.#activityRoot ? { activity: this.activity, lastRunAt: this.lastRunAt } : { activity: [], lastRunAt: null });
+	}
+
+	async #markRun(root: string | null, at: number) {
+		await this.#serial(root, () => {
+			const stored = this.#storedFor(root);
+			writeStored(root, { activity: stored.activity, lastRunAt: at });
+			if (root !== workspace.root) return;
+			this.#activityRoot = root;
+			this.activity = stored.activity;
 			this.lastRunAt = at;
-			writeStored(workspace.root, { activity: this.activity, lastRunAt: at });
 		});
 	}
 
 	/** Adds a run to Activity (the dialog acts on tasks itself; the others go through `runRules`). */
-	async record(source: CleanupSource, removed: string[], archived: string[], failed: { slug: string; error: string }[], kept: number) {
-		await this.#serial(() => {
-			this.reloadActivity();
-			this.activity = withActivity(this.activity, { at: Date.now(), source, removed, archived, failed, kept });
-			writeStored(workspace.root, { activity: this.activity, lastRunAt: this.lastRunAt });
+	async record(root: string | null, source: CleanupSource, removed: string[], archived: string[], failed: { slug: string; error: string }[], kept: number) {
+		await this.#serial(root, () => {
+			const stored = this.#storedFor(root);
+			const activity = withActivity(stored.activity, { at: Date.now(), source, removed, archived, failed, kept });
+			writeStored(root, { activity, lastRunAt: stored.lastRunAt });
+			if (root !== workspace.root) return;
+			this.#activityRoot = root;
+			this.activity = activity;
+			this.lastRunAt = stored.lastRunAt;
 		});
 	}
 
 	/** Measures every task worktree (`du`, one after another): slow, so the dialog asks after the Git facts are shown. */
 	async measureSizes() {
-		if (this.measuring || !workspace.root) return;
+		const root = workspace.root;
+		if (this.measuring || !root) return;
 		this.measuring = true;
 		this.sizeProgress = null;
-		const unlisten = await listenWindow<CleanupProgress>('workspace-cleanup-size-progress', (e) => (this.sizeProgress = e.payload)).catch(() => null);
+		const unlisten = await listenWindow<CleanupProgress>('workspace-cleanup-size-progress', (e) => {
+			if (workspace.root === root) this.sizeProgress = e.payload;
+		}).catch(() => null);
 		try {
 			const rows = await invoke<CleanupSize[]>('workspace_cleanup_sizes');
+			if (workspace.root !== root) return;
 			this.sizes = new Map(rows.map((r) => [r.path, r.sizeBytes]));
 		} catch {
 			// Sizes are optional: without them the size filter treats every folder as unmeasured.
@@ -179,38 +196,55 @@ class Cleanup {
 		if (run === this.#prRun) this.prProgress = null;
 	}
 
-	#inflight: Promise<CleanupScan | null> | null = null;
+	#inflight: { root: string; promise: Promise<CleanupScan | null> } | null = null;
+	#scanRun = 0;
 
-	/** Reads Git for every worktree of the open folder; one scan at a time (a second ask shares it). Each window scans on its own. */
+	/** Reads Git for every worktree of the open folder; a second ask for the same folder shares it. Each window scans on its own. */
 	rescan(): Promise<CleanupScan | null> {
-		if (!workspace.root) return Promise.resolve(null);
-		return (this.#inflight ??= this.#scan().finally(() => (this.#inflight = null)));
+		const root = workspace.root;
+		if (!root) return Promise.resolve(null);
+		if (this.#inflight?.root === root) return this.#inflight.promise;
+		const promise = this.#scan(root).finally(() => {
+			if (this.#inflight?.promise === promise) this.#inflight = null;
+		});
+		this.#inflight = { root, promise };
+		return promise;
 	}
 
-	async #scan(): Promise<CleanupScan | null> {
+	async #scan(root: string): Promise<CleanupScan | null> {
+		// A scan belongs to the folder it started in: another folder's result must not replace what is shown.
+		const run = ++this.#scanRun;
 		this.scanning = true;
 		this.error = null;
 		this.progress = null;
-		const unlisten = await listenWindow<CleanupProgress>('workspace-cleanup-progress', (e) => (this.progress = e.payload)).catch(() => null);
+		const unlisten = await listenWindow<CleanupProgress>('workspace-cleanup-progress', (e) => {
+			if (run === this.#scanRun) this.progress = e.payload;
+		}).catch(() => null);
 		try {
-			this.scan = await invoke<CleanupScan>('workspace_cleanup_scan');
-			return this.scan;
+			const scan = await invoke<CleanupScan>('workspace_cleanup_scan');
+			if (workspace.root !== root || run !== this.#scanRun) return null;
+			this.scan = scan;
+			return scan;
 		} catch (e) {
+			if (workspace.root !== root || run !== this.#scanRun) return null;
 			this.error = String(e);
 			// No stale rows after a failed scan: the dialog must not offer what it can no longer vouch for.
 			this.scan = null;
 			return null;
 		} finally {
 			unlisten?.();
-			this.scanning = false;
-			this.progress = null;
+			if (run === this.#scanRun) {
+				this.scanning = false;
+				this.progress = null;
+			}
 		}
 	}
 
 	/** `kingu cleanup preview`: a fresh scan, then what the rules say about each task. */
 	async preview() {
+		const root = workspace.root;
 		const scan = await this.rescan();
-		if (!scan) throw new Error(this.error ?? 'No folder is open');
+		if (!scan) throw new Error(workspace.root !== root ? 'The folder changed; try again' : (this.error ?? 'No folder is open'));
 		return cleanupPreview(this.policy, evaluateScan(scan, this.policy, (slug) => this.taskContext(slug)));
 	}
 
@@ -222,24 +256,28 @@ class Cleanup {
 	async runRules(source: CleanupSource = 'cli') {
 		if (this.running) throw new Error('A cleanup run is already going');
 		this.running = true;
-		await this.#markRun(Date.now());
+		// The run belongs to the folder open now: switching folders mid-run must not record elsewhere.
+		const root = workspace.root;
 		try {
-			return await this.#run(source);
+			await this.#markRun(root, Date.now());
+			return await this.#run(source, root);
 		} finally {
 			this.running = false;
 		}
 	}
 
-	async #run(source: CleanupSource) {
+	async #run(source: CleanupSource, root: string | null) {
 		const scan = await this.rescan();
-		if (!scan) throw new Error(this.error ?? 'No folder is open');
+		if (!scan) throw new Error(workspace.root !== root ? 'The folder changed; cleanup stopped' : (this.error ?? 'No folder is open'));
 		const verdicts = evaluateScan(scan, this.policy, (slug) => this.taskContext(slug));
 		const targets = cleanupTargets(verdicts);
 		const recheck = async ({ slug, action }: (typeof targets)[number]) => {
+			if (workspace.root !== root) throw new Error('The folder changed; cleanup stopped');
 			const fresh = await invoke<CleanupCandidate>('workspace_cleanup_inspect', { path: verdicts.get(slug)!.path });
 			return candidateVerdict(fresh, this.policy, this.taskContext(slug), Date.now())?.evaluation.action === action;
 		};
 		const { removed, archived, failed, skipped } = await applyRechecked(targets, recheck, async ({ slug, action }) => {
+			if (workspace.root !== root) throw new Error('The folder changed; cleanup stopped');
 			if (action === 'archive') {
 				await adeTasks.archive(slug);
 				return !!adeTasks.find(slug)?.meta.archived_at;
@@ -247,7 +285,7 @@ class Cleanup {
 			return adeTasks.removeConfirmed(slug, { deleteBranch: adeTasks.defaultBranchRemoval(slug), force: false });
 		});
 		const kept = verdicts.size - targets.length + skipped;
-		await this.record(source, removed, archived, failed, kept);
+		await this.record(root, source, removed, archived, failed, kept);
 		return cleanupReceipt(removed, archived, failed, kept);
 	}
 

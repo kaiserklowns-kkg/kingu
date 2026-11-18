@@ -43,7 +43,7 @@ export function withActivity(list: readonly CleanupActivity[], entry: CleanupAct
 	return [entry, ...list].slice(0, ACTIVITY_LIMIT);
 }
 
-/** Activity and the last run, kept per app profile (all windows and folders share it). */
+/** Legacy shared key: used only while no folder is open; open folders get their own key (`activityKey`). */
 export const ACTIVITY_KEY = 'kingu.cleanup.activity';
 
 /** Activity and the last run belong to one folder: a run in one project must not delay another's schedule. */
@@ -96,7 +96,7 @@ export function serializeActivity(s: StoredActivity): string {
 type LockManagerLike = { request<T>(name: string, cb: () => T): Promise<T> };
 
 /**
- * Runs `fn` under a Web Lock named `name`, so read-modify-write of the shared Activity entry is serial across
+ * Runs `fn` under a Web Lock named `name`, so read-modify-write of one folder's Activity entry is serial across
  * windows. Without the API (an old WebView) it just runs `fn`.
  */
 export function withActivityLock<T>(fn: () => T, key: string = ACTIVITY_KEY, locks: LockManagerLike | undefined = (globalThis.navigator as { locks?: LockManagerLike } | undefined)?.locks): Promise<T> {

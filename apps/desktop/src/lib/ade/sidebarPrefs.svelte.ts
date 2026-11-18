@@ -20,6 +20,7 @@ const FILTER_SETTING = {
 	hideDefault: 'kingu.sidebar.hideDefaultBranch',
 	showActiveOnly: 'kingu.sidebar.showActiveOnly',
 	hideAutomation: 'kingu.sidebar.hideAutomationTasks',
+	hideCliCreated: 'kingu.sidebar.hideCliCreatedTasks',
 	hideDetached: 'kingu.sidebar.hideDetachedHead'
 } as const satisfies Partial<Record<keyof Filters, string>>;
 
@@ -65,6 +66,7 @@ class SidebarPrefs {
 			hideDefault: on('hideDefault'),
 			showActiveOnly: on('showActiveOnly'),
 			hideAutomation: on('hideAutomation'),
+			hideCliCreated: on('hideCliCreated'),
 			hideDetached: on('hideDetached'),
 			exceptDefault: this.#s.exceptDefault
 		};

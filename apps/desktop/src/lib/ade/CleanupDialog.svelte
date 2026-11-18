@@ -7,6 +7,7 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { runtime } from './runtime.svelte';
 	import { cleanup } from './cleanup.svelte';
@@ -22,6 +23,8 @@
 
 	const ORDER = { done: 0, review: 1, failed: 2, waiting: 3, running: 4 } as const;
 	const only = untrack(() => cleanup.only);
+	// The run belongs to the folder open when the dialog opened: switching folders must not record elsewhere.
+	const root = untrack(() => workspace.root);
 	const targets = $derived(cleanupTargets(cleanup.verdicts));
 	const ready = $derived(new Set(targets.map((t) => t.slug)));
 	const actions = $derived(new Map(targets.map((t) => [t.slug, t.action])));
@@ -83,7 +86,12 @@
 		const removed: string[] = [];
 		const archived: string[] = [];
 		const failed: { slug: string; error: string }[] = [];
-		for (const slug of chosen) {
+		for (const [i, slug] of chosen.entries()) {
+			if (workspace.root !== root) {
+				for (const rest of chosen.slice(i)) failed.push({ slug: rest, error: 'folder changed' });
+				progress = { done: progress.total, total: progress.total };
+				break;
+			}
 			if (actionOf(slug) === 'archive') {
 				await adeTasks.archive(slug);
 				if (adeTasks.find(slug)?.meta.archived_at) archived.push(slug);
@@ -97,7 +105,7 @@
 			}
 			progress = { done: progress.done + 1, total: progress.total };
 		}
-		await cleanup.record('dialog', removed, archived, failed, rows.length - chosen.length);
+		await cleanup.record(root, 'dialog', removed, archived, failed, rows.length - chosen.length);
 		cleanup.close();
 	}
 

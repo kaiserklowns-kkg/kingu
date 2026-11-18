@@ -23,7 +23,7 @@ export type SidebarTask = {
 	status: TaskStatus;
 	/** Unix ms of the latest activity. */
 	updatedAt: number;
-	origin?: 'automation' | null;
+	origin?: 'automation' | 'cli' | null;
 	/** An agent session is open or a terminal of the worktree is running. */
 	live: boolean;
 	/** The worktree's HEAD is detached. */
@@ -40,6 +40,8 @@ export type SidebarPrefs = {
 	sortBy: SortBy;
 	showActiveOnly: boolean;
 	hideAutomation: boolean;
+	/** `kingu.sidebar.hideCliCreatedTasks`: worktrees made by `kingu task create`. */
+	hideCliCreated: boolean;
 	hideSleeping: boolean;
 	hideDetached: boolean;
 };
@@ -53,9 +55,10 @@ export const isActive = (t: Pick<SidebarTask, 'status'>) => t.status === 'runnin
 export const isSleeping = (t: Pick<SidebarTask, 'status' | 'live'>) => !t.live && t.status !== 'running' && t.status !== 'waiting';
 
 /** Whether the side bar's filters hide this task (the Filters switches). */
-export function hiddenBy(t: SidebarTask, p: Pick<SidebarPrefs, 'showActiveOnly' | 'hideAutomation' | 'hideSleeping' | 'hideDetached'>): boolean {
+export function hiddenBy(t: SidebarTask, p: Pick<SidebarPrefs, 'showActiveOnly' | 'hideAutomation' | 'hideCliCreated' | 'hideSleeping' | 'hideDetached'>): boolean {
 	if (p.showActiveOnly && !isActive(t)) return true;
 	if (p.hideAutomation && t.origin === 'automation') return true;
+	if (p.hideCliCreated && t.origin === 'cli') return true;
 	if (p.hideSleeping && isSleeping(t)) return true;
 	if (p.hideDetached && t.detached) return true;
 	return false;

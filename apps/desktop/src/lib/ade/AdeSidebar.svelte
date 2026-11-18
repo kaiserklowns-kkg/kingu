@@ -18,7 +18,7 @@
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
-	import type { MenuNode } from '#lib/workbench/menus.ts';
+	import { menuLeft, menuTop, type MenuNode } from '#lib/workbench/menus.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
@@ -435,6 +435,11 @@
 
 	// --- Header, options and footer menus ------------------------------------------------------
 	let options = $state<{ x: number; y: number } | null>(null);
+	let optionsBox = $state<HTMLDivElement>();
+	let optionsHeight = $state(0);
+	$effect(() => {
+		if (optionsBox) optionsHeight = optionsBox.offsetHeight;
+	});
 	let repoMenu = $state<{ x: number; y: number } | null>(null);
 	const filterCount = $derived(activeFilterCount(prefs.filters));
 	const repoItems: MenuNode[] = [
@@ -1064,9 +1069,10 @@
 		role="menu"
 		aria-label="Workspace options"
 		tabindex="-1"
-		class="fixed z-50 w-72 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) pb-2 text-xs text-(--vscode-foreground) shadow-xl shadow-black/40"
-		style:left="{Math.min(options.x, window.innerWidth - 296)}px"
-		style:top="{Math.min(options.y, window.innerHeight - 420)}px"
+		bind:this={optionsBox}
+		class="fixed z-50 max-h-[calc(100vh-8px)] w-72 overflow-y-auto rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) pb-2 text-xs text-(--vscode-foreground) shadow-xl shadow-black/40"
+		style:left="{menuLeft(options.x, 288, window.innerWidth)}px"
+		style:top="{menuTop(options.y, optionsHeight, window.innerHeight)}px"
 		onkeydown={(e) => e.key === 'Escape' && (options = null)}
 	>
 		<div class="px-3 pt-2.5 pb-1 text-sm">Workspace options</div>
@@ -1098,7 +1104,7 @@
 		{/each}
 		<div class="my-2 border-t border-(--vscode-widget-border)"></div>
 		<div class="px-3 pb-1 text-[11px] font-semibold {MUTED}">Filters</div>
-		{#each [{ key: 'showActiveOnly', label: 'Show active only', icon: 'activity', indent: false, show: true }, { key: 'hideSleeping', label: 'Hide sleeping', icon: 'sleep', indent: false, show: true }, { key: 'exceptDefault', label: 'Except default branch', icon: 'git', indent: true, show: prefs.filters.hideSleeping }, { key: 'hideDefault', label: 'Hide default branch', icon: 'git', indent: false, show: true }, { key: 'hideAutomation', label: 'Hide automation workspaces', icon: 'clock', indent: false, show: true }, { key: 'hideDetached', label: 'Hide detached HEAD', icon: 'git', indent: false, show: true }] as f (f.key)}
+		{#each [{ key: 'showActiveOnly', label: 'Show active only', icon: 'activity', indent: false, show: true }, { key: 'hideSleeping', label: 'Hide sleeping', icon: 'sleep', indent: false, show: true }, { key: 'exceptDefault', label: 'Except default branch', icon: 'git', indent: true, show: prefs.filters.hideSleeping }, { key: 'hideDefault', label: 'Hide default branch', icon: 'git', indent: false, show: true }, { key: 'hideAutomation', label: 'Hide automation workspaces', icon: 'clock', indent: false, show: true }, { key: 'hideCliCreated', label: 'Hide CLI-created', icon: 'terminal', indent: false, show: true }, { key: 'hideDetached', label: 'Hide detached HEAD', icon: 'git', indent: false, show: true }] as f (f.key)}
 			{#if f.show}
 				{@const on = prefs.filters[f.key as 'hideSleeping']}
 				<button role="switch" aria-checked={on} class={['mx-1 flex w-[calc(100%-8px)] items-center gap-2 rounded-[5px] py-1.5 pr-2 text-[12px] font-medium hover:bg-(--vscode-list-hoverBackground)', f.indent ? 'pl-7' : 'pl-2']} onclick={() => prefs.setFilter(f.key as 'hideSleeping', !on)}>

@@ -56,8 +56,8 @@ export type CleanupTaskContext = {
 	runningTerminal?: boolean;
 	/** Task's own last update (ms), so a turn that never touched Git still counts as activity. */
 	updatedAt?: number;
-	/** What started the task besides you (`automation`), and the task whose agent dispatched it (orchestration). */
-	origin?: 'automation' | null;
+	/** What started the task besides you (`automation`, `cli`), and the task whose agent dispatched it (orchestration). */
+	origin?: 'automation' | 'cli' | null;
 	dispatchedBy?: string | null;
 	/** The agent's work is over: not running and not waiting on you. Only a finished run or worker is a cleanup reason. */
 	finished?: boolean;

@@ -55,6 +55,9 @@ describe('tasks.json reducers', () => {
 	test('newTask starts running with defaults', () => {
 		const t = newTask({ slug: 'a', title: '  Fix it  ', prompt: 'do', base: 'main' }, 5);
 		expect(t).toMatchObject({ slug: 'a', title: 'Fix it', status: 'running', agent: 'claude-code', created_at: 5, updated_at: 5, accepted: [], pr_url: null });
+		expect(t.request_id).toBeUndefined();
+		expect(newTask({ slug: 'b', title: 'b', prompt: '', base: 'main', requestId: 'retry_1' }, 5).request_id).toBe('retry_1');
+		expect(newTask({ slug: 'c', title: 'c', prompt: '', base: 'main', origin: 'cli' }, 5).origin).toBe('cli');
 	});
 
 	test('upsert replaces by slug or appends, without mutating', () => {

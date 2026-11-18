@@ -38,6 +38,10 @@ crate::i18n::messages! {
       en: "Cleanup request {id} is still running",
       th: "คำขอล้าง {id} ยังรันอยู่",
     },
+    RequestRunning {
+      en: "A request with id {id} is still running",
+      th: "คำขอ id {id} ยังรันอยู่",
+    },
     CleanupNoReceipt {
       en: "No receipt for cleanup request {id} (it never ran, or Kingu restarted since)",
       th: "ไม่มีใบเสร็จของคำขอล้าง {id} (ยังไม่เคยรัน หรือ Kingu เริ่มใหม่แล้ว)",

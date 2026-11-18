@@ -127,8 +127,8 @@ export type CreateInput = {
 	slugHint?: string;
 	slug?: string;
 	issue?: IssueLink;
-	/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
-	origin?: 'automation';
+	/** `automation`: an automation started it; `cli`: `kingu task create` made the worktree. */
+	origin?: 'automation' | 'cli';
 	/** Composer attachments: path references appended to the CLI's prompt. */
 	attachments?: Attachment[];
 	/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
@@ -142,6 +142,8 @@ export type CreateInput = {
 	parent?: string;
 	/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
 	dispatchedBy?: string;
+	/** `kingu task create --request-id`: the same id returns this task instead of making another. */
+	requestId?: string;
 	/** The agent picked in the create form (a `kingu.agent.cli` value); absent: the setting. */
 	agent?: string;
 };
@@ -521,7 +523,8 @@ class AdeTasks {
 				group: input.group,
 				model: input.model,
 				parent: input.parent,
-				dispatchedBy: input.dispatchedBy
+				dispatchedBy: input.dispatchedBy,
+				requestId: input.requestId
 			},
 			Date.now()
 		);

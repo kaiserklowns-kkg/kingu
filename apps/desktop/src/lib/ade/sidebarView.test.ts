@@ -4,7 +4,7 @@ import { cardProperties, externalKind, externalWorktrees, hiddenBy, prGroupOf, s
 import { MAX_OPEN_IN, openInLabels, worktreeActions } from './worktreeActions';
 
 const task = (slug: string, o: Partial<SidebarTask> = {}): SidebarTask => ({ slug, title: slug, status: 'review', updatedAt: 0, live: false, detached: false, prState: null, ...o });
-const prefs = (o: Partial<SidebarPrefs> = {}): SidebarPrefs => ({ groupBy: 'none', sortBy: 'smart', showActiveOnly: false, hideAutomation: false, hideSleeping: false, hideDetached: false, ...o });
+const prefs = (o: Partial<SidebarPrefs> = {}): SidebarPrefs => ({ groupBy: 'none', sortBy: 'smart', showActiveOnly: false, hideAutomation: false, hideCliCreated: false, hideSleeping: false, hideDetached: false, ...o });
 
 describe('ADE side bar (Orca sidebar preferences)', () => {
 	test("Orca's defaults", () => {
@@ -13,11 +13,12 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 			m.get('kingu.sidebar.groupBy')?.value,
 			m.get('kingu.sidebar.sortBy')?.value,
 			m.get('kingu.sidebar.showActiveOnly')?.value,
+			m.get('kingu.sidebar.hideCliCreatedTasks')?.value,
 			m.get('kingu.board.columnWidth')?.value,
 			m.get('kingu.board.opacity')?.value,
 			m.get('kingu.worktree.externalVisibility')?.value,
 			m.get('kingu.tabs.ctrlTabOrder')?.value
-		]).toEqual(['repo', 'recent', false, 308, 1, 'show', 'mru']);
+		]).toEqual(['repo', 'recent', false, false, 308, 1, 'show', 'mru']);
 		expect(resolveSettings({ 'kingu.board.columnWidth': 50 }, {}).get('kingu.board.columnWidth')?.source).toBe('default');
 	});
 
@@ -25,6 +26,8 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 		expect(hiddenBy(task('a', { status: 'review' }), prefs({ showActiveOnly: true }))).toBe(true);
 		expect(hiddenBy(task('a', { status: 'running' }), prefs({ showActiveOnly: true }))).toBe(false);
 		expect(hiddenBy(task('a', { origin: 'automation' }), prefs({ hideAutomation: true }))).toBe(true);
+		expect(hiddenBy(task('a', { origin: 'cli' }), prefs({ hideCliCreated: true }))).toBe(true);
+		expect(hiddenBy(task('a', { origin: 'automation' }), prefs({ hideCliCreated: true }))).toBe(false);
 		expect(hiddenBy(task('a'), prefs({ hideSleeping: true }))).toBe(true);
 		expect(hiddenBy(task('a', { live: true }), prefs({ hideSleeping: true }))).toBe(false);
 		expect(hiddenBy(task('a', { detached: true }), prefs({ hideDetached: true }))).toBe(true);

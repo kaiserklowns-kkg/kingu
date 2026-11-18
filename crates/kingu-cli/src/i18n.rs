@@ -367,7 +367,8 @@ Usage:
   kingu status                       Kingu's version, open folder and task count
   kingu task list                    tasks of the open folder (slug, status, title)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
-                                     start a task in a new worktree; prints its slug
+                      [--request-id <id>]  start a task in a new worktree; prints its slug
+                                     the same id again returns the first task (safe retry)
   kingu task open <slug>             show a task in Kingu
   kingu task set [<slug>] --comment <text>
                                      the note on a task's card (no slug: this worktree's task)
@@ -425,7 +426,8 @@ const USAGE_TH: &str = "kingu: เปิดไฟล์และโฟลเด�
   kingu status                       เวอร์ชันของ Kingu โฟลเดอร์ที่เปิด และจำนวนงาน
   kingu task list                    งานของโฟลเดอร์ที่เปิด (slug, สถานะ, ชื่อ)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
-                                     เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
+                      [--request-id <id>]  เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
+                                     id เดิมเรียกซ้ำได้งานเดิม (retry ปลอดภัย)
   kingu task open <slug>             แสดงงานใน Kingu
   kingu task set [<slug>] --comment <text>
                                      หมายเหตุบนการ์ดงาน (ไม่ใส่ slug คืองานของ worktree นี้)

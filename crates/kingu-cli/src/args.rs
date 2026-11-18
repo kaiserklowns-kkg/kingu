@@ -22,6 +22,8 @@ pub enum Command {
     base: Option<String>,
     mode: Option<String>,
     background: bool,
+    /// `kingu task create --request-id <id>`: the same id again returns the first task.
+    request_id: Option<String>,
   },
   TaskOpen {
     slug: String,
@@ -336,7 +338,7 @@ fn task(args: &[String]) -> Result<Command, String> {
   match sub.as_str() {
     "list" | "ls" => no_more(rest, Command::TaskList),
     "create" | "new" => {
-      let (pos, flags) = split(rest, &["--prompt", "-p", "--base", "-b", "--mode", "-m"], &["--background"])?;
+      let (pos, flags) = split(rest, &["--prompt", "-p", "--base", "-b", "--mode", "-m", "--request-id"], &["--background"])?;
       let title = pos.join(" ").trim().to_owned();
       if title.is_empty() {
         return Err(tr(Msg::TaskCreateNeedsTitle, &[]));
@@ -345,12 +347,17 @@ fn task(args: &[String]) -> Result<Command, String> {
       if let Some(m) = mode.as_deref().filter(|m| !matches!(*m, "terminal" | "timeline")) {
         return Err(tr(Msg::BadMode, &[("mode", &m)]));
       }
+      let request_id = flag(&flags, &["--request-id"]);
+      if let Some(id) = request_id.as_deref().filter(|id| !crate::protocol::valid_request_id(id)) {
+        return Err(tr(Msg::CleanupBadRequestId, &[("id", &id)]));
+      }
       Ok(Command::TaskCreate {
         title,
         prompt: flag(&flags, &["--prompt", "-p"]),
         base: flag(&flags, &["--base", "-b"]).filter(|b| !b.trim().is_empty()),
         mode,
         background: flag(&flags, &["--background"]).is_some(),
+        request_id,
       })
     }
     "open" | "show" => {
@@ -603,18 +610,20 @@ mod tests {
   fn parses_task_commands() {
     assert_eq!(
       c(&["task", "create", "Fix", "login", "--prompt", "Steps: …", "--base=main", "-m", "timeline", "--background"]),
-      Command::TaskCreate { title: "Fix login".into(), prompt: Some("Steps: …".into()), base: Some("main".into()), mode: Some("timeline".into()), background: true }
+      Command::TaskCreate { title: "Fix login".into(), prompt: Some("Steps: …".into()), base: Some("main".into()), mode: Some("timeline".into()), background: true, request_id: None }
     );
     assert_eq!(
       c(&["task", "new", "แก้ login", "-p", "-"]),
-      Command::TaskCreate { title: "แก้ login".into(), prompt: Some("-".into()), base: None, mode: None, background: false }
+      Command::TaskCreate { title: "แก้ login".into(), prompt: Some("-".into()), base: None, mode: None, background: false, request_id: None }
     );
     // `--` lets a title start with a dash.
-    assert_eq!(c(&["task", "create", "--", "-x"]), Command::TaskCreate { title: "-x".into(), prompt: None, base: None, mode: None, background: false });
+    assert_eq!(c(&["task", "create", "--", "-x"]), Command::TaskCreate { title: "-x".into(), prompt: None, base: None, mode: None, background: false, request_id: None });
     assert!(p(&["task", "create"]).unwrap_err().contains("title"));
     assert!(p(&["task", "create", "x", "--prompt"]).unwrap_err().contains("needs a value"));
     assert!(p(&["task", "create", "x", "--mode", "cloud"]).unwrap_err().contains("--mode"));
     assert!(p(&["task", "create", "x", "--force"]).unwrap_err().contains("unknown option"));
+    assert_eq!(c(&["task", "create", "x", "--request-id", "retry_1"]), Command::TaskCreate { title: "x".into(), prompt: None, base: None, mode: None, background: false, request_id: Some("retry_1".into()) });
+    assert!(p(&["task", "create", "x", "--request-id", "a b"]).is_err() && p(&["task", "create", "x", "--request-id"]).is_err());
     assert_eq!(c(&["task", "open", "fix-login"]), Command::TaskOpen { slug: "fix-login".into() });
     assert!(p(&["task", "open"]).is_err() && p(&["task", "open", "a", "b"]).is_err());
     assert_eq!(c(&["task", "set", "fix", "--comment", "waiting on review"]), Command::TaskSet { slug: Some("fix".into()), comment: "waiting on review".into() });
