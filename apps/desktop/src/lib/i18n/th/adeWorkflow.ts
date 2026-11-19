@@ -8,6 +8,8 @@ export const adeWorkflow = {
 	'adeWorkflow.done': 'เสร็จแล้ว',
 	// Board.svelte
 	'adeWorkflow.board.title': 'บอร์ดงาน',
+	'adeWorkflow.board.prFilter': 'สถานะ PR',
+	'adeWorkflow.board.prAll': 'PR ทั้งหมด',
 	'adeWorkflow.board.search': 'ค้นหางาน branch หรือ agent',
 	'adeWorkflow.board.shown': '{shown} จาก {count} งาน',
 	'adeWorkflow.board.count': '{count} งาน',

@@ -9,6 +9,8 @@ export const adeWorkflow = {
 	'adeWorkflow.done': 'Done',
 	// Board.svelte
 	'adeWorkflow.board.title': 'Task Board',
+	'adeWorkflow.board.prFilter': 'PR status',
+	'adeWorkflow.board.prAll': 'All PRs',
 	'adeWorkflow.board.search': 'Search tasks, branches, agents',
 	'adeWorkflow.board.shown': '{shown} of {count} tasks',
 	'adeWorkflow.board.count': '{count} tasks',

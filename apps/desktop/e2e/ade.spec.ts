@@ -240,6 +240,12 @@ test('the task board searches titles, branches and agents', async ({ page }) => 
 	await expect(page.getByRole('main').getByText('Write release notes')).toHaveCount(0);
 	await search.press('Escape');
 	await expect(page.getByText('2 tasks', { exact: true })).toBeVisible();
+	// The PR filter: neither task has a pull request.
+	const pr = page.getByRole('combobox', { name: 'PR status' });
+	await pr.selectOption('open');
+	await expect(page.getByText('0 of 2 tasks')).toBeVisible();
+	await pr.selectOption('none');
+	await expect(page.getByText('2 of 2 tasks')).toBeVisible();
 	expect(errors).toEqual([]);
 });
 

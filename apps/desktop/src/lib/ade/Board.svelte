@@ -16,6 +16,9 @@
 	import { nestTasks } from './attempts.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { boardMatches } from './boardSearch';
+	import { PR_GROUPS, prGroupOf } from './sidebarView';
+	import { sidebarTask } from './sidebarState.svelte';
+	import { prStatuses } from './prStatus.svelte';
 
 	// Orca's workspace board look: column width (px) and column opacity.
 	const width = $derived(settings.get<number>('kingu.board.columnWidth'));
@@ -36,13 +39,26 @@
 	// Orca's board search: title, worktree, branch or agent; the count shows while it narrows.
 	let query = $state('');
 	let searchBox: HTMLInputElement | undefined = $state();
-	const hit = (v: TaskView) => boardMatches({ title: v.meta.title, slug: v.meta.slug, agent: v.meta.agent, branch: adeTasks.branchOf(v.meta.slug) }, query);
+	// Orca's PR / MR status filter: '' = every task.
+	let prFilter = $state('');
+	const askedPr = new Set<string>();
+	$effect(() => {
+		if (!prFilter) return;
+		for (const v of adeTasks.views) {
+			const slug = v.meta.slug;
+			if (askedPr.has(slug) || prStatuses.bySlug[slug]) continue;
+			askedPr.add(slug);
+			void prStatuses.refresh(slug, { threads: false });
+		}
+	});
+	const narrowed = $derived(!!query.trim() || !!prFilter);
+	const hit = (v: TaskView) => boardMatches({ title: v.meta.title, slug: v.meta.slug, agent: v.meta.agent, branch: adeTasks.branchOf(v.meta.slug) }, query) && (!prFilter || prGroupOf(sidebarTask(v)) === prFilter);
 	type Lane = { id: string; label: string; hint?: string; tasks: TaskView[]; drop: boolean };
 	const lanes = $derived<Lane[]>(
 		(byAgent
 			? COLUMNS.map((c) => ({ id: c.id, label: c.label, hint: c.hint, tasks: adeTasks.groups[c.id], drop: false }))
 			: workflowColumns(adeTasks.views, statuses).map((c) => ({ id: c.status.id, label: c.status.label, tasks: c.tasks, drop: true }))
-		).map((l) => (query.trim() ? { ...l, tasks: l.tasks.filter(hit) } : l))
+		).map((l) => (narrowed ? { ...l, tasks: l.tasks.filter(hit) } : l))
 	);
 	const shownCount = $derived(lanes.reduce((n, l) => n + l.tasks.length, 0));
 	// ⌘F (Ctrl+F) focuses the search while the board is shown (a terminal keeps its own).
@@ -75,8 +91,12 @@
 <div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
 	<header class="flex shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2">
 		<h1 class="flex items-center gap-2 text-sm font-semibold"><Icon name="tasks" size={16} />{t('adeWorkflow.board.title')}</h1>
-		<span class="text-xs text-(--vscode-descriptionForeground)">{query.trim() ? t('adeWorkflow.board.shown', { shown: shownCount, count: adeTasks.list.length }) : t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
+		<span class="text-xs text-(--vscode-descriptionForeground)">{narrowed ? t('adeWorkflow.board.shown', { shown: shownCount, count: adeTasks.list.length }) : t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
 		<span class="flex-1"></span>
+		<select class="h-6 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-1 text-xs text-(--vscode-input-foreground)" aria-label={t('adeWorkflow.board.prFilter')} bind:value={prFilter}>
+			<option value="">{t('adeWorkflow.board.prAll')}</option>
+			{#each PR_GROUPS as g (g.id)}<option value={g.id}>{g.label}</option>{/each}
+		</select>
 		<label class="flex h-6 w-48 items-center gap-1 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-1.5 focus-within:border-(--vscode-focusBorder)">
 			<Icon name="search" size={12} />
 			<input bind:this={searchBox} class="min-w-0 flex-1 bg-transparent text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)" placeholder={t('adeWorkflow.board.search')} aria-label={t('adeWorkflow.board.search')} bind:value={query} onkeydown={(e) => e.key === 'Escape' && (query = '')} />
