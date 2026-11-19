@@ -17,6 +17,7 @@
 	import { adeTasks } from './tasks.svelte.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT } from './ui.ts';
 	import IssueDrawer from './IssueDrawer.svelte';
+	import TrackerIssueDrawer from './TrackerIssueDrawer.svelte';
 
 	let label = $state(sources.filter.label);
 	let search = $state(sources.filter.search);
@@ -24,6 +25,8 @@
 	let busy = $state(false);
 	/** The folder's GitHub issue open in the drawer (Orca's issue dialog); other trackers open in the browser. */
 	let drawer = $state<number | null>(null);
+	/** A Linear, Jira or GitLab issue in its read-and-comment drawer. */
+	let tracker = $state<SourceItem | null>(null);
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
 	const enabled = $derived(sources.enabled());
 	const shown = $derived(filterItems(sources.items, sources.only));
@@ -141,7 +144,9 @@
 							<div class="min-w-0 flex-1 space-y-1">
 								{#if item.raw.source === 'github'}
 									{@const n = item.raw.issue.number}
-									<button class={['block max-w-full truncate text-left text-[13px] hover:underline', drawer === n && 'font-semibold']} title={t('adeSources.drawer.openTitle', { title: item.title })} onclick={() => (drawer = drawer === n ? null : n)}>{item.title}</button>
+									<button class={['block max-w-full truncate text-left text-[13px] hover:underline', drawer === n && 'font-semibold']} title={t('adeSources.drawer.openTitle', { title: item.title })} onclick={() => ((tracker = null), (drawer = drawer === n ? null : n))}>{item.title}</button>
+								{:else if item.source === 'linear' || item.source === 'jira' || item.source === 'gitlab'}
+									<button class={['block max-w-full truncate text-left text-[13px] hover:underline', tracker?.id === item.id && 'font-semibold']} title={t('adeSources.drawer.openTitle', { title: item.title })} onclick={() => ((drawer = null), (tracker = tracker?.id === item.id ? null : item))}>{item.title}</button>
 								{:else}
 									<p class="truncate text-[13px]" title={item.title}>{item.title}</p>
 								{/if}
@@ -200,5 +205,7 @@
 </div>
 	{#if drawer !== null}
 		<IssueDrawer number={drawer} onclose={() => (drawer = null)} onchanged={() => void sources.load()} />
+	{:else if tracker}
+		<TrackerIssueDrawer link={tracker.link} ref={tracker.ref} onclose={() => (tracker = null)} />
 	{/if}
 </div>

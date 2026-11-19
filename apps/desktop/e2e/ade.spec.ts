@@ -315,6 +315,23 @@ test('the composer nests a new task under a parent', async ({ page }) => {
 	expect(errors).toEqual([]);
 });
 
+test('a Jira issue opens in a read-and-comment drawer', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, {}, { jira: true });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'Issues', exact: true }).click();
+	await page.getByRole('button', { name: 'Rotate the staging keys' }).click();
+
+	const drawer = page.getByRole('complementary', { name: 'Issue OPS-7' });
+	await expect(drawer.getByText('Keys expire on Friday.')).toBeVisible();
+	await expect(drawer.getByText('In Progress')).toBeVisible();
+	await drawer.getByRole('textbox', { name: 'Comment' }).fill('Rotated today');
+	await drawer.getByRole('button', { name: 'Comment', exact: true }).click();
+	await expect(drawer.getByText('Rotated today')).toBeVisible();
+	await page.keyboard.press('Escape');
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });

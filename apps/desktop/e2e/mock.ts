@@ -31,7 +31,7 @@ export async function mockTauri(
 	setup: SetupReport = READY,
 	workspace = '/tmp/kingu-e2e',
 	initialSettings: Record<string, unknown> = {},
-	initialOpts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[] } = {}
+	initialOpts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[]; jira?: boolean } = {}
 ) {
 	await page.addInitScript(
 		({ setup, workspace, initialSettings, initialOpts }) => {
@@ -90,6 +90,25 @@ export async function mockTauri(
 			const writes: { key: string; data: string }[] = [];
 			/** Agent status hook events a test pushes (`__e2e.hookEvents`), served by `agent_hook_read`. */
 			const hookEvents: object[] = [];
+			const jiraIssue = {
+				key: 'OPS-7',
+				number: 7,
+				title: 'Rotate the staging keys',
+				url: 'https://acme.atlassian.net/browse/OPS-7',
+				state: 'In Progress',
+				state_category: 'indeterminate',
+				priority: 'High',
+				issue_type: 'Task',
+				project: 'OPS',
+				labels: [] as { name: string; color: string }[],
+				assignees: ['E2E'],
+				updated_at: '2026-11-18T00:00:00Z',
+				author: 'Ops Bot',
+				body: 'Keys expire on Friday.',
+				body_truncated: false,
+				comments: [] as { author: string; body: string; created_at: string }[],
+				comments_omitted: 0
+			};
 			/** The folder's one GitHub issue (gh issue list / view / close / edit / comment). */
 			const issue = {
 				number: 12,
@@ -206,6 +225,11 @@ export async function mockTauri(
 				pty_list: () => [],
 				pty_attach: () => null,
 				pty_spawn: () => ({ replay: '', spawned: true }),
+				// Jira, when a test connects it (`jira`): one issue to list, read and comment on.
+				jira_status: () => (initialOpts.jira ? { name: 'E2E', email: 'e2e@example.com', site: 'acme.atlassian.net' } : null),
+				jira_issues_list: () => (initialOpts.jira ? [jiraIssue] : []),
+				jira_issue_view: () => jiraIssue,
+				jira_issue_comment: (args: any) => (jiraIssue.comments.push({ author: 'E2E', body: String(args?.body), created_at: '2026-11-19T00:00:00Z' }), null),
 				gh_issues_list: () => [issue],
 				gh_issue_view: () => issue,
 				gh_issue_set_state: (args: any) => ((issue.state = args?.open ? 'OPEN' : 'CLOSED'), null),
