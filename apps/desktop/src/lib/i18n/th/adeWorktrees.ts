@@ -21,6 +21,7 @@ export const adeWorktrees = {
 	'adeWorktrees.form.loading': 'กำลังโหลด…',
 	'adeWorktrees.form.inUse': '(ใช้อยู่)',
 	'adeWorktrees.form.prPlaceholder': 'เลขหรือลิงก์ PR เช่น 123',
+	'adeWorktrees.form.emoji': 'อีโมจิ',
 	'adeWorktrees.form.title': 'ชื่องาน',
 	'adeWorktrees.form.titlePlaceholder': 'ชื่องาน เช่น แก้บั๊กหน้า login',
 	'adeWorktrees.form.titleOptional': 'ชื่องาน (ไม่ใส่ก็ได้)',

@@ -3,6 +3,7 @@
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
+import { emojiToShortcodes } from './emojiShortcodes.ts';
 import type { AgentRow } from './agentPresence.ts';
 import type { SessionRef } from './sessionHistory.ts';
 import { locale, t } from '#lib/i18n/index.ts';
@@ -292,7 +293,8 @@ export function adoptOrphans(list: TaskMeta[], slugs: string[], base: string, no
 
 /** Slug for a new task's title, suffixed `-2`, `-3`… when taken. */
 export function uniqueSlug(title: string, taken: Set<string>): string {
-	const base = slugify(title);
+	// Known emoji are spelled out first (Orca: 🚀 fix → `rocket-fix`), not dropped.
+	const base = slugify(emojiToShortcodes(title));
 	if (!taken.has(base)) return base;
 	for (let n = 2; ; n++) {
 		const suffix = `-${n}`;

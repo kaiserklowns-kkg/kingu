@@ -21,6 +21,7 @@
 	import { lookupIssueUrl, type LinkedIssue } from './issueUrlLookup';
 	import { taskForLink } from './taskSources';
 	import { splitBranchOverride, suggestCreatureName, taskName } from './taskNaming';
+	import { activeShortcode, applySuggestion, completeShortcode, searchShortcodes, type EmojiEntry } from './emojiShortcodes';
 
 	type Kind = 'new' | 'branch' | 'pr';
 	let kind = $state<Kind>('new');
@@ -209,6 +210,49 @@
 		}
 	}
 
+	// Emoji names (Orca's workspace-emoji input): `:rocket:` becomes 🚀 as it closes, and `:roc`
+	// lists matches; ↑↓ pick, Enter or Tab takes one, Escape closes the list (not the form).
+	let cursor = $state<number | null>(null);
+	let pick = $state(0);
+	const shortcode = $derived(busy ? null : activeShortcode(title, cursor));
+	const emojis = $derived(shortcode ? searchShortcodes(shortcode.query) : []);
+	/** The new value and caret go on the element now, so keys typed next land after the emoji. */
+	function replaceTitle(next: { value: string; cursor: number }) {
+		title = next.value;
+		cursor = null;
+		if (!input) return;
+		input.value = next.value;
+		input.focus({ preventScroll: true });
+		input.setSelectionRange(next.cursor, next.cursor);
+	}
+	function onTitleInput() {
+		const value = input?.value ?? title;
+		const at = input?.selectionStart ?? value.length;
+		const done = completeShortcode(value, at);
+		if (done) return replaceTitle(done);
+		cursor = at;
+		pick = 0;
+	}
+	function takeEmoji(entry: EmojiEntry) {
+		if (!shortcode) return;
+		replaceTitle(applySuggestion(title, shortcode, entry));
+	}
+	function onTitleKey(e: KeyboardEvent) {
+		if (!emojis.length || e.isComposing) return;
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			pick = (pick + (e.key === 'ArrowDown' ? 1 : -1) + emojis.length) % emojis.length;
+		} else if ((e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) || (e.key === 'Tab' && !e.shiftKey)) {
+			e.preventDefault();
+			e.stopPropagation();
+			takeEmoji(emojis[Math.min(pick, emojis.length - 1)]);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			cursor = null;
+		}
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
@@ -263,7 +307,38 @@
 		</datalist>
 		{#if prsError}<div class="truncate text-[11px] text-(--vscode-errorForeground)" title={prsError}>{prsError}</div>{/if}
 	{/if}
-	<input bind:this={input} class={INPUT} placeholder={titleHint} aria-label={t('adeWorktrees.form.title')} bind:value={title} disabled={busy} />
+	<div class="relative">
+		<input
+			bind:this={input}
+			class={INPUT}
+			placeholder={titleHint}
+			aria-label={t('adeWorktrees.form.title')}
+			role="combobox"
+			aria-expanded={emojis.length > 0}
+			aria-controls="kingu-new-task-emoji"
+			aria-autocomplete="list"
+			bind:value={title}
+			disabled={busy}
+			oninput={onTitleInput}
+			onkeydown={onTitleKey}
+			onclick={() => (cursor = input?.selectionStart ?? null)}
+			onblur={() => (cursor = null)}
+		/>
+		{#if emojis.length}
+			<div id="kingu-new-task-emoji" role="listbox" aria-label={t('adeWorktrees.form.emoji')} class="absolute top-full right-0 left-0 z-20 mt-0.5 max-h-56 overflow-auto rounded-sm border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) py-0.5 shadow-lg">
+				{#each emojis as e, i (e.shortcode)}
+					<button
+						type="button"
+						role="option"
+						aria-selected={i === pick}
+						class={['flex w-full items-center gap-2 px-1.5 py-0.5 text-left', i === pick ? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
+						onmousedown={(ev) => ev.preventDefault()}
+						onclick={() => takeEmoji(e)}><span class="w-4 text-center">{e.emoji}</span><span class="truncate font-mono">:{e.shortcode}:</span></button
+					>
+				{/each}
+			</div>
+		{/if}
+	</div>
 	{#if linked}
 		<div class="flex items-center gap-1.5 rounded-sm border border-(--vscode-widget-border) px-1.5 py-1" title={linked.link.url}>
 			<Icon name="bug" size={12} />

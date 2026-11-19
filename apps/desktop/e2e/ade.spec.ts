@@ -77,7 +77,7 @@ test('an issue URL in the task name is looked up and linked', async ({ page }) =
 	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
 	await page.getByRole('button', { name: 'New Task', exact: true }).click();
 
-	const name = page.getByRole('textbox', { name: 'Task name' });
+	const name = page.getByRole('combobox', { name: 'Task name' });
 	await name.fill('https://github.com/acme/app/issues/12');
 	const offer = page.getByRole('button', { name: /Link acme\/app#12: Login fails on Safari/ });
 	await expect(offer).toBeVisible();
@@ -91,5 +91,38 @@ test('an issue URL in the task name is looked up and linked', async ({ page }) =
 	// Removing the link clears the name it gave.
 	await page.getByRole('button', { name: 'Remove the linked issue' }).click();
 	await expect(name).toHaveValue('');
+	expect(errors).toEqual([]);
+});
+
+test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+	await page.getByRole('button', { name: 'New Task', exact: true }).click();
+
+	const name = page.getByRole('combobox', { name: 'Task name' });
+	// A closed shortcode becomes its emoji as it is typed.
+	await name.pressSequentially(':bug: fix');
+	await expect(name).toHaveValue('🐛 fix');
+
+	// `:rocke` lists matches; Enter takes the first instead of creating the task.
+	await name.pressSequentially(' :rocke');
+	const list = page.getByRole('listbox', { name: 'Emoji' });
+	await expect(list.getByRole('option').first()).toContainText(':rocket:');
+	await name.press('Enter');
+	await expect(name).toHaveValue('🐛 fix 🚀 ');
+	await expect(list).toHaveCount(0);
+	// The branch spells the emoji out (Orca: 🚀 → rocket).
+	await expect(page.getByText('→ kingu/bug-fix-rocket')).toBeVisible();
+	expect((await calls(page)).worktree_create ?? 0).toBe(0);
+
+	// Escape closes the list, not the form.
+	await name.pressSequentially(':sm');
+	await expect(list).toBeVisible();
+	await name.press('Escape');
+	await expect(list).toHaveCount(0);
+	await expect(name).toBeVisible();
 	expect(errors).toEqual([]);
 });

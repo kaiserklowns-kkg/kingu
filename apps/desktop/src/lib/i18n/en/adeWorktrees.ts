@@ -21,6 +21,7 @@ export const adeWorktrees = {
 	'adeWorktrees.form.loading': 'Loading…',
 	'adeWorktrees.form.inUse': '(in use)',
 	'adeWorktrees.form.prPlaceholder': 'PR number or link, e.g. 123',
+	'adeWorktrees.form.emoji': 'Emoji',
 	'adeWorktrees.form.title': 'Task name',
 	'adeWorktrees.form.titlePlaceholder': 'Task name, e.g. Fix the login page bug',
 	'adeWorktrees.form.titleOptional': 'Task name (optional)',
