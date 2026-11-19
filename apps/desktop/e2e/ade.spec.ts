@@ -395,12 +395,17 @@ test('renaming a task turns :shortcodes: into emoji and ⌘J finds it by the sho
 	await rename.press('End');
 	await rename.pressSequentially(' :rocket:');
 	await expect(rename).toHaveValue('Ship it 🚀');
+	// `:tad` lists matches; Enter takes one (and does not save yet), a second Enter saves.
+	await rename.pressSequentially(' :tad');
+	await expect(page.getByRole('listbox', { name: 'Emoji' }).getByRole('option').first()).toContainText(':tada:');
 	await rename.press('Enter');
-	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks[0].title)).toBe('Ship it 🚀');
+	await expect(rename).toHaveValue('Ship it 🚀 🎉 ');
+	await rename.press('Enter');
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks[0].title)).toBe('Ship it 🚀 🎉');
 
 	await page.keyboard.press('Meta+Shift+J');
 	await page.keyboard.type('rocket');
-	await expect(page.getByRole('option', { name: /^Ship it 🚀 / })).toBeVisible();
+	await expect(page.getByRole('option', { name: /^Ship it 🚀 🎉 / })).toBeVisible();
 	await page.keyboard.press('Escape');
 	expect(errors).toEqual([]);
 });

@@ -44,7 +44,7 @@
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aggregateStats } from './model';
-	import { completeShortcode } from './emojiShortcodes';
+	import { activeShortcode, applySuggestion, completeShortcode, searchShortcodes, type EmojiEntry } from './emojiShortcodes';
 	import { baseName, cardProperties, hexColor, splitExternal, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
 	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
@@ -274,8 +274,46 @@
 			if (adeTasks.renaming === slug) adeTasks.renaming = null;
 		}
 	}
+	// Emoji while renaming (Orca's useWorkspaceEmojiShortcodeInput in WorktreeTitleInlineRename):
+	// `:roc` lists matches under the box; ↑↓ pick, Enter or Tab takes one, Escape closes the list.
+	let renameEl: HTMLInputElement | undefined = $state();
+	let renameCursor = $state<number | null>(null);
+	let renamePick = $state(0);
+	const renameShortcode = $derived(adeTasks.renaming ? activeShortcode(renameValue, renameCursor) : null);
+	const renameEmojis = $derived(renameShortcode ? searchShortcodes(renameShortcode.query) : []);
+	const renameAt = $derived.by(() => {
+		void renameEmojis.length;
+		const r = renameEl?.getBoundingClientRect();
+		return r ? { x: r.left, y: r.bottom + 2, w: Math.max(220, r.width) } : null;
+	});
+	function setRename(next: { value: string; cursor: number }) {
+		renameValue = next.value;
+		renameCursor = null;
+		if (!renameEl) return;
+		renameEl.value = next.value;
+		renameEl.setSelectionRange(next.cursor, next.cursor);
+	}
+	function takeRenameEmoji(entry: EmojiEntry) {
+		if (renameShortcode) setRename(applySuggestion(renameValue, renameShortcode, entry));
+	}
 	function onRenameKey(e: KeyboardEvent, slug: string) {
 		if (e.isComposing) return;
+		if (renameEmojis.length) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				renamePick = (renamePick + (e.key === 'ArrowDown' ? 1 : -1) + renameEmojis.length) % renameEmojis.length;
+				return;
+			}
+			if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+				e.preventDefault();
+				return takeRenameEmoji(renameEmojis[Math.min(renamePick, renameEmojis.length - 1)]);
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				renameCursor = null;
+				return;
+			}
+		}
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			void commitRename(slug);
@@ -650,6 +688,7 @@
 							{#if adeTasks.renaming === r.key}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
+									bind:this={renameEl}
 									class="h-5 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] leading-5 outline-none"
 									aria-label="Rename workspace"
 									autofocus
@@ -661,9 +700,9 @@
 										// Orca's emoji names in rename too: a closed :code: becomes its emoji.
 										const el = e.currentTarget;
 										const done = completeShortcode(el.value, el.selectionStart);
-										if (!done) return;
-										renameValue = el.value = done.value;
-										el.setSelectionRange(done.cursor, done.cursor);
+										if (done) return setRename(done);
+										renameCursor = el.selectionStart;
+										renamePick = 0;
 									}}
 									onblur={() => void commitRename(r.key)}
 									onfocus={(e) => e.currentTarget.select()}
@@ -1074,6 +1113,20 @@
 {#if menu}
 	{@const key = menu.key}
 	<PopupMenu items={menuItems} label="Workspace" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, key)} onClose={() => (menu = null)} />
+{/if}
+{#if renameEmojis.length && renameAt}
+	<div class="fixed z-50 max-h-56 overflow-auto rounded-sm border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) py-0.5 text-xs shadow-lg" style:left="{renameAt.x}px" style:top="{renameAt.y}px" style:width="{renameAt.w}px" role="listbox" aria-label={t('adeWorktrees.form.emoji')}>
+		{#each renameEmojis as e, i (e.shortcode)}
+			<button
+				type="button"
+				role="option"
+				aria-selected={i === renamePick}
+				class={['flex w-full items-center gap-2 px-1.5 py-0.5 text-left', i === renamePick ? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
+				onmousedown={(ev) => ev.preventDefault()}
+				onclick={() => takeRenameEmoji(e)}><span class="w-4 text-center">{e.emoji}</span><span class="truncate font-mono">:{e.shortcode}:</span></button
+			>
+		{/each}
+	</div>
 {/if}
 {#if hiddenOpen}
 	<div class="fixed inset-0 z-40 grid place-items-center bg-black/30" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && (hiddenOpen = false)}>
