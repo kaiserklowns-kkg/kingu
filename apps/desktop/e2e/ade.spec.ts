@@ -105,6 +105,30 @@ test('a permission prompt of a terminal agent is answered from its card', async 
 	expect(errors).toEqual([]);
 });
 
+test('Add Command saves a quick command for every project or this one', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page);
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+
+	for (const [label, command, project] of [['Dev', 'bun run dev', false], ['Seed', 'bun run seed', true]] as const) {
+		await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+		await page.getByRole('dialog', { name: 'Quick Commands' }).getByRole('menuitem', { name: /Add Command/ }).click();
+		const form = page.getByRole('form', { name: 'Add Quick Command' });
+		await form.getByRole('textbox', { name: 'Label' }).fill(label);
+		await form.getByRole('textbox', { name: 'Command' }).fill(command);
+		if (project) await form.getByRole('radio', { name: 'This project' }).check();
+		await form.getByRole('button', { name: 'Save' }).click();
+		await expect(form).toHaveCount(0);
+	}
+	// The one saved last is the main button's; both are in the list.
+	await expect(page.getByRole('button', { name: /^Run Seed in a new terminal/ })).toBeVisible();
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	const menu = page.getByRole('dialog', { name: 'Quick Commands' });
+	await expect(menu.getByRole('menuitem', { name: /^Dev/ })).toBeVisible();
+	await expect(menu.getByRole('menuitem', { name: /^Seed/ })).toBeVisible();
+	expect(errors).toEqual([]);
+});
+
 test('the Agents layout opens browser tabs from the tab row', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page);

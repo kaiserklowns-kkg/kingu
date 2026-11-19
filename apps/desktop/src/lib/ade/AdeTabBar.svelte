@@ -22,6 +22,7 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import NewTabMenu, { type NewTabItem } from './NewTabMenu.svelte';
+	import QuickCommandDialog from './QuickCommandDialog.svelte';
 	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
 	import { enabledBins } from './agentCli';
 	import { isMarkdownEditor } from './adeMarkdown.ts';
@@ -35,7 +36,6 @@
 	import { programLabel, withPercent } from './programStatus';
 	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
-	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { primaryQuickCommand, quickCommands } from '#lib/terminal/adeTerminalOptions.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
@@ -149,6 +149,7 @@
 	let recentQuick = $state<string | null>(readRecentQuick());
 	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
 	let quickMenu = $state<{ x: number; y: number } | null>(null);
+	let addingQuick = $state(false);
 	function readRecentQuick(): string | null {
 		try {
 			return localStorage.getItem(RECENT_QUICK);
@@ -174,7 +175,7 @@
 		{ id: 'quick:add', label: tr('legacyAde.adeTabBar.addQuickCommand') }
 	]);
 	function runQuickItem(id: string) {
-		if (id === 'quick:add') return void commands.run('workbench.action.openSettings', 'kingu.terminal.quickCommands');
+		if (id === 'quick:add') return void (addingQuick = true);
 		const q = quick[Number(id.slice(6))];
 		if (q) runQuick(q);
 	}
@@ -368,6 +369,9 @@
 	{/if}
 </div>
 
+{#if addingQuick}
+	<QuickCommandDialog onclose={() => (addingQuick = false)} onsaved={(label) => (recentQuick = label)} />
+{/if}
 {#if quickMenu}
 	<NewTabMenu details items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
 {/if}

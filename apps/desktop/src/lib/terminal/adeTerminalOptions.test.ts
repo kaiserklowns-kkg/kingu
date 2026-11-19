@@ -8,6 +8,7 @@ import {
 	paneOpacity,
 	parseOsc52,
 	primaryQuickCommand,
+	withQuickCommand,
 	quickCommandInput,
 	quickCommands,
 	stripSelectionGutter,
@@ -114,4 +115,17 @@ test('the tab bar runs the quick command used last, else the first', () => {
 	expect(primaryQuickCommand(list, 'Gone')?.label).toBe('Dev');
 	expect(primaryQuickCommand(list, null)?.label).toBe('Dev');
 	expect(primaryQuickCommand([], 'Dev')).toBeNull();
+});
+
+test('Add Quick Command checks the label and command, replacing one of the same label', () => {
+	expect(withQuickCommand({ Dev: 'bun run dev' }, ' Tests ', 'bun test\n')).toEqual({ Dev: 'bun run dev', Tests: 'bun test' });
+	expect(withQuickCommand({ Dev: 'bun run dev' }, 'Dev', 'vite')).toEqual({ Dev: 'vite' });
+	expect(withQuickCommand(undefined, 'A', 'x')).toEqual({ A: 'x' });
+	expect(withQuickCommand({}, '  ', 'x')).toBe('label');
+	expect(withQuickCommand({}, 'a\nb', 'x')).toBe('label');
+	expect(withQuickCommand({}, 'A', '   ')).toBe('command');
+	expect(withQuickCommand({}, 'A', 'x'.repeat(4001))).toBe('command');
+	const full = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`c${i}`, 'x']));
+	expect(withQuickCommand(full, 'new', 'x')).toBe('tooMany');
+	expect(withQuickCommand(full, 'c1', 'y')).not.toBe('tooMany');
 });
