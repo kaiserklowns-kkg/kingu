@@ -1942,6 +1942,8 @@ pub fn run() {
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,
+      agent::gh_issue_set_state,
+      agent::gh_issue_edit,
       agent::gh_issue_open,
       artifacts::artifacts_list,
       artifacts::artifact_get,

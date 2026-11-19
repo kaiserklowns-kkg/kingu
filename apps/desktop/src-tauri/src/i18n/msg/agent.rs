@@ -280,6 +280,10 @@ crate::i18n::messages! {
       en: "Invalid assignee name: {name}",
       th: "ชื่อผู้รับผิดชอบไม่ถูกต้อง: {name}",
     },
+    BadLabel {
+      en: "Invalid label: {name}",
+      th: "label ไม่ถูกต้อง: {name}",
+    },
     CommentLength {
       en: "The comment must be 1-{max} bytes",
       th: "ข้อความ comment ต้องยาว 1-{max} bytes",

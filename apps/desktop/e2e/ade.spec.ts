@@ -254,6 +254,36 @@ test('the task board searches titles, branches and agents', async ({ page }) => 
 	expect(errors).toEqual([]);
 });
 
+test('a GitHub issue opens in a drawer to close, label, assign and comment', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page);
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'Issues', exact: true }).click();
+	await page.getByRole('button', { name: 'All open' }).click();
+	await page.getByRole('button', { name: 'Login fails on Safari' }).click();
+
+	const drawer = page.getByRole('complementary', { name: 'Issue #12' });
+	await expect(drawer.getByText('Steps to reproduce…')).toBeVisible();
+	await drawer.getByRole('textbox', { name: 'Add label' }).fill('safari');
+	await drawer.getByRole('textbox', { name: 'Add label' }).press('Enter');
+	await expect(drawer.getByRole('button', { name: 'Remove label safari' })).toBeVisible();
+	await drawer.getByRole('button', { name: 'Remove label bug' }).click();
+	await expect(drawer.getByRole('button', { name: 'Remove label bug' })).toHaveCount(0);
+	await drawer.getByRole('button', { name: 'Assign me' }).click();
+	await expect(drawer.getByText('@e2e')).toBeVisible();
+
+	await drawer.getByRole('textbox', { name: 'Comment' }).fill('Fixed in the next build');
+	await drawer.getByRole('button', { name: 'Comment', exact: true }).click();
+	await expect(drawer.getByText('Fixed in the next build')).toBeVisible();
+	await expect(drawer.getByRole('textbox', { name: 'Comment' })).toHaveValue('');
+
+	await drawer.getByRole('button', { name: 'Close issue' }).click();
+	await expect(drawer.getByText('Closed', { exact: true })).toBeVisible();
+	await drawer.getByRole('button', { name: 'Reopen issue' }).click();
+	await expect(drawer.getByText('Open', { exact: true })).toBeVisible();
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });

@@ -90,6 +90,21 @@ export async function mockTauri(
 			const writes: { key: string; data: string }[] = [];
 			/** Agent status hook events a test pushes (`__e2e.hookEvents`), served by `agent_hook_read`. */
 			const hookEvents: object[] = [];
+			/** The folder's one GitHub issue (gh issue list / view / close / edit / comment). */
+			const issue = {
+				number: 12,
+				title: 'Login fails on Safari',
+				url: 'https://github.com/acme/app/issues/12',
+				state: 'OPEN',
+				labels: [{ name: 'bug', color: 'd73a4a' }],
+				assignees: [] as string[],
+				updated_at: '2026-11-01T00:00:00Z',
+				author: 'octo',
+				body: 'Steps to reproduce…',
+				body_truncated: false,
+				comments: [] as { author: string; body: string; created_at: string }[],
+				comments_omitted: 0
+			};
 			const handlers: Record<string, (args: any) => unknown> = {
 				app_info: () => ({ name: 'Kingu', version: '0.0.0-e2e', os: 'macos', arch: 'aarch64', workspace }),
 				workspace_state: () => state,
@@ -191,6 +206,16 @@ export async function mockTauri(
 				pty_list: () => [],
 				pty_attach: () => null,
 				pty_spawn: () => ({ replay: '', spawned: true }),
+				gh_issues_list: () => [issue],
+				gh_issue_view: () => issue,
+				gh_issue_set_state: (args: any) => ((issue.state = args?.open ? 'OPEN' : 'CLOSED'), null),
+				gh_issue_edit: (args: any) => {
+					const e = args?.edit ?? {};
+					issue.labels = [...issue.labels.filter((l) => !(e.removeLabels ?? []).includes(l.name)), ...(e.addLabels ?? []).map((name: string) => ({ name, color: 'ededed' }))];
+					issue.assignees = [...issue.assignees.filter((a) => !(e.removeAssignees ?? []).includes(a)), ...(e.addAssignees ?? []).map((a: string) => (a === '@me' ? 'e2e' : a))];
+					return null;
+				},
+				gh_issue_comment: (args: any) => (issue.comments.push({ author: 'e2e', body: String(args?.body), created_at: '2026-11-19T00:00:00Z' }), null),
 				agent_hook_settings: () => '/tmp/kingu-e2e-hooks.json',
 				agent_hook_read: (args: any) => {
 					const offset = Number(args?.offset ?? 0);
