@@ -15,6 +15,7 @@
 	import { workflowColumns, workflowStatuses } from './workflow.ts';
 	import { nestTasks } from './attempts.ts';
 	import { t } from '#lib/i18n/index.ts';
+	import { boardMatches } from './boardSearch';
 
 	// Orca's workspace board look: column width (px) and column opacity.
 	const width = $derived(settings.get<number>('kingu.board.columnWidth'));
@@ -32,12 +33,25 @@
 		completed: 'bg-[#73C991]'
 	};
 
+	// Orca's board search: title, worktree, branch or agent; the count shows while it narrows.
+	let query = $state('');
+	let searchBox: HTMLInputElement | undefined = $state();
+	const hit = (v: TaskView) => boardMatches({ title: v.meta.title, slug: v.meta.slug, agent: v.meta.agent, branch: adeTasks.branchOf(v.meta.slug) }, query);
 	type Lane = { id: string; label: string; hint?: string; tasks: TaskView[]; drop: boolean };
 	const lanes = $derived<Lane[]>(
-		byAgent
+		(byAgent
 			? COLUMNS.map((c) => ({ id: c.id, label: c.label, hint: c.hint, tasks: adeTasks.groups[c.id], drop: false }))
 			: workflowColumns(adeTasks.views, statuses).map((c) => ({ id: c.status.id, label: c.status.label, tasks: c.tasks, drop: true }))
+		).map((l) => (query.trim() ? { ...l, tasks: l.tasks.filter(hit) } : l))
 	);
+	const shownCount = $derived(lanes.reduce((n, l) => n + l.tasks.length, 0));
+	// ⌘F (Ctrl+F) focuses the search while the board is shown (a terminal keeps its own).
+	function onKey(e: KeyboardEvent) {
+		if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f' && searchBox?.isConnected && !(e.target as HTMLElement | null)?.closest('.xterm, .monaco-editor')) {
+			e.preventDefault();
+			searchBox.focus();
+		}
+	}
 
 	/** Drag a card to another workflow column (Orca's use-workspace-status-drop). */
 	const DRAG_TYPE = 'application/x-kingu-task';
@@ -56,11 +70,17 @@
 	}
 </script>
 
+<svelte:window onkeydown={onKey} />
+
 <div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
 	<header class="flex shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2">
 		<h1 class="flex items-center gap-2 text-sm font-semibold"><Icon name="tasks" size={16} />{t('adeWorkflow.board.title')}</h1>
-		<span class="text-xs text-(--vscode-descriptionForeground)">{t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
+		<span class="text-xs text-(--vscode-descriptionForeground)">{query.trim() ? t('adeWorkflow.board.shown', { shown: shownCount, count: adeTasks.list.length }) : t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
 		<span class="flex-1"></span>
+		<label class="flex h-6 w-48 items-center gap-1 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-1.5 focus-within:border-(--vscode-focusBorder)">
+			<Icon name="search" size={12} />
+			<input bind:this={searchBox} class="min-w-0 flex-1 bg-transparent text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)" placeholder={t('adeWorkflow.board.search')} aria-label={t('adeWorkflow.board.search')} bind:value={query} onkeydown={(e) => e.key === 'Escape' && (query = '')} />
+		</label>
 		<div class="flex h-6 rounded-md bg-(--vscode-input-background) p-px text-xs" role="group" aria-label={t('adeWorkflow.board.columns')}>
 			<button class={['rounded px-2', !byAgent ? 'bg-(--vscode-foreground)/10 font-semibold' : 'text-(--vscode-descriptionForeground)']} aria-pressed={!byAgent} title={t('adeWorkflow.board.byWorkflowTitle')} onclick={() => setView(false)}>{t('adeWorkflow.board.byWorkflow')}</button>
 			<button class={['rounded px-2', byAgent ? 'bg-(--vscode-foreground)/10 font-semibold' : 'text-(--vscode-descriptionForeground)']} aria-pressed={byAgent} title={t('adeWorkflow.board.byAgentTitle')} onclick={() => setView(true)}>{t('adeWorkflow.board.byAgent')}</button>

@@ -220,6 +220,29 @@ test('a hidden worktrees card lists worktrees Kingu did not make and shows one',
 	expect(errors).toEqual([]);
 });
 
+test('the task board searches titles, branches and agents', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	for (const text of ['Fix login on Safari', 'Write release notes']) {
+		await page.getByRole('button', { name: 'Now', exact: true }).click();
+		const description = page.getByRole('textbox', { name: /Describe the task/ });
+		// With no task yet, Now is the composer itself; after that it is the Now page.
+		if (!(await description.isVisible())) await page.getByRole('button', { name: 'New task', exact: true }).click();
+		await description.fill(text);
+		await description.press('Enter');
+		await expect.poll(async () => page.evaluate((t) => (window as any).__e2e.tasks.some((x: { title: string }) => x.title === t), text)).toBe(true);
+	}
+	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+	const search = page.getByRole('textbox', { name: 'Search tasks, branches, agents' });
+	await search.fill('safari');
+	await expect(page.getByText('1 of 2 tasks')).toBeVisible();
+	await expect(page.getByRole('main').getByText('Write release notes')).toHaveCount(0);
+	await search.press('Escape');
+	await expect(page.getByText('2 tasks', { exact: true })).toBeVisible();
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
