@@ -228,7 +228,7 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		items: 'string',
 		default: [],
 		description:
-			'worktree ที่ Kingu ไม่ได้สร้างซึ่งเลือกแสดงทีละตัวจากการ์ด "worktree ที่ซ่อนอยู่" ในแถบข้าง (path) เก็บต่อโปรเจกต์ (Orca: Non-Orca worktrees → Show) (Worktrees Kingu did not create that you chose to show one by one from the side bar\'s hidden worktrees card, by path; kept per project.)',
+			'worktree ที่ Kingu ไม่ได้สร้างซึ่งเลือกแสดงทีละตัวจากการ์ด "worktree ที่ซ่อนอยู่" ในแถบข้าง (path) เก็บต่อโปรเจกต์ (Orca: importedExternalWorktreePaths, Non-Orca worktrees → Show) (Worktrees Kingu did not create that you chose to show one by one from the side bar\'s hidden worktrees card, by path; kept per project.)',
 		scope: 'local'
 	},
 	{

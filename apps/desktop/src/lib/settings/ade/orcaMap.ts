@@ -254,6 +254,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['repo.badgeColor', 'kingu.repo.badgeColor', 'added'],
 	['repo.repoIcon', 'kingu.repo.icon', 'added'],
 	['repo.externalWorktreeVisibility', 'kingu.worktree.externalVisibility', 'added', 'per repository through the repo scope'],
+	['repo.importedExternalWorktreePaths', 'kingu.worktree.shownExternal', 'added', 'Show from the hidden worktrees card, per project'],
 	['repo.agentWorktreeVisibility', 'kingu.worktree.agentVisibility', 'added', 'per repository through the repo scope'],
 	['repo.customWorktreeVisibilitySources', 'kingu.worktree.visibilitySources', 'added', 'per repository through the repo scope'],
 	['repo.worktreeVisibilitySourcePreferences', 'kingu.worktree.agentVisibility', 'mapped'],
