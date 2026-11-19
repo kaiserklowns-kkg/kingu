@@ -477,7 +477,9 @@ class AdeTasks {
 			return;
 		}
 		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
-		const refresh = source.kind === 'new' && !input.parent && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		// A stacked task forks its parent's branch; a task only nested under one starts from the base.
+		const stacked = !!input.parent && base === this.branchOf(input.parent);
+		const refresh = source.kind === 'new' && !stacked && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
 		if (refresh) hooks.step?.('base');
 		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));

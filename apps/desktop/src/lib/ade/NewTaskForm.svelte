@@ -93,6 +93,12 @@
 	const name = $derived(kind === 'new' && (plain || !named.generated) ? named.title : '');
 	/** Advanced → Branch name (Orca's branchNameOverride): the whole branch name of a plain new task. */
 	let advanced = $state(false);
+	/**
+	 * Advanced → Parent task (Orca's Parent workspace, model/worktrees.mdx): the new task nests under
+	 * an open task of this folder in the side bar; git history and branches stay as they are.
+	 */
+	let nestUnder = $state('');
+	const parents = $derived(adeTasks.list.filter((x) => !x.archived_at).toSorted((a, b) => b.updated_at - a.updated_at));
 	let branchName = $state('');
 	const override = $derived(plain && branchName.trim() ? splitBranchOverride(branchName) : undefined);
 	const slug = $derived(name ? (count > 1 && !parent ? attemptSlugs(name, count, taken).slugs.join(', ') : uniqueSlug(name, taken)) : '');
@@ -142,7 +148,7 @@
 		if (!ready || busy) return;
 		// A plain new task is created in the background (Orca): the form closes at once.
 		if (kind === 'new' && !parent && count === 1) {
-			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link });
+			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
 			adeTasks.composing = false;
 			return;
 		}
@@ -305,6 +311,13 @@
 			{:else}
 				<div class="text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.branchNameHint')}</div>
 			{/if}
+			<label class="flex items-center gap-2">
+				<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.parent')}</span>
+				<select class={[INPUT, 'py-0.5']} aria-label={t('adeWorktrees.form.parent')} title={t('adeWorktrees.form.parentHint')} bind:value={nestUnder} disabled={busy}>
+					<option value="">{t('adeWorktrees.form.parentNone')}</option>
+					{#each parents as p (p.slug)}<option value={p.slug}>{p.title}</option>{/each}
+				</select>
+			</label>
 		{/if}
 	{/if}
 	{#if override}

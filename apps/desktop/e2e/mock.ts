@@ -363,7 +363,7 @@ export async function mockTauri(
 				metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } }
 			};
 			(window as any).__TAURI_INTERNALS__ = internals;
-			(window as any).__e2e = { calls, files, writes, hookEvents };
+			(window as any).__e2e = { calls, files, writes, hookEvents, tasks: taskList };
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},

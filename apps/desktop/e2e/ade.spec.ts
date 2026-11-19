@@ -166,6 +166,33 @@ test('an issue URL in the task name is looked up and linked', async ({ page }) =
 	expect(errors).toEqual([]);
 });
 
+test('Advanced → Parent task nests the new task without stacking it', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'New task', exact: true }).click();
+	const description = page.getByRole('textbox', { name: /Describe the task/ });
+	await description.fill('Parent work');
+	await description.press('Enter');
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks.length)).toBeGreaterThan(0);
+	const parent: string = await page.evaluate(() => (window as any).__e2e.tasks[0].slug);
+
+	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+	// The board's New Task toggles the form, which may still be open from the Now page.
+	const childName = page.getByRole('combobox', { name: 'Task name' });
+	if (!(await childName.isVisible())) await page.getByRole('button', { name: 'New Task', exact: true }).click();
+	await childName.fill('Child work');
+	await page.getByRole('button', { name: 'Advanced' }).click();
+	await page.getByRole('combobox', { name: 'Parent task' }).selectOption({ label: 'Parent work' });
+	await page.getByRole('button', { name: 'Create and start', exact: true }).click();
+
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks.find((t: { title: string }) => t.title === 'Child work')?.parent ?? null)).toBe(parent);
+	// Nested only: the child starts from the folder's base, not the parent's branch.
+	const base = await page.evaluate(() => (window as any).__e2e.tasks.find((t: { title: string }) => t.title === 'Child work')?.base);
+	expect(base).not.toBe(`kingu/${parent}`);
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
