@@ -99,7 +99,7 @@ Out of scope here: SSH/remote projects and IDE features (explorer, search, edito
 | Review comments: send / reply / resolve / react | | present (`PrComments.svelte`, `prComments.ts`) | – |
 | Merge (methods, auto-merge, ready) | | present (`PrMerge.svelte`, `pr.rs`, `forge.rs`); no merge-queue wording | P2 |
 | GitHub issues → workspace, GitHub Projects, Linear, Jira, GitLab MRs | | present (`IssuesPage.svelte`, `taskSources.svelte.ts`, `linear.rs`, `jira.rs`, `gitlab.rs`, `agent/mr.rs`) | – |
-| In-app issue detail editing | drawer with status / assignee / comments (`components/github-item-dialog`, `linear-item-drawer-*`, `jira-issue-*`) | partial (2026-11-19): the folder's GitHub issues open in a drawer on the Issues page with the body and latest comments, Close / Reopen, labels and assignees to add or remove (Assign me), and a comment box (`IssueDrawer.svelte`; Rust `gh_issue_set_state`, `gh_issue_edit`). Not yet: editing the title or body, milestones, Linear / Jira / GitLab drawers (they open in the browser) | P2 |
+| In-app issue detail editing | drawer with status / assignee / comments (`components/github-item-dialog`, `linear-item-drawer-*`, `jira-issue-*`) | partial (2026-11-19): the folder's GitHub issues open in a drawer on the Issues page with the body and latest comments, Close / Reopen, labels and assignees to add or remove (Assign me), and a comment box (`IssueDrawer.svelte`; Rust `gh_issue_set_state`, `gh_issue_edit`). Title and description edit in place (not a description cut short when read). Not yet: milestones, Linear / Jira / GitLab drawers (they open in the browser) | P2 |
 
 ## 6. Terminal and browser panes, tabs and splits
 

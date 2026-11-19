@@ -280,6 +280,14 @@ crate::i18n::messages! {
       en: "Invalid assignee name: {name}",
       th: "ชื่อผู้รับผิดชอบไม่ถูกต้อง: {name}",
     },
+    BadIssueTitle {
+      en: "The issue title must be one line of 1-{max} bytes",
+      th: "ชื่อ issue ต้องเป็นบรรทัดเดียว ยาว 1-{max} bytes",
+    },
+    IssueBodyLength {
+      en: "The issue description must be at most {max} bytes",
+      th: "รายละเอียด issue ยาวได้ไม่เกิน {max} bytes",
+    },
     BadLabel {
       en: "Invalid label: {name}",
       th: "label ไม่ถูกต้อง: {name}",

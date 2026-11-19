@@ -277,6 +277,18 @@ test('a GitHub issue opens in a drawer to close, label, assign and comment', asy
 	await expect(drawer.getByText('Fixed in the next build')).toBeVisible();
 	await expect(drawer.getByRole('textbox', { name: 'Comment' })).toHaveValue('');
 
+	// Edit the title and description; Escape leaves the edit, not the drawer.
+	await drawer.getByRole('button', { name: 'Edit', exact: true }).click();
+	await drawer.getByRole('textbox', { name: 'Title' }).fill('Login fails on Safari 18');
+	await drawer.getByRole('textbox', { name: 'Description' }).fill('Only on 18.1');
+	await drawer.getByRole('button', { name: 'Save' }).click();
+	await expect(drawer.getByRole('heading', { name: 'Login fails on Safari 18' })).toBeVisible();
+	await expect(drawer.getByText('Only on 18.1')).toBeVisible();
+	await drawer.getByRole('button', { name: 'Edit', exact: true }).click();
+	await drawer.getByRole('textbox', { name: 'Title' }).press('Escape');
+	await expect(drawer.getByRole('textbox', { name: 'Title' })).toHaveCount(0);
+	await expect(drawer).toBeVisible();
+
 	await drawer.getByRole('button', { name: 'Close issue' }).click();
 	await expect(drawer.getByText('Closed', { exact: true })).toBeVisible();
 	await drawer.getByRole('button', { name: 'Reopen issue' }).click();

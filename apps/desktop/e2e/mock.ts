@@ -212,6 +212,8 @@ export async function mockTauri(
 				gh_issue_edit: (args: any) => {
 					const e = args?.edit ?? {};
 					issue.labels = [...issue.labels.filter((l) => !(e.removeLabels ?? []).includes(l.name)), ...(e.addLabels ?? []).map((name: string) => ({ name, color: 'ededed' }))];
+					if (typeof e.title === 'string') issue.title = e.title;
+					if (typeof e.body === 'string') issue.body = e.body;
 					issue.assignees = [...issue.assignees.filter((a) => !(e.removeAssignees ?? []).includes(a)), ...(e.addAssignees ?? []).map((a: string) => (a === '@me' ? 'e2e' : a))];
 					return null;
 				},

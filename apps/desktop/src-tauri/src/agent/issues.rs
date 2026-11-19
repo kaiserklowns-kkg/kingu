@@ -282,7 +282,13 @@ pub struct IssueEdit {
   pub remove_labels: Vec<String>,
   pub add_assignees: Vec<String>,
   pub remove_assignees: Vec<String>,
+  /// A new title (1-256 bytes) or body (up to 65536 bytes).
+  pub title: Option<String>,
+  pub body: Option<String>,
 }
+
+const MAX_TITLE: usize = 256;
+const MAX_ISSUE_BODY: usize = 65_536;
 
 const MAX_LABEL: usize = 100;
 
@@ -306,6 +312,19 @@ pub fn edit_args(number: u64, e: &IssueEdit) -> Result<Option<Vec<String>>, Stri
       }
       args.push(format!("{flag}={a}"));
     }
+  }
+  if let Some(title) = &e.title {
+    let title = title.trim();
+    if title.is_empty() || title.len() > MAX_TITLE || title.contains(['\n', '\r']) {
+      return Err(tr!(AgentMsg::BadIssueTitle, max = MAX_TITLE));
+    }
+    args.push(format!("--title={title}"));
+  }
+  if let Some(body) = &e.body {
+    if body.len() > MAX_ISSUE_BODY {
+      return Err(tr!(AgentMsg::IssueBodyLength, max = MAX_ISSUE_BODY));
+    }
+    args.push(format!("--body={body}"));
   }
   Ok((args.len() > 3).then_some(args))
 }
@@ -341,7 +360,7 @@ mod tests {
   fn state_and_edit_arguments() {
     assert_eq!(state_args(7, false), ["issue", "close", "7"]);
     assert_eq!(state_args(7, true), ["issue", "reopen", "7"]);
-    let e = IssueEdit { add_labels: vec!["bug".into(), "good first issue".into()], remove_labels: vec!["wontfix".into()], add_assignees: vec!["@me".into()], remove_assignees: vec!["octocat".into()] };
+    let e = IssueEdit { add_labels: vec!["bug".into(), "good first issue".into()], remove_labels: vec!["wontfix".into()], add_assignees: vec!["@me".into()], remove_assignees: vec!["octocat".into()], ..Default::default() };
     assert_eq!(
       edit_args(7, &e).unwrap().unwrap(),
       ["issue", "edit", "7", "--add-label=bug", "--add-label=good first issue", "--remove-label=wontfix", "--add-assignee=@me", "--remove-assignee=octocat"]
@@ -350,6 +369,14 @@ mod tests {
     assert!(edit_args(7, &IssueEdit { add_assignees: vec!["--repo=x".into()], ..Default::default() }).is_err());
     assert!(edit_args(7, &IssueEdit { add_labels: vec!["a,b".into()], ..Default::default() }).is_err());
     assert!(edit_args(7, &IssueEdit { add_labels: vec![" ".into()], ..Default::default() }).is_err());
+    // Title and body: `--flag=value`, so a title starting with `--` stays a value.
+    let e = IssueEdit { title: Some(" --repo=x fix ".into()), body: Some("line 1\n\nline 2".into()), ..Default::default() };
+    assert_eq!(edit_args(7, &e).unwrap().unwrap(), ["issue", "edit", "7", "--title=--repo=x fix", "--body=line 1\n\nline 2"]);
+    assert!(edit_args(7, &IssueEdit { title: Some("  ".into()), ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { title: Some("a\nb".into()), ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { body: Some("x".repeat(70_000)), ..Default::default() }).is_err());
+    // An empty body clears it.
+    assert_eq!(edit_args(7, &IssueEdit { body: Some(String::new()), ..Default::default() }).unwrap().unwrap(), ["issue", "edit", "7", "--body="]);
   }
 
   #[test]

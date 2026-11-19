@@ -51,7 +51,21 @@
 			busy = null;
 		}
 	}
-	const edit = (e: { addLabels?: string[]; removeLabels?: string[]; addAssignees?: string[]; removeAssignees?: string[] }) => change('edit', 'gh_issue_edit', { edit: e });
+	const edit = (e: { addLabels?: string[]; removeLabels?: string[]; addAssignees?: string[]; removeAssignees?: string[]; title?: string; body?: string }) => change('edit', 'gh_issue_edit', { edit: e });
+	// Edit title and description (Orca's edit-item-fields). A description cut short when read
+	// (body_truncated) is not offered: saving it would drop the rest.
+	let editing = $state<{ title: string; body: string } | null>(null);
+	function startEdit() {
+		if (detail) editing = { title: detail.title, body: detail.body };
+	}
+	async function saveEdit(e: Event) {
+		e.preventDefault();
+		if (!editing || !detail) return;
+		const next: { title?: string; body?: string } = {};
+		if (editing.title.trim() !== detail.title.trim()) next.title = editing.title.trim();
+		if (!detail.body_truncated && editing.body !== detail.body) next.body = editing.body;
+		if (!Object.keys(next).length || (await edit(next))) editing = null;
+	}
 	async function addLabel(e: Event) {
 		e.preventDefault();
 		const l = label.trim();
@@ -74,6 +88,7 @@
 		<div class="min-w-0 flex-1">
 			<p class="font-mono text-(--vscode-descriptionForeground)">#{number}</p>
 			<h2 class="text-[13px] font-semibold break-words">{detail?.title ?? ''}</h2>
+			{#if detail && !editing}<button class="text-[11px] text-(--vscode-textLink-foreground) hover:underline" onclick={startEdit}>{t('adeSources.drawer.edit')}</button>{/if}
 		</div>
 		<button class={ICON_BUTTON} aria-label={t('common.close')} title={t('common.close')} onclick={onclose}><Icon name="close" size={14} /></button>
 	</header>
@@ -119,7 +134,20 @@
 				</div>
 			</section>
 
-			{#if detail.body}
+			{#if editing}
+				<form class="space-y-1.5 rounded border border-(--vscode-focusBorder) p-2" aria-label={t('adeSources.drawer.edit')} onsubmit={saveEdit} onkeydown={(e) => e.key === 'Escape' && (e.stopPropagation(), (editing = null))}>
+					<input class={INPUT} aria-label={t('adeSources.drawer.editTitle')} bind:value={editing.title} disabled={!!busy} />
+					{#if detail.body_truncated}
+						<p class="text-[11px] text-(--vscode-descriptionForeground)">{t('adeSources.drawer.bodyTooLong')}</p>
+					{:else}
+						<textarea class={[INPUT, 'h-32 resize-y']} aria-label={t('adeSources.drawer.editBody')} bind:value={editing.body} disabled={!!busy}></textarea>
+					{/if}
+					<div class="flex justify-end gap-1.5">
+						<button type="button" class={BUTTON_SECONDARY} disabled={!!busy} onclick={() => (editing = null)}>{t('common.cancel')}</button>
+						<button type="submit" class={BUTTON} disabled={!!busy || !editing.title.trim()}>{t('common.save')}</button>
+					</div>
+				</form>
+			{:else if detail.body}
 				<section aria-label={t('adeSources.drawer.body')} class="rounded border border-(--vscode-widget-border) px-2 py-1.5 break-words whitespace-pre-wrap">{detail.body}{#if detail.body_truncated}…{/if}</section>
 			{/if}
 
