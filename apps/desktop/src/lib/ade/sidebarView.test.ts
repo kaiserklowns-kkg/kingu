@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { resolveSettings } from '#lib/settings/registry.ts';
-import { cardProperties, externalKind, externalWorktrees, hiddenBy, prGroupOf, sidebarGroups, sidebarTint, sortTasks, switcherOrder, type SidebarPrefs, type SidebarTask } from './sidebarView';
+import { cardProperties, externalKind, externalWorktrees, splitExternal, hiddenBy, prGroupOf, sidebarGroups, sidebarTint, sortTasks, switcherOrder, type SidebarPrefs, type SidebarTask } from './sidebarView';
 import { MAX_OPEN_IN, openInLabels, worktreeActions } from './worktreeActions';
 
 const task = (slug: string, o: Partial<SidebarTask> = {}): SidebarTask => ({ slug, title: slug, status: 'review', updatedAt: 0, live: false, detached: false, prState: null, ...o });
@@ -78,6 +78,13 @@ describe('ADE side bar (Orca sidebar preferences)', () => {
 		expect(externalWorktrees(list, '/r', { external: 'show', agent: 'hide' }).map((w) => w.path)).toEqual(['/other/y']);
 		expect(externalWorktrees(list, '/r', { external: 'hide', agent: 'show' }).map((w) => w.path)).toEqual(['/r/.claude/worktrees/x']);
 		expect(externalWorktrees(list, '/r/', { external: 'hide', agent: 'hide', custom: ['/other/'] }).map((w) => w.path)).toEqual(['/other/y']);
+		// The hidden worktrees card counts the rest; Show picks one by path.
+		const split = splitExternal(list, '/r', { external: 'hide', agent: 'hide' });
+		expect(split.shown).toEqual([]);
+		expect(split.hidden.map((w) => w.path)).toEqual(['/r/.claude/worktrees/x', '/other/y']);
+		const picked = splitExternal(list, '/r', { external: 'hide', agent: 'hide', shown: ['/other/y/'] });
+		expect(picked.shown.map((w) => w.path)).toEqual(['/other/y']);
+		expect(picked.hidden.map((w) => w.path)).toEqual(['/r/.claude/worktrees/x']);
 	});
 
 	test('appearance and Ctrl+Tab order', () => {

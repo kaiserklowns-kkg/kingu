@@ -7,7 +7,7 @@ export async function openApp(
 	page: Page,
 	setup: SetupReport = READY,
 	settings: Record<string, unknown> = {},
-	opts: { probeFail?: boolean; live?: boolean } = {}
+	opts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[] } = {}
 ) {
 	await mockTauri(page, setup, '/tmp/kingu-e2e', settings, opts);
 	await page.goto('/');

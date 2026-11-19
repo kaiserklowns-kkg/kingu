@@ -31,7 +31,7 @@ export async function mockTauri(
 	setup: SetupReport = READY,
 	workspace = '/tmp/kingu-e2e',
 	initialSettings: Record<string, unknown> = {},
-	initialOpts: { probeFail?: boolean; live?: boolean } = {}
+	initialOpts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[] } = {}
 ) {
 	await page.addInitScript(
 		({ setup, workspace, initialSettings, initialOpts }) => {
@@ -152,7 +152,7 @@ export async function mockTauri(
 				ssh_forwards_list: () => [],
 				ssh_unrestored_forwards: () => [],
 				ssh_projects_list: () => [],
-				worktree_list: () => [],
+				worktree_list: () => initialOpts.worktrees ?? [],
 				// Link issue at create: the issue a pasted GitHub URL names.
 				gh_project_issue_view: (args: any) => ({
 					number: 12,

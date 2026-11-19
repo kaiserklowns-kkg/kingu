@@ -44,7 +44,7 @@
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aggregateStats } from './model';
-	import { baseName, cardProperties, externalWorktrees, hexColor, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
+	import { baseName, cardProperties, hexColor, splitExternal, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
 	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
 	import { issueRef } from './issues.ts';
@@ -71,15 +71,26 @@
 	const repoBadge = $derived(hexColor(settings.get<string>('kingu.repo.badgeColor')));
 	const repoIcon = $derived([...(settings.get<string>('kingu.repo.icon') ?? '').trim()].slice(0, 2).join(''));
 	// Worktrees Kingu did not make (Orca's external / agent worktree visibility): read-only cards.
-	const externals = $derived(
+	const shownExternal = $derived(settings.get<string[]>('kingu.worktree.shownExternal') ?? []);
+	const externalSplit = $derived(
 		workspace.root
-			? externalWorktrees(adeTasks.listed, workspace.root, {
+			? splitExternal(adeTasks.listed, workspace.root, {
 					external: settings.get<Visibility>('kingu.worktree.externalVisibility'),
 					agent: settings.get<Visibility>('kingu.worktree.agentVisibility'),
-					custom: settings.get<string[]>('kingu.worktree.visibilitySources')
+					custom: settings.get<string[]>('kingu.worktree.visibilitySources'),
+					shown: shownExternal
 				})
-			: []
+			: { shown: [], hidden: [] }
 	);
+	const externals = $derived(externalSplit.shown);
+	// Orca's hidden worktrees card → Non-Orca worktrees dialog: Show one, kept for this project.
+	let hiddenOpen = $state(false);
+	let hiddenQuery = $state('');
+	const hiddenRows = $derived(externalSplit.hidden.filter((w) => !hiddenQuery.trim() || w.path.toLowerCase().includes(hiddenQuery.trim().toLowerCase()) || (w.branch ?? '').toLowerCase().includes(hiddenQuery.trim().toLowerCase())));
+	function setShown(path: string, show: boolean) {
+		const next = show ? [...new Set([...shownExternal, path])] : shownExternal.filter((p) => p !== path);
+		void settings.set('kingu.worktree.shownExternal', next, 'repo').catch((e) => status.error(String(e)));
+	}
 	let externalMenu = $state<{ path: string; x: number; y: number } | null>(null);
 
 	// PR state for grouping and the card's PR property: read once per task (gh) when either needs it.
@@ -987,6 +998,11 @@
 					</button>
 				</div>
 			{/each}
+			{#if externalSplit.hidden.length}
+				<button class="mx-2 mt-1 flex h-6 w-[calc(100%-16px)] items-center gap-1.5 rounded px-2 text-[11px] {MUTED} hover:bg-(--vscode-list-hoverBackground)" onclick={() => ((hiddenQuery = ''), (hiddenOpen = true))}>
+					<Icon name="eye" size={12} />{t('legacyAde.adeSidebar.hiddenWorktrees', { count: externalSplit.hidden.length })}
+				</button>
+			{/if}
 			{#if archived.length}
 				<button class="mx-2 mt-1 flex h-6 w-[calc(100%-16px)] items-center gap-1.5 rounded px-2 text-[11px] {MUTED} hover:bg-(--vscode-list-hoverBackground)" onclick={openArchived}>
 					<Icon name="bookmark" size={12} />{t('ade.archive.section', { count: archived.length })}
@@ -1050,11 +1066,35 @@
 	{@const key = menu.key}
 	<PopupMenu items={menuItems} label="Workspace" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, key)} onClose={() => (menu = null)} />
 {/if}
+{#if hiddenOpen}
+	<div class="fixed inset-0 z-40 grid place-items-center bg-black/30" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && (hiddenOpen = false)}>
+		<div class="w-[440px] max-w-[calc(100vw-32px)] rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-3 text-[13px] shadow-xl" role="dialog" aria-label={t('legacyAde.adeSidebar.hiddenTitle')} tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (hiddenOpen = false)}>
+			<div class="mb-1 font-medium">{t('legacyAde.adeSidebar.hiddenTitle')}</div>
+			<p class="mb-2 text-[11px] {MUTED}">{t('legacyAde.adeSidebar.hiddenHint')}</p>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input class="mb-2 h-7 w-full rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)" placeholder={t('legacyAde.adeSidebar.hiddenSearch')} aria-label={t('legacyAde.adeSidebar.hiddenSearch')} bind:value={hiddenQuery} autofocus />
+			<div class="max-h-72 space-y-0.5 overflow-y-auto">
+				{#each hiddenRows as w (w.path)}
+					<div class="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-(--vscode-list-hoverBackground)">
+						<div class="min-w-0 flex-1">
+							<div class="truncate">{baseName(w.path)} <span class="text-[11px] {MUTED}">{w.kind === 'agent' ? 'agent' : 'external'}</span></div>
+							<div class="truncate text-[11px] {MUTED}" title={w.path}>{w.branch ?? (w.detached ? 'detached HEAD' : '')} · {w.path}</div>
+						</div>
+						<button class="h-6 shrink-0 rounded px-2 text-[12px] text-(--vscode-button-secondaryForeground) bg-(--vscode-button-secondaryBackground) hover:opacity-90" onclick={() => setShown(w.path, true)}>{t('legacyAde.adeSidebar.showWorktree')}</button>
+					</div>
+				{:else}
+					<p class="py-3 text-center text-[11px] {MUTED}">{t('legacyAde.adeSidebar.hiddenNone')}</p>
+				{/each}
+			</div>
+			<div class="mt-2 flex justify-end"><button class="h-7 rounded px-3 text-[12px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (hiddenOpen = false)}>{t('legacyAde.adeSidebar.hiddenDone')}</button></div>
+		</div>
+	</div>
+{/if}
 {#if externalMenu}
 	{@const path = externalMenu.path}
 	{@const openIn = actionsFor('').flatMap((r) => (r !== 'separator' && r.id.startsWith('openIn:') ? [r] : []))}
 	<PopupMenu
-		items={[menuItem('open', t('legacyAde.adeSidebar.openInKingu')), menuSeparator, ...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath'))]}
+		items={[menuItem('open', t('legacyAde.adeSidebar.openInKingu')), menuSeparator, ...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath')), ...(shownExternal.includes(path) ? [menuSeparator, menuItem('hide', t('legacyAde.adeSidebar.hideWorktree'))] : [])]}
 		label="Worktree"
 		x={externalMenu.x}
 		y={externalMenu.y}
@@ -1062,6 +1102,7 @@
 			if (node.type !== 'item') return;
 			if (node.id === 'open') void workspace.openFolder(path);
 			else if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
+			else if (node.id === 'hide') setShown(path, false);
 			else void navigator.clipboard.writeText(path).then(() => status.flash(t('legacyAde.adeSidebar.copiedPath')));
 		}}
 		onClose={() => (externalMenu = null)}

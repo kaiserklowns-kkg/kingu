@@ -222,6 +222,16 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 			'worktree ของ repository ที่ Kingu ไม่ได้สร้าง (git worktree add เอง) แสดงในแถบข้างหรือไม่ การ์ดเปิดเป็นโฟลเดอร์ เปิดใน Finder หรือแอปอื่นได้ (Orca: externalWorktreeVisibility) (Whether worktrees Kingu did not create appear in the side bar, as read-only cards.)'
 	},
 	{
+		id: 'kingu.worktree.shownExternal',
+		group: 'Worktrees',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'worktree ที่ Kingu ไม่ได้สร้างซึ่งเลือกแสดงทีละตัวจากการ์ด "worktree ที่ซ่อนอยู่" ในแถบข้าง (path) เก็บต่อโปรเจกต์ (Orca: Non-Orca worktrees → Show) (Worktrees Kingu did not create that you chose to show one by one from the side bar\'s hidden worktrees card, by path; kept per project.)',
+		scope: 'local'
+	},
+	{
 		id: 'kingu.worktree.agentVisibility',
 		group: 'Worktrees',
 		type: 'string',

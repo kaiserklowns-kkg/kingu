@@ -199,6 +199,27 @@ test('Advanced → Parent task nests the new task without stacking it', async ({
 	expect(errors).toEqual([]);
 });
 
+test('a hidden worktrees card lists worktrees Kingu did not make and shows one', async ({ page }) => {
+	const errors = watchErrors(page);
+	const wt = (path: string, branch: string) => ({ path, head: 'abc1234', branch, slug: null, bare: false, detached: false, locked: false, prunable: false });
+	await openApp(page, READY, { 'kingu.worktree.externalVisibility': 'hide' }, { worktrees: [wt('/tmp/kingu-e2e', 'main'), wt('/tmp/elsewhere/spike', 'spike'), wt('/tmp/kingu-e2e/.claude/worktrees/x', 'claude-x')] });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+
+	const card = page.getByRole('button', { name: '2 hidden worktrees' });
+	await expect(card).toBeVisible();
+	await card.click();
+	const dialog = page.getByRole('dialog', { name: 'Worktrees Kingu Did Not Create' });
+	await dialog.getByRole('textbox', { name: 'Search path or branch' }).fill('spike');
+	await expect(dialog.getByRole('button', { name: 'Show' })).toHaveCount(1);
+	await dialog.getByRole('button', { name: 'Show' }).click();
+
+	// It moves to the side bar; the card counts the one left.
+	await expect(page.getByRole('button', { name: '1 hidden worktrees' })).toBeVisible();
+	await dialog.getByRole('button', { name: 'Done' }).click();
+	await expect(page.getByRole('button', { name: /^spike/ })).toBeVisible();
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });

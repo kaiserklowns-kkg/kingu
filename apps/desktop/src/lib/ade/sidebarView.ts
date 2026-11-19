@@ -151,16 +151,34 @@ export function externalKind(path: string): ExternalKind {
  * worktrees) or `kingu.worktree.externalVisibility` (the rest). `custom`: extra folders (Orca's
  * custom visibility sources) whose worktrees always show.
  */
-export function externalWorktrees(list: ListedWorktree[], root: string, vis: { external: Visibility; agent: Visibility; custom?: readonly string[] }): (ListedWorktree & { kind: ExternalKind })[] {
+export function externalWorktrees(list: ListedWorktree[], root: string, vis: ExternalVisibility): (ListedWorktree & { kind: ExternalKind })[] {
+	return splitExternal(list, root, vis).shown;
+}
+
+/**
+ * `shown`: per-worktree Show from the hidden worktrees dialog (`kingu.worktree.shownExternal`,
+ * paths), on top of the visibility settings and custom sources.
+ */
+export type ExternalVisibility = { external: Visibility; agent: Visibility; custom?: readonly string[]; shown?: readonly string[] };
+
+/**
+ * Orca's hidden worktrees card (model/worktrees.mdx: "If a repo hides them, the sidebar shows a
+ * hidden worktrees card"): the external worktrees split into the ones the side bar shows and the
+ * ones it hides, which the card counts and its dialog can show one by one.
+ */
+export function splitExternal(list: ListedWorktree[], root: string, vis: ExternalVisibility): { shown: (ListedWorktree & { kind: ExternalKind })[]; hidden: (ListedWorktree & { kind: ExternalKind })[] } {
 	const norm = (p: string) => p.replace(/\/+$/, '');
 	const custom = (vis.custom ?? []).map((c) => norm(c.trim())).filter(Boolean);
-	return list
-		.filter((w) => !w.slug && !w.bare && !w.prunable && norm(w.path) !== norm(root))
-		.map((w) => ({ ...w, kind: externalKind(w.path) }))
-		.filter((w) => {
-			if (custom.some((c) => norm(w.path) === c || norm(w.path).startsWith(`${c}/`))) return true;
-			return (w.kind === 'agent' ? vis.agent : vis.external) === 'show';
-		});
+	const picked = new Set((vis.shown ?? []).map(norm));
+	const shown: (ListedWorktree & { kind: ExternalKind })[] = [];
+	const hidden: (ListedWorktree & { kind: ExternalKind })[] = [];
+	for (const w of list) {
+		if (w.slug || w.bare || w.prunable || norm(w.path) === norm(root)) continue;
+		const row = { ...w, kind: externalKind(w.path) };
+		const show = picked.has(norm(w.path)) || custom.some((c) => norm(w.path) === c || norm(w.path).startsWith(`${c}/`)) || (row.kind === 'agent' ? vis.agent : vis.external) === 'show';
+		(show ? shown : hidden).push(row);
+	}
+	return { shown, hidden };
 }
 
 /** The last path segment: an external worktree card's title. */
