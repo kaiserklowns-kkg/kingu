@@ -88,6 +88,8 @@ export async function mockTauri(
 			const calls: Record<string, number> = {};
 			/** What was typed into terminals (`pty_write`), in order. */
 			const writes: { key: string; data: string }[] = [];
+			/** Agent status hook events a test pushes (`__e2e.hookEvents`), served by `agent_hook_read`. */
+			const hookEvents: object[] = [];
 			const handlers: Record<string, (args: any) => unknown> = {
 				app_info: () => ({ name: 'Kingu', version: '0.0.0-e2e', os: 'macos', arch: 'aarch64', workspace }),
 				workspace_state: () => state,
@@ -189,6 +191,11 @@ export async function mockTauri(
 				pty_list: () => [],
 				pty_attach: () => null,
 				pty_spawn: () => ({ replay: '', spawned: true }),
+				agent_hook_settings: () => '/tmp/kingu-e2e-hooks.json',
+				agent_hook_read: (args: any) => {
+					const offset = Number(args?.offset ?? 0);
+					return { events: hookEvents.slice(offset), offset: hookEvents.length };
+				},
 				pty_write: (args: any) => (writes.push({ key: String(args?.key), data: String(args?.data) }), null),
 				pty_resize: () => null,
 				pty_kill: () => null,
@@ -356,7 +363,7 @@ export async function mockTauri(
 				metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } }
 			};
 			(window as any).__TAURI_INTERNALS__ = internals;
-			(window as any).__e2e = { calls, files, writes };
+			(window as any).__e2e = { calls, files, writes, hookEvents };
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},

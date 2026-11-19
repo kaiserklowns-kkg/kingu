@@ -162,6 +162,10 @@ export const legacyAde = {
 
 	// CliQuestion.svelte
 	'legacyAde.cliQuestion.submit': 'Type the answer into the terminal',
+	'legacyAde.cliQuestion.permissionTitle': 'Permission needed',
+	'legacyAde.cliQuestion.allow': 'Allow once',
+	'legacyAde.cliQuestion.deny': 'Deny',
+	'legacyAde.cliQuestion.permissionNote': 'Allow presses Enter (the highlighted choice) and Deny presses Esc in the {agent} terminal',
 	'legacyAde.cliQuestion.dismiss': 'Hide',
 	'legacyAde.cliQuestion.note': 'Answer in the {agent} terminal (or answer in the terminal yourself)',
 	'legacyAde.cliQuestion.sendFailed': "Couldn't send the answer: this question is closed, or the agent's terminal changed",

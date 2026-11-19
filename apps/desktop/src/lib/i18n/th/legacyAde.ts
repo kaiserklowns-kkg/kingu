@@ -162,6 +162,10 @@ export const legacyAde = {
 
 	// CliQuestion.svelte
 	'legacyAde.cliQuestion.submit': 'พิมพ์คำตอบลง terminal',
+	'legacyAde.cliQuestion.permissionTitle': 'ต้องขออนุญาต',
+	'legacyAde.cliQuestion.allow': 'อนุญาตครั้งนี้',
+	'legacyAde.cliQuestion.deny': 'ไม่อนุญาต',
+	'legacyAde.cliQuestion.permissionNote': 'อนุญาตจะกด Enter (ตัวเลือกที่ไฮไลต์อยู่) และไม่อนุญาตจะกด Esc ใน terminal ของ {agent}',
 	'legacyAde.cliQuestion.dismiss': 'ซ่อน',
 	'legacyAde.cliQuestion.note': 'ตอบใน terminal ของ {agent} ให้ (หรือตอบเองใน terminal ก็ได้)',
 	'legacyAde.cliQuestion.sendFailed': 'ส่งคำตอบไม่ได้: คำถามนี้ปิดไปแล้ว หรือ terminal ของ agent เปลี่ยนไป',

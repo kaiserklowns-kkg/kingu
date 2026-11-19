@@ -73,6 +73,33 @@ test('the Quick Commands button runs the command in a new terminal tab', async (
 	expect(errors).toEqual([]);
 });
 
+test('a permission prompt of a terminal agent is answered from its card', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'New task', exact: true }).click();
+	const description = page.getByRole('textbox', { name: /Describe the task/ });
+	await description.fill('Clean the build folder');
+	await description.press('Enter');
+	await expect.poll(async () => (await calls(page)).agent_hook_settings ?? 0).toBeGreaterThan(0);
+
+	// claude's PermissionRequest hook: the card asks, Allow presses Enter in that terminal.
+	await page.evaluate(() => (window as any).__e2e.hookEvents.push({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', session_id: 's1' }));
+	const card = page.getByRole('alertdialog', { name: 'Permission needed' }).first();
+	await expect(card).toBeVisible({ timeout: 10_000 });
+	await expect(card).toContainText('Bash');
+	await card.getByRole('button', { name: 'Allow once' }).click();
+	await expect(card).toHaveCount(0);
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data))).toContain('\r');
+
+	// Deny presses Esc.
+	await page.evaluate(() => (window as any).__e2e.hookEvents.push({ hook_event_name: 'PermissionRequest', tool_name: 'Write', session_id: 's1' }));
+	await expect(page.getByRole('alertdialog', { name: 'Permission needed' }).first()).toContainText('Write', { timeout: 10_000 });
+	await page.getByRole('alertdialog', { name: 'Permission needed' }).first().getByRole('button', { name: 'Deny' }).click();
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data))).toContain('\x1b');
+	expect(errors).toEqual([]);
+});
+
 test('the Agents layout opens browser tabs from the tab row', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page);
