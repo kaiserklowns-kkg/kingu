@@ -62,7 +62,12 @@ test('the Quick Commands button runs the command in a new terminal tab', async (
 
 	// The chevron lists every command; the one picked becomes the main button's.
 	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
-	await page.getByRole('menuitem', { name: 'Tests' }).click();
+	// The list searches label and command text; Enter runs the first match.
+	const menu = page.getByRole('dialog', { name: 'Quick Commands' });
+	await menu.getByRole('textbox', { name: 'Search' }).fill('echo');
+	await expect(menu.getByRole('menuitem')).toHaveCount(1);
+	await expect(menu.getByRole('menuitem').first()).toContainText('Tests');
+	await menu.getByRole('textbox', { name: 'Search' }).press('Enter');
 	await expect(page.getByRole('tab', { name: /Tests/ })).toBeVisible();
 	await expect(page.getByRole('button', { name: /^Run Tests in a new terminal/ })).toBeVisible();
 

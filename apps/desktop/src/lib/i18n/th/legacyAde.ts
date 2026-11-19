@@ -146,6 +146,7 @@ export const legacyAde = {
 	'legacyAde.adeTabBar.newTerminalTip': 'Terminal ใหม่ใน worktree นี้ ({shortcut})',
 	'legacyAde.adeTabBar.quickCommands': 'คำสั่งด่วน',
 	'legacyAde.adeTabBar.runQuickCommand': 'รัน {label} ใน terminal ใหม่: {command}',
+	'legacyAde.adeTabBar.searchQuickCommands': 'ค้นหาคำสั่งด่วน',
 	'legacyAde.adeTabBar.addQuickCommand': 'เพิ่มคำสั่ง…',
 	'legacyAde.adeTabBar.chooseSession': '{attention} — เลือก session',
 

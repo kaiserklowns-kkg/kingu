@@ -178,8 +178,8 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 		values: 'string',
 		default: {},
 		description:
-			'คำสั่งด่วน: ชื่อ → คำสั่ง เช่น { "Tests": "bun test" } เรียกด้วย Terminal: Run Quick Command… หรือเมนูคลิกขวาของ terminal พิมพ์คำสั่งลง terminal ที่ใช้ล่าสุดแล้วกด Enter (Orca: terminalQuickCommands) (Quick commands, label → command, run with Terminal: Run Quick Command… or the terminal context menu; typed into the last used terminal.)',
-		// User-only: it is text Kingu types into a shell.
-		scope: 'application'
+			'คำสั่งด่วน: ชื่อ → คำสั่ง เช่น { "Tests": "bun test" } รันจากปุ่ม Quick Commands บนแถบ tab (เปิด terminal ใหม่), Terminal: Run Quick Command… หรือเมนูคลิกขวาของ terminal ตั้งต่อโปรเจกต์ได้ในหน้าโปรเจกต์ ซึ่งรวมกับของผู้ใช้ (Orca: terminalQuickCommands, Global / Project) (Quick commands, label → command: the tab bar button runs one in a new terminal, the command and the terminal menu type it into the last used one. A project can add its own on its Project page; they join yours.)',
+		// Text Kingu types into a shell: the user's or Kingu's per-project store, never the repository's file.
+		scope: 'local'
 	}
 ];

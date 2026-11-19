@@ -146,6 +146,7 @@ export const legacyAde = {
 	'legacyAde.adeTabBar.newTerminalTip': 'New terminal in this worktree ({shortcut})',
 	'legacyAde.adeTabBar.quickCommands': 'Quick Commands',
 	'legacyAde.adeTabBar.runQuickCommand': 'Run {label} in a new terminal: {command}',
+	'legacyAde.adeTabBar.searchQuickCommands': 'Search quick commands',
 	'legacyAde.adeTabBar.addQuickCommand': 'Add Command…',
 	'legacyAde.adeTabBar.chooseSession': '{attention} — choose a session',
 

@@ -9,7 +9,7 @@
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { onMount } from 'svelte';
 
-	let { items, x, y, onRun, onClose }: { items: NewTabItem[]; x: number; y: number; onRun: (id: string) => void; onClose: () => void } = $props();
+	let { items, x, y, onRun, onClose, label = 'New Tab', placeholder }: { items: NewTabItem[]; x: number; y: number; onRun: (id: string) => void; onClose: () => void; label?: string; placeholder?: string } = $props();
 
 	const WIDTH = 300;
 	const left = $derived(Math.max(4, Math.min(x, (typeof window === 'undefined' ? 1200 : window.innerWidth) - WIDTH - 4)));
@@ -57,7 +57,7 @@
 	style:top="{y}px"
 	style:width="{WIDTH}px"
 	role="dialog"
-	aria-label="New Tab"
+	aria-label={label}
 	data-tauri-drag-region="false"
 >
 	<input
@@ -65,10 +65,10 @@
 		bind:value={query}
 		onkeydown={key}
 		class="mb-1 h-7 w-full rounded-md border border-[color:var(--vscode-input-border,transparent)] bg-(--vscode-input-background) px-2 text-[13px] text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
-		placeholder="Search tabs, files, agents"
+		placeholder={placeholder ?? 'Search tabs, files, agents'}
 		aria-label="Search"
 	/>
-	<div role="menu" aria-label="New Tab" class="max-h-80 overflow-y-auto">
+	<div role="menu" aria-label={label} class="max-h-80 overflow-y-auto">
 		{#each groups as g, gi (gi)}
 			{#if g.title}<div class="px-2 pt-2 pb-1 text-[11px] text-(--vscode-descriptionForeground)">{g.title}</div>{/if}
 			{#each g.rows as item (item.id)}

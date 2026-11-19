@@ -168,10 +168,10 @@
 			// The last used command is a convenience; the first one runs without it.
 		}
 	}
-	const quickItems = $derived([
-		...quick.map((q, i) => menuItem(`quick:${i}`, q.label)),
-		...(quick.length ? [menuSeparator] : []),
-		menuItem('quick:add', tr('legacyAde.adeTabBar.addQuickCommand'))
+	// Orca's menu: a search over label and command text, the command used last first.
+	const quickItems = $derived<NewTabItem[]>([
+		...quick.map((q, i) => ({ q, i })).toSorted((a, b) => Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label)).map(({ q, i }) => ({ id: `quick:${i}`, label: q.label, description: q.command.split('\n')[0], group: tr('legacyAde.adeTabBar.quickCommands') })),
+		{ id: 'quick:add', label: tr('legacyAde.adeTabBar.addQuickCommand') }
 	]);
 	function runQuickItem(id: string) {
 		if (id === 'quick:add') return void commands.run('workbench.action.openSettings', 'kingu.terminal.quickCommands');
@@ -352,7 +352,7 @@
 				aria-label={tr('legacyAde.adeTabBar.quickCommands')}
 				onclick={(e) => {
 					const r = e.currentTarget.getBoundingClientRect();
-					quickMenu = { x: r.right - 200, y: r.bottom + 2 };
+					quickMenu = { x: r.right - 300, y: r.bottom + 2 };
 				}}><Icon name={primaryQuick ? 'chevronDown' : 'terminal'} size={12} /></button
 			>
 		</div>
@@ -369,7 +369,7 @@
 </div>
 
 {#if quickMenu}
-	<PopupMenu items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={(n) => n.type === 'item' && runQuickItem(n.id)} onClose={() => (quickMenu = null)} />
+	<NewTabMenu items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
 {/if}
 
 {#if create}
