@@ -279,5 +279,9 @@ export const ade = {
 	'ade.amend.forceTitle': 'Force Push',
 	'ade.amend.forceAsk': '{upstream} ยังเป็น commit ตัวเก่าก่อน amend จะ force push แบบ with lease เพื่อแทนที่ไหม? ถ้า remote เปลี่ยนไปหลังการ fetch ครั้งล่าสุด การ push จะถูกปฏิเสธ',
 	'ade.amend.forceOk': 'Force Push',
-	'ade.amend.forceLater': 'ยังไม่ได้ push: ใช้ Force Push ในเมนู commit เพื่ออัปเดต {upstream}'
+	'ade.amend.forceLater': 'ยังไม่ได้ push: ใช้ Force Push ในเมนู commit เพื่ออัปเดต {upstream}',
+	'ade.amend.forceTip': '{upstream} ยังเป็น commit ตัวเก่าก่อน amend: force push แบบ with lease เพื่อแทนที่',
+	'ade.amend.pullBackTitle': 'ยกเลิกผลของ Amend?',
+	'ade.amend.pullBack': '{upstream} ยังเป็น commit ตัวเก่าก่อน amend การ pull จะ merge ตัวเก่ากลับเข้ามาใน branch นี้คู่กับตัวที่ amend แล้ว ยืนยัน pull ไหม?',
+	'ade.amend.pullBackOk': 'Pull ต่อ'
 } satisfies Record<keyof typeof en, string>;

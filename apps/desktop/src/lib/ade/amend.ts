@@ -48,3 +48,25 @@ export function amendPlan(info: AmendInfo, s: { message: string; staged: number;
 	if (!s.staged && message === info.message.trim()) return { kind: 'unchanged' };
 	return { kind: 'amend', message, confirm: info.pushed, forcePush: !!s.upstream && info.pushed.includes(s.upstream) };
 }
+
+/**
+ * An amend whose old copy is still on the branch's upstream: the local branch now shows `behind`
+ * commits it must not pull back. Kept per worktree until a force push (or anything else) changes
+ * the counts it was taken with.
+ */
+export type AmendedPending = { branch: string; upstream: string; ahead: number; behind: number };
+
+/** After a successful amend of a commit the upstream already has, with the status read after it. */
+export function amendedPending(s: { branch: string | null; upstream: string | null; ahead: number; behind: number }): AmendedPending | null {
+	if (!s.branch || !s.upstream || !s.behind) return null;
+	return { branch: s.branch, upstream: s.upstream, ahead: s.ahead, behind: s.behind };
+}
+
+/**
+ * Whether the pending amend still explains the divergence: same branch and upstream, the same
+ * commits behind (a fetch that brought someone else's work changes it, and then a force push would
+ * drop theirs), and at least as many ahead (new local commits on top are fine).
+ */
+export function stillAmended(p: AmendedPending | null | undefined, s: { branch: string | null; upstream: string | null; ahead: number; behind: number }): boolean {
+	return !!p && s.branch === p.branch && s.upstream === p.upstream && s.behind === p.behind && s.ahead >= p.ahead;
+}

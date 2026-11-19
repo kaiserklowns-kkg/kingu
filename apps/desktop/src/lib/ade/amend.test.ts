@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { amendBlock, amendPlan } from './amend.ts';
+import { amendBlock, amendedPending, amendPlan, stillAmended } from './amend.ts';
 
 const ready = { busy: false, head: 'abc1234', detached: false, operation: null, conflicts: 0, staged: 1, message: '' };
 
@@ -46,5 +46,31 @@ describe('amendPlan', () => {
 		const base = { message: 'chore: base', pushed: ['origin/main'] };
 		expect(amendPlan(base, { message: 'mine', staged: 0, upstream: null })).toEqual({ kind: 'amend', message: 'mine', confirm: ['origin/main'], forcePush: false });
 		expect(amendPlan(base, { message: 'mine', staged: 0, upstream: 'origin/feat' })).toEqual({ kind: 'amend', message: 'mine', confirm: ['origin/main'], forcePush: false });
+	});
+});
+
+describe('amended pending force push', () => {
+	const after = { branch: 'feat', upstream: 'origin/feat', ahead: 1, behind: 1 };
+
+	test('is taken only when the upstream still has the old copy', () => {
+		expect(amendedPending(after)).toEqual({ branch: 'feat', upstream: 'origin/feat', ahead: 1, behind: 1 });
+		expect(amendedPending({ ...after, behind: 0 })).toBeNull();
+		expect(amendedPending({ ...after, upstream: null })).toBeNull();
+		expect(amendedPending({ ...after, branch: null })).toBeNull();
+	});
+
+	test('holds while the divergence is the amend, with new commits on top', () => {
+		const p = amendedPending(after);
+		expect(stillAmended(p, after)).toBe(true);
+		expect(stillAmended(p, { ...after, ahead: 3 })).toBe(true);
+	});
+
+	test('drops after a force push, a fetch of other work, or another branch', () => {
+		const p = amendedPending(after);
+		expect(stillAmended(p, { ...after, behind: 0 })).toBe(false);
+		expect(stillAmended(p, { ...after, behind: 2 })).toBe(false);
+		expect(stillAmended(p, { ...after, branch: 'main' })).toBe(false);
+		expect(stillAmended(p, { ...after, ahead: 0 })).toBe(false);
+		expect(stillAmended(null, after)).toBe(false);
 	});
 });

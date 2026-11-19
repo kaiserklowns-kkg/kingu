@@ -294,5 +294,9 @@ export const ade = {
 	'ade.amend.forceTitle': 'Force Push',
 	'ade.amend.forceAsk': '{upstream} still has the old copy of the commit you amended. Force push with lease to replace it? The push is refused if the remote changed since your last fetch.',
 	'ade.amend.forceOk': 'Force Push',
-	'ade.amend.forceLater': 'Not pushed: use Force Push in the commit menu to update {upstream}'
+	'ade.amend.forceLater': 'Not pushed: use Force Push in the commit menu to update {upstream}',
+	'ade.amend.forceTip': '{upstream} still has the commit you amended: force push with lease to replace it',
+	'ade.amend.pullBackTitle': 'Undo the Amend?',
+	'ade.amend.pullBack': '{upstream} still has the commit you amended. Pulling merges that old copy back into this branch next to the amended one. Pull anyway?',
+	'ade.amend.pullBackOk': 'Pull Anyway'
 } as const;
