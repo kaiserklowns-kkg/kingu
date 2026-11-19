@@ -4,7 +4,8 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import TaskCard from './TaskCard.svelte';
 	import SetupBanner from '#lib/setup/SetupBanner.svelte';
-	import { adeLayout, PRIMARY } from './adeLayout.svelte';
+	import { adeLayout } from './adeLayout.svelte';
+	import { newSession } from './agentsMode.svelte';
 	import { adeTasks } from './tasks.svelte';
 	import { BUTTON, BUTTON_SECONDARY } from './ui';
 	import { t } from '#lib/i18n/index.ts';
@@ -35,10 +36,8 @@
 		}
 	}
 
-	function newTask() {
-		adeTasks.composing = true;
-		adeLayout.show(PRIMARY);
-	}
+	// The folder composer (New Session), not the board's form: that one stays as it was.
+	const newTask = newSession;
 </script>
 
 <svelte:window onkeydown={onKey} />

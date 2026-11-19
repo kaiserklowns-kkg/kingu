@@ -178,9 +178,10 @@ test('Advanced → Parent task nests the new task without stacking it', async ({
 	const parent: string = await page.evaluate(() => (window as any).__e2e.tasks[0].slug);
 
 	await page.getByRole('button', { name: 'Tasks', exact: true }).click();
-	// The board's New Task toggles the form, which may still be open from the Now page.
+	// The Now page's New task opened the folder composer, not this form.
 	const childName = page.getByRole('combobox', { name: 'Task name' });
-	if (!(await childName.isVisible())) await page.getByRole('button', { name: 'New Task', exact: true }).click();
+	await expect(childName).toHaveCount(0);
+	await page.getByRole('button', { name: 'New Task', exact: true }).click();
 	await childName.fill('Child work');
 	await page.getByRole('button', { name: 'Advanced' }).click();
 	await page.getByRole('combobox', { name: 'Parent task' }).selectOption({ label: 'Parent work' });
