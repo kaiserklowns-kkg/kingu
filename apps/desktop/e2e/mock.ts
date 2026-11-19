@@ -255,7 +255,7 @@ export async function mockTauri(
 				pty_resize: () => null,
 				pty_kill: () => null,
 				pty_foreground: () => ({}),
-				agent_cli_found: () => [],
+				agent_cli_found: (args: any) => ((args?.names ?? []) as string[]).filter((n) => n === 'claude' || n === 'codex'),
 				agent_runtimes: () => [
 					{ id: 'claude', name: 'Claude Code', installed: true, models: [] },
 					{ id: 'opencode', name: 'OpenCode', protocol: 'acp', features: { rewind: false, models: true }, custom: false },

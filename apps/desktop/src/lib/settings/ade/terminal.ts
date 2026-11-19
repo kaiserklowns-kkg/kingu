@@ -192,5 +192,16 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 			'prompt ด่วนสำหรับ agent: ชื่อ → prompt รันจากปุ่ม Quick Commands บนแถบ tab: เปิด agent CLI ของ kingu.agent.cli ใน terminal ใหม่พร้อม prompt นี้ (CLI ที่รับ prompt ตอนเปิดไม่ได้จะแจ้งว่าไม่รองรับ) ตั้งต่อโปรเจกต์ได้เหมือนคำสั่งด่วน (Orca: quick commands with the Prompt action) (Quick agent prompts, label → prompt: the tab bar button opens kingu.agent.cli in a new terminal with it. CLIs that cannot take a prompt at launch say so. Per project too, like quick commands.)',
 		// It starts a program with your words: the user's or Kingu's per-project store only.
 		scope: 'local'
+	},
+	{
+		id: 'kingu.terminal.quickPromptAgents',
+		group: G,
+		type: 'object',
+		values: 'string',
+		default: {},
+		description:
+			'agent ของแต่ละ prompt ด่วน: ชื่อ prompt → คำสั่ง agent CLI เช่น { "Review": "codex" } ไม่มีชื่อในนี้ = ใช้ kingu.agent.cli (Orca: Choose agent ของ quick command แบบ Prompt) (The agent each quick prompt starts, prompt label → agent CLI command; a label not here uses kingu.agent.cli.)',
+		// It picks a program to run: the user's or Kingu's per-project store only.
+		scope: 'local'
 	}
 ];

@@ -160,6 +160,14 @@ test('Add Command saves a quick command for every project or this one', async ({
 	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.spawns.at(-1)?.run)).toEqual(['claude', 'Review the open diff']);
 	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
 	await expect(menu.getByText('Prompts', { exact: true })).toBeVisible();
+	// Edit it to run Codex instead of the default agent.
+	await menu.getByRole('button', { name: 'Edit Review' }).click();
+	const promptEdit = page.getByRole('form', { name: 'Edit Quick Command' });
+	await promptEdit.getByRole('combobox', { name: 'Agent' }).selectOption({ label: 'Codex CLI' });
+	await promptEdit.getByRole('button', { name: 'Save' }).click();
+	await page.getByRole('button', { name: /^Run Review in a new terminal/ }).click();
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.spawns.at(-1)?.run?.[0])).toBe('codex');
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
 
 	// Delete asks first.
 	await page.evaluate(() => ((window as any).__e2e.messageAnswer = 0));

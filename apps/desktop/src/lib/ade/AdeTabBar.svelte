@@ -175,7 +175,13 @@
 		untrack(toggleQuickMenu);
 	});
 	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
-	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo' } | null>(null);
+	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo'; agent?: string } | null>(null);
+	const AGENTS_ID = 'kingu.terminal.quickPromptAgents';
+	/** A prompt's own agent (kingu.terminal.quickPromptAgents), '' for kingu.agent.cli. */
+	const promptAgent = (label: string): string => {
+		const v = settings.get<Record<string, unknown>>(AGENTS_ID)?.[label];
+		return typeof v === 'string' ? v.trim() : '';
+	};
 	const quickScope = (q: Pick<Quick, 'kind' | 'label'>): 'user' | 'repo' => {
 		const repo = settings.repo.values[QUICK_IDS[q.kind]];
 		return repo && typeof repo === 'object' && q.label in repo ? 'repo' : 'user';
@@ -186,6 +192,8 @@
 		const id = QUICK_IDS[q.kind];
 		const layer = (scope === 'repo' ? settings.repo.values : settings.user.values)[id];
 		await settings.set(id, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
+		const agents = (scope === 'repo' ? settings.repo.values : settings.user.values)[AGENTS_ID];
+		if (q.kind === 'prompt' && agents && typeof agents === 'object' && q.label in agents) await settings.set(AGENTS_ID, withoutQuickCommand(agents, q.label), scope).catch((e) => status.error(String(e)));
 	}
 	function readRecentQuick(): string | null {
 		try {
@@ -196,8 +204,9 @@
 	}
 	function runQuick(q: Quick) {
 		if (q.kind === 'prompt') {
-			const argv = quickPromptArgv(settings.get<string>('kingu.agent.cli') ?? '', q.command);
-			if (!argv) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: settings.get<string>('kingu.agent.cli') || 'claude' }), 8000);
+			const cli = promptAgent(q.label) || settings.get<string>('kingu.agent.cli') || 'claude';
+			const argv = quickPromptArgv(cli, q.command);
+			if (!argv) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: cli }), 8000);
 			adeLayout.newTerminal(key, { title: q.label, run: argv });
 		} else {
 			runCommandLine(q);
@@ -239,7 +248,7 @@
 			const entry = quick[Number(action[2])];
 			if (!entry) return;
 			if (action[1] === 'quickDelete') return void deleteQuick(entry);
-			editingQuick = { ...entry, scope: quickScope(entry) };
+			editingQuick = { ...entry, scope: quickScope(entry), agent: entry.kind === 'prompt' ? promptAgent(entry.label) : undefined };
 			return;
 		}
 		const q = quick[Number(id.slice(6))];
