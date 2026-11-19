@@ -9,7 +9,7 @@
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import { onMount } from 'svelte';
 
-	let { items, x, y, onRun, onClose, label = 'New Tab', placeholder }: { items: NewTabItem[]; x: number; y: number; onRun: (id: string) => void; onClose: () => void; label?: string; placeholder?: string } = $props();
+	let { items, x, y, onRun, onClose, label = 'New Tab', placeholder, details = false }: { items: NewTabItem[]; x: number; y: number; onRun: (id: string) => void; onClose: () => void; label?: string; placeholder?: string; /** Show each row's description (Quick Commands: the command text). */ details?: boolean } = $props();
 
 	const WIDTH = 300;
 	const left = $derived(Math.max(4, Math.min(x, (typeof window === 'undefined' ? 1200 : window.innerWidth) - WIDTH - 4)));
@@ -82,6 +82,7 @@
 				>
 					<span class="grid w-4 shrink-0 place-items-center">{#if item.agent}<AgentIcon agent={item.agent} size={14} />{/if}</span>
 					<span class="min-w-0 flex-1 truncate">{item.label}</span>
+					{#if details && item.description}<span class="max-w-[55%] min-w-0 shrink truncate font-mono text-xs opacity-60">{item.description}</span>{/if}
 					{#if item.keyLabel}<span class="shrink-0 text-xs opacity-80">{item.keyLabel}</span>{/if}
 				</button>
 			{/each}

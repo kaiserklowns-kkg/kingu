@@ -113,7 +113,7 @@
 				<span class={['rounded-full border px-2 text-xs', TONE[chip.tone]]}>{chip.label}</span>
 			</div>
 			<div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--vscode-descriptionForeground)">
-				<span class="flex items-center gap-1 font-mono"><Icon name="branch" size={12} />kingu/{meta.slug} ← {meta.base}</span>
+				<span class="flex items-center gap-1 font-mono"><Icon name="branch" size={12} />{adeTasks.branchOf(meta.slug)} ← {meta.base}</span>
 				<span class="flex items-center gap-1"><AgentIcon agent={meta.agent || 'claude'} size={12} />{meta.agent}{(view.runtime?.model ?? meta.model) ? ` · ${view.runtime?.model ?? meta.model}` : ''}</span>
 				<span>{tr('legacyAde.taskPage.created', { ago: timeAgo(meta.created_at, adeTasks.now) })}</span>
 				{#if meta.pr_url}<a class="text-(--vscode-textLink-foreground) hover:underline" href={meta.pr_url} target="_blank" rel="noreferrer">{meta.pr_url}</a>{/if}

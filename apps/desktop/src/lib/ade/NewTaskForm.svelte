@@ -148,7 +148,7 @@
 		if (!ready || busy) return;
 		// A plain new task is created in the background (Orca): the form closes at once.
 		if (kind === 'new' && !parent && count === 1) {
-			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
+			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, nameTyped: !!title.trim() || !!linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
 			adeTasks.composing = false;
 			return;
 		}

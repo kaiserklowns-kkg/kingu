@@ -56,8 +56,9 @@
 		<CacheTimer {view} />
 		<span class="shrink-0 text-(--vscode-descriptionForeground)">{timeAgo(when, adeTasks.now)}</span>
 	</div>
-	<div class="mt-1 flex items-center gap-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)" title="kingu/{meta.slug} ← {meta.base}">
-		<Icon name="branch" size={12} /><span class="truncate">kingu/{meta.slug}</span><span class="shrink-0 opacity-70">← {meta.base}</span>
+	<!-- The branch checked out, not kingu/<slug>: Advanced → Branch name or a rename from the work changes it. -->
+	<div class="mt-1 flex items-center gap-1 truncate font-mono text-[11px] text-(--vscode-descriptionForeground)" title="{adeTasks.branchOf(meta.slug)} ← {meta.base}">
+		<Icon name="branch" size={12} /><span class="truncate">{adeTasks.branchOf(meta.slug)}</span><span class="shrink-0 opacity-70">← {meta.base}</span>
 	</div>
 	<div class="mt-0.5 flex items-center gap-1.5 text-(--vscode-descriptionForeground)">
 		<AgentIcon agent={meta.agent || 'claude'} size={12} />

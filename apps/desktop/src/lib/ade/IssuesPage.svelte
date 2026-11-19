@@ -154,7 +154,7 @@
 									{#if item.assignees.length}<span>· {item.assignees.map((a) => (item.source === 'jira' || item.source === 'linear' ? a : `@${a}`)).join(', ')}</span>{/if}
 									{#if task}
 										<span>·</span>
-										<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => adeLayout.show(task.meta.slug)}>kingu/{task.meta.slug}</button>
+										<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => adeLayout.show(task.meta.slug)}>{adeTasks.branchOf(task.meta.slug)}</button>
 									{/if}
 								</p>
 							</div>

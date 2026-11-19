@@ -131,6 +131,11 @@ export type CreateInput = {
 	branch?: string;
 	/** The title is a generated name (taskNaming.ts), not the user's words: an empty prompt stays empty. */
 	nameGenerated?: boolean;
+	/**
+	 * The user typed the name (or took an issue's): the branch keeps it and is not renamed from the
+	 * work (Orca's quick-submit-preparation.ts renames only when the name field was empty).
+	 */
+	nameTyped?: boolean;
 	issue?: IssueLink;
 	/** `automation`: an automation started it; `cli`: `kingu task create` made the worktree. */
 	origin?: 'automation' | 'cli';
@@ -521,7 +526,7 @@ class AdeTasks {
 		}
 		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's, one you picked or one you typed).
 		// Attempts keep their `-a`, `-b` branches, so they read as one group.
-		const autoName = source.kind === 'new' && !input.slug && !override && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
+		const autoName = source.kind === 'new' && !input.slug && !override && !input.group && !input.nameTyped && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
 		const task = newTask(
 			{
 				slug,

@@ -237,7 +237,7 @@
 		// A pasted URL still being looked up would name the task after the URL.
 		if (taskResolving) return;
 		const named = composerTitle(text);
-		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link });
+		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, nameTyped: !!taskTitle.trim() || !!taskLinked, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link });
 		draft = '';
 		draftFiles = [];
 		taskTitle = '';
@@ -348,7 +348,7 @@
 						<div class="max-w-md space-y-3 text-center">
 							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
 							<p>{t('legacyAde.agentsLayout.cliNotRunning', { cli: cliName(cli) })}</p>
-							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">kingu/{slug}</span></p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">{adeTasks.branchOf(slug)}</span></p>
 							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
 							{#if attempts.resuming[slug]}
 								<!-- A launch is in flight (the return wake of a hibernated CLI, or a click): no second start. -->
@@ -427,7 +427,7 @@
 													<span class="min-w-0 flex-1 truncate text-[13px]">{v.meta.title}</span>
 												</span>
 												<span class="mt-1 flex gap-2 pl-4 text-xs text-(--vscode-descriptionForeground)">
-													<span class="min-w-0 flex-1 truncate font-mono">kingu/{v.meta.slug}</span>
+													<span class="min-w-0 flex-1 truncate font-mono">{adeTasks.branchOf(v.meta.slug)}</span>
 													<span class="shrink-0">{timeAgo(v.meta.updated_at, adeTasks.now)}</span>
 												</span>
 											</button>

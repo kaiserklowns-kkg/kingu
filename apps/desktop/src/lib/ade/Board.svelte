@@ -98,7 +98,7 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
-	<header class="flex shrink-0 items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2">
+	<header class="flex shrink-0 flex-wrap items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2 whitespace-nowrap">
 		<h1 class="flex items-center gap-2 text-sm font-semibold"><Icon name="tasks" size={16} />{t('adeWorkflow.board.title')}</h1>
 		<span class="text-xs text-(--vscode-descriptionForeground)">{narrowed ? t('adeWorkflow.board.shown', { shown: shownCount, count: adeTasks.list.length }) : t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
 		<span class="flex-1"></span>

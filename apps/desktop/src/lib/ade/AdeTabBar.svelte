@@ -369,7 +369,7 @@
 </div>
 
 {#if quickMenu}
-	<NewTabMenu items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
+	<NewTabMenu details items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
 {/if}
 
 {#if create}

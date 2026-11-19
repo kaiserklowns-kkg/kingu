@@ -205,7 +205,7 @@ test('a hidden worktrees card lists worktrees Kingu did not make and shows one',
 	await openApp(page, READY, { 'kingu.worktree.externalVisibility': 'hide' }, { worktrees: [wt('/tmp/kingu-e2e', 'main'), wt('/tmp/elsewhere/spike', 'spike'), wt('/tmp/kingu-e2e/.claude/worktrees/x', 'claude-x')] });
 	await page.getByRole('button', { name: 'Open in Agents' }).click();
 
-	const card = page.getByRole('button', { name: '2 hidden worktrees' });
+	const card = page.getByRole('button', { name: 'Hidden worktrees: 2' });
 	await expect(card).toBeVisible();
 	await card.click();
 	const dialog = page.getByRole('dialog', { name: 'Worktrees Kingu Did Not Create' });
@@ -214,7 +214,7 @@ test('a hidden worktrees card lists worktrees Kingu did not make and shows one',
 	await dialog.getByRole('button', { name: 'Show' }).click();
 
 	// It moves to the side bar; the card counts the one left.
-	await expect(page.getByRole('button', { name: '1 hidden worktrees' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Hidden worktrees: 1' })).toBeVisible();
 	await dialog.getByRole('button', { name: 'Done' }).click();
 	await expect(page.getByRole('button', { name: /^spike/ })).toBeVisible();
 	expect(errors).toEqual([]);

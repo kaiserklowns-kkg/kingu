@@ -111,7 +111,7 @@ export const legacyAde = {
 	'legacyAde.adeSidebar.externalKindAgent': 'agent',
 	'legacyAde.adeSidebar.externalKindExternal': 'external',
 	'legacyAde.adeSidebar.openInKingu': 'Open in Kingu',
-	'legacyAde.adeSidebar.hiddenWorktrees': '{count} hidden worktrees',
+	'legacyAde.adeSidebar.hiddenWorktrees': 'Hidden worktrees: {count}',
 	'legacyAde.adeSidebar.hiddenTitle': 'Worktrees Kingu Did Not Create',
 	'legacyAde.adeSidebar.hiddenHint': 'Created outside Kingu (git worktree add, coding agents). Show the ones you want in the side bar; Settings › Worktrees sets which kinds show by default.',
 	'legacyAde.adeSidebar.hiddenSearch': 'Search path or branch',
