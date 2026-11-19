@@ -81,7 +81,7 @@ Out of scope here: SSH/remote projects and IDE features (explorer, search, edito
 | Line notes on diffs | gutter "+", ranges, ⌘↩ (`components/diff-comments`) | present (`diffNoteZones.ts`, `diffNotes.ts`, `agent/notes.rs`) | – |
 | Notes prompt format | `shared/diff-comments-format.ts` | present, verbatim (`diffNotes.ts` `formatNote`) | – |
 | Send notes to… which agent | Menu of the worktree's live agents + new agent; send / add-to-chat (`ReviewNotesSendMenuContent.tsx`) | **present (this round)**: `agentTarget.svelte.ts` / `agentTargets.ts` offer the task agent, its composer without sending, agents in its other panes, a new task, or copy; with only the task agent it sends straight there. Used by review notes and the recovery prompts | – |
-| Attribution (AI vs human lines) | `review/attribution.mdx` | missing | P2 |
+| Attribution (AI vs human lines) | `review/attribution.mdx` only: checked 2026-11-19, Orca's source at 9103a362 has no line-provenance store or diff gutter marker (no `attribution` / `provenance` code for diffs) | not built: nothing in Orca's source to match; revisit when it ships | — |
 
 ## 5. Commit, push, PR, checks
 
