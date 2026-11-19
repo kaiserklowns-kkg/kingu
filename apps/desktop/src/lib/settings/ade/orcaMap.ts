@@ -162,6 +162,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['terminalTuiScrollSensitivity', 'kingu.terminal.tuiScrollSensitivity', 'added'],
 	['terminalScopeHistoryByWorktree', 'kingu.terminal.scopeHistoryByWorktree', 'added'],
 	['terminalQuickCommands', 'kingu.terminal.quickCommands', 'added'],
+	['terminalQuickCommands[action=prompt]', 'kingu.terminal.quickPrompts', 'added', 'prompts run with kingu.agent.cli; no per-prompt agent choice'],
 	['terminalFontFamily', 'terminal.integrated.fontFamily', 'mapped'],
 	['terminalFontSize', 'terminal.integrated.fontSize', 'mapped'],
 	['terminalFontWeight', 'terminal.integrated.fontWeight', 'mapped'],

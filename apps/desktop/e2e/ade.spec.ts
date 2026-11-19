@@ -145,6 +145,22 @@ test('Add Command saves a quick command for every project or this one', async ({
 	await expect(menu.getByRole('menuitem', { name: /^Dev server/ })).toContainText('vite --port 5173');
 	await expect(menu.getByRole('menuitem', { name: /^Dev\b(?! server)/ })).toHaveCount(0);
 
+	// A prompt (Orca's Prompt action) starts the default agent with it in a new terminal.
+	await page.keyboard.press('Escape');
+	await expect(menu).toHaveCount(0);
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	await menu.getByRole('menuitem', { name: /Add Command/ }).click();
+	const promptForm = page.getByRole('form', { name: 'Add Quick Command' });
+	await promptForm.getByRole('radio', { name: 'Prompt' }).check();
+	await promptForm.getByRole('textbox', { name: 'Label' }).fill('Review');
+	await promptForm.getByRole('textbox', { name: 'Prompt' }).fill('Review the open diff');
+	await promptForm.getByRole('button', { name: 'Save' }).click();
+	await page.getByRole('button', { name: /^Run Review in a new terminal/ }).click();
+	await expect(page.getByRole('tab', { name: /Review/ })).toBeVisible();
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.spawns.at(-1)?.run)).toEqual(['claude', 'Review the open diff']);
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	await expect(menu.getByText('Prompts', { exact: true })).toBeVisible();
+
 	// Delete asks first.
 	await page.evaluate(() => ((window as any).__e2e.messageAnswer = 0));
 	await menu.getByRole('button', { name: 'Delete Seed' }).click();

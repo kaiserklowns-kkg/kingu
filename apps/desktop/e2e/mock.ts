@@ -88,6 +88,8 @@ export async function mockTauri(
 			const calls: Record<string, number> = {};
 			/** What was typed into terminals (`pty_write`), in order. */
 			const writes: { key: string; data: string }[] = [];
+			/** Terminals started (`pty_spawn`): their key and the argv they run, in order. */
+			const spawns: { key: string; run: string[] | null }[] = [];
 			/** Agent status hook events a test pushes (`__e2e.hookEvents`), served by `agent_hook_read`. */
 			const hookEvents: object[] = [];
 			const jiraIssue = {
@@ -224,7 +226,7 @@ export async function mockTauri(
 				worktree_list_files: () => [],
 				pty_list: () => [],
 				pty_attach: () => null,
-				pty_spawn: () => ({ replay: '', spawned: true }),
+				pty_spawn: (args: any) => (spawns.push({ key: String(args?.key), run: args?.run ?? null }), { replay: '', spawned: true }),
 				// Jira, when a test connects it (`jira`): one issue to list, read and comment on.
 				jira_status: () => (initialOpts.jira ? { name: 'E2E', email: 'e2e@example.com', site: 'acme.atlassian.net' } : null),
 				jira_issues_list: () => (initialOpts.jira ? [jiraIssue] : []),
@@ -416,7 +418,7 @@ export async function mockTauri(
 				metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } }
 			};
 			(window as any).__TAURI_INTERNALS__ = internals;
-			(window as any).__e2e = { calls, files, writes, hookEvents, tasks: taskList };
+			(window as any).__e2e = { calls, files, writes, spawns, hookEvents, tasks: taskList };
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},

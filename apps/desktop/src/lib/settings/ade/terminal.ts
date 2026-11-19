@@ -181,5 +181,16 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 			'คำสั่งด่วน: ชื่อ → คำสั่ง เช่น { "Tests": "bun test" } รันจากปุ่ม Quick Commands บนแถบ tab (เปิด terminal ใหม่), Terminal: Run Quick Command… หรือเมนูคลิกขวาของ terminal ตั้งต่อโปรเจกต์ได้ในหน้าโปรเจกต์ ซึ่งรวมกับของผู้ใช้ (Orca: terminalQuickCommands, Global / Project) (Quick commands, label → command: the tab bar button runs one in a new terminal, the command and the terminal menu type it into the last used one. A project can add its own on its Project page; they join yours.)',
 		// Text Kingu types into a shell: the user's or Kingu's per-project store, never the repository's file.
 		scope: 'local'
+	},
+	{
+		id: 'kingu.terminal.quickPrompts',
+		group: G,
+		type: 'object',
+		values: 'string',
+		default: {},
+		description:
+			'prompt ด่วนสำหรับ agent: ชื่อ → prompt รันจากปุ่ม Quick Commands บนแถบ tab: เปิด agent CLI ของ kingu.agent.cli ใน terminal ใหม่พร้อม prompt นี้ (CLI ที่รับ prompt ตอนเปิดไม่ได้จะแจ้งว่าไม่รองรับ) ตั้งต่อโปรเจกต์ได้เหมือนคำสั่งด่วน (Orca: quick commands with the Prompt action) (Quick agent prompts, label → prompt: the tab bar button opens kingu.agent.cli in a new terminal with it. CLIs that cannot take a prompt at launch say so. Per project too, like quick commands.)',
+		// It starts a program with your words: the user's or Kingu's per-project store only.
+		scope: 'local'
 	}
 ];

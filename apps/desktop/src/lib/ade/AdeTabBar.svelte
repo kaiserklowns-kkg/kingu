@@ -24,6 +24,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import NewTabMenu, { type NewTabItem } from './NewTabMenu.svelte';
 	import QuickCommandDialog from './QuickCommandDialog.svelte';
+	import { quickPromptArgv } from './quickPrompt';
 	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
 	import { enabledBins } from './agentCli';
 	import { isMarkdownEditor } from './adeMarkdown.ts';
@@ -147,7 +148,14 @@
 	// main part runs the command used last in a new terminal tab of this worktree, the chevron
 	// lists every `kingu.terminal.quickCommands` entry and Add Command (the setting).
 	const RECENT_QUICK = 'kingu.ade.quickCommand.recent';
-	const quick = $derived(quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands')));
+	// Commands (typed into a shell) and prompts (Orca's Prompt action: the agent CLI started with it).
+	type QuickKind = 'command' | 'prompt';
+	type Quick = { kind: QuickKind; label: string; command: string };
+	const QUICK_IDS: Record<QuickKind, string> = { command: 'kingu.terminal.quickCommands', prompt: 'kingu.terminal.quickPrompts' };
+	const quick = $derived<Quick[]>([
+		...quickCommands(settings.get<Record<string, unknown>>(QUICK_IDS.command)).map((q) => ({ ...q, kind: 'command' as const })),
+		...quickCommands(settings.get<Record<string, unknown>>(QUICK_IDS.prompt)).map((q) => ({ ...q, kind: 'prompt' as const }))
+	]);
 	let recentQuick = $state<string | null>(readRecentQuick());
 	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
 	let quickMenu = $state<{ x: number; y: number } | null>(null);
@@ -167,17 +175,17 @@
 		untrack(toggleQuickMenu);
 	});
 	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
-	let editingQuick = $state<{ label: string; command: string; scope: 'user' | 'repo' } | null>(null);
-	const QUICK_ID = 'kingu.terminal.quickCommands';
-	const quickScope = (label: string): 'user' | 'repo' => {
-		const repo = settings.repo.values[QUICK_ID];
-		return repo && typeof repo === 'object' && label in repo ? 'repo' : 'user';
+	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo' } | null>(null);
+	const quickScope = (q: Pick<Quick, 'kind' | 'label'>): 'user' | 'repo' => {
+		const repo = settings.repo.values[QUICK_IDS[q.kind]];
+		return repo && typeof repo === 'object' && q.label in repo ? 'repo' : 'user';
 	};
-	async function deleteQuick(q: { label: string }) {
+	async function deleteQuick(q: Quick) {
 		if (!(await ask(tr('legacyAde.quickCommand.deleteAsk', { label: q.label }), { title: tr('legacyAde.quickCommand.deleteTitle'), kind: 'warning', okLabel: tr('legacyAde.quickCommand.deleteOk') }))) return;
-		const scope = quickScope(q.label);
-		const layer = (scope === 'repo' ? settings.repo.values : settings.user.values)[QUICK_ID];
-		await settings.set(QUICK_ID, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
+		const scope = quickScope(q);
+		const id = QUICK_IDS[q.kind];
+		const layer = (scope === 'repo' ? settings.repo.values : settings.user.values)[id];
+		await settings.set(id, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
 	}
 	function readRecentQuick(): string | null {
 		try {
@@ -186,11 +194,14 @@
 			return null;
 		}
 	}
-	function runQuick(q: { label: string; command: string }) {
-		// A line past the tty's input limit (1024 bytes on macOS) typed before the shell is ready
-		// is cut; a long one goes through the daemon, which waits for the line editor (`sh -c`).
-		const long = new TextEncoder().encode(q.command).length > 900;
-		adeLayout.newTerminal(key, long ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command });
+	function runQuick(q: Quick) {
+		if (q.kind === 'prompt') {
+			const argv = quickPromptArgv(settings.get<string>('kingu.agent.cli') ?? '', q.command);
+			if (!argv) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: settings.get<string>('kingu.agent.cli') || 'claude' }), 8000);
+			adeLayout.newTerminal(key, { title: q.label, run: argv });
+		} else {
+			runCommandLine(q);
+		}
 		recentQuick = q.label;
 		try {
 			localStorage.setItem(RECENT_QUICK, q.label);
@@ -198,16 +209,22 @@
 			// The last used command is a convenience; the first one runs without it.
 		}
 	}
+	function runCommandLine(q: Quick) {
+		// A line past the tty's input limit (1024 bytes on macOS) typed before the shell is ready
+		// is cut; a long one goes through the daemon, which waits for the line editor (`sh -c`).
+		const long = new TextEncoder().encode(q.command).length > 900;
+		adeLayout.newTerminal(key, long ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command });
+	}
 	// Orca's menu: a search over label and command text, the command used last first.
 	const quickItems = $derived<NewTabItem[]>([
 		...quick
 			.map((q, i) => ({ q, i }))
-			.toSorted((a, b) => Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label))
+			.toSorted((a, b) => Number(a.q.kind === 'prompt') - Number(b.q.kind === 'prompt') || Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label))
 			.map(({ q, i }) => ({
 				id: `quick:${i}`,
 				label: q.label,
 				description: q.command.split('\n')[0],
-				group: tr('legacyAde.adeTabBar.quickCommands'),
+				group: q.kind === 'prompt' ? tr('legacyAde.quickCommand.prompts') : tr('legacyAde.adeTabBar.quickCommands'),
 				actions: [
 					{ id: `quickEdit:${i}`, icon: 'edit' as const, label: tr('legacyAde.quickCommand.edit', { label: q.label }) },
 					{ id: `quickDelete:${i}`, icon: 'trash' as const, label: tr('legacyAde.quickCommand.delete', { label: q.label }) }
@@ -222,7 +239,7 @@
 			const entry = quick[Number(action[2])];
 			if (!entry) return;
 			if (action[1] === 'quickDelete') return void deleteQuick(entry);
-			editingQuick = { ...entry, scope: quickScope(entry.label) };
+			editingQuick = { ...entry, scope: quickScope(entry) };
 			return;
 		}
 		const q = quick[Number(id.slice(6))];
