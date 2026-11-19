@@ -86,6 +86,8 @@ export async function mockTauri(
 				open_files: []
 			};
 			const calls: Record<string, number> = {};
+			/** What was typed into terminals (`pty_write`), in order. */
+			const writes: { key: string; data: string }[] = [];
 			const handlers: Record<string, (args: any) => unknown> = {
 				app_info: () => ({ name: 'Kingu', version: '0.0.0-e2e', os: 'macos', arch: 'aarch64', workspace }),
 				workspace_state: () => state,
@@ -187,7 +189,7 @@ export async function mockTauri(
 				pty_list: () => [],
 				pty_attach: () => null,
 				pty_spawn: () => ({ replay: '', spawned: true }),
-				pty_write: () => null,
+				pty_write: (args: any) => (writes.push({ key: String(args?.key), data: String(args?.data) }), null),
 				pty_resize: () => null,
 				pty_kill: () => null,
 				pty_foreground: () => ({}),
@@ -354,7 +356,7 @@ export async function mockTauri(
 				metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } }
 			};
 			(window as any).__TAURI_INTERNALS__ = internals;
-			(window as any).__e2e = { calls, files };
+			(window as any).__e2e = { calls, files, writes };
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},

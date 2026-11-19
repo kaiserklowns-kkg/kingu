@@ -45,6 +45,7 @@
 	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
 	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
+	 * `type`: a shell line typed as is into a new shell (a quick command), not on a re-attach.
 	 * `cwdFrom`: a split pane starts in that terminal's current directory. `folder`: the root folder
 	 * of a multi-root window it starts in (Rust checks it is one). `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
@@ -57,6 +58,7 @@
 		key,
 		slug,
 		run,
+		type,
 		task,
 		cwdFrom,
 		folder,
@@ -78,6 +80,7 @@
 		key: string;
 		slug?: string;
 		run?: string[];
+		type?: string;
 		task?: TaskSpawn;
 		cwdFrom?: string;
 		folder?: string;
@@ -398,6 +401,8 @@
 		function connected(a: Attached) {
 			if (disposed) return;
 			if (a.epoch) epoch = a.epoch;
+			// The shell reads typed-ahead input once it is ready, like keys pressed while it starts.
+			if (a.spawned && type?.trim()) invoke('pty_write', { key, data: quickCommandInput(type) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;

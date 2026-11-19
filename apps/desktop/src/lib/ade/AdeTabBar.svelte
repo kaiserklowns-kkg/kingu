@@ -35,6 +35,8 @@
 	import { programLabel, withPercent } from './programStatus';
 	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
+	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { primaryQuickCommand, quickCommands } from '#lib/terminal/adeTerminalOptions.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
@@ -137,6 +139,44 @@
 			const bin = id.slice(6);
 			adeLayout.newTerminal(key, { title: pickerItems(found, '').find((r) => r.id === bin)?.label ?? bin, run: [bin] });
 		} else adeLayout.newTerminal(key);
+	}
+
+	// Orca's Quick Commands split button (tab-bar/TabBarQuickCommandsMenu.tsx, terminal.mdx): the
+	// main part runs the command used last in a new terminal tab of this worktree, the chevron
+	// lists every `kingu.terminal.quickCommands` entry and Add Command (the setting).
+	const RECENT_QUICK = 'kingu.ade.quickCommand.recent';
+	const quick = $derived(quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands')));
+	let recentQuick = $state<string | null>(readRecentQuick());
+	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
+	let quickMenu = $state<{ x: number; y: number } | null>(null);
+	function readRecentQuick(): string | null {
+		try {
+			return localStorage.getItem(RECENT_QUICK);
+		} catch {
+			return null;
+		}
+	}
+	function runQuick(q: { label: string; command: string }) {
+		// A line past the tty's input limit (1024 bytes on macOS) typed before the shell is ready
+		// is cut; a long one goes through the daemon, which waits for the line editor (`sh -c`).
+		const long = new TextEncoder().encode(q.command).length > 900;
+		adeLayout.newTerminal(key, long ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command });
+		recentQuick = q.label;
+		try {
+			localStorage.setItem(RECENT_QUICK, q.label);
+		} catch {
+			// The last used command is a convenience; the first one runs without it.
+		}
+	}
+	const quickItems = $derived([
+		...quick.map((q, i) => menuItem(`quick:${i}`, q.label)),
+		...(quick.length ? [menuSeparator] : []),
+		menuItem('quick:add', tr('legacyAde.adeTabBar.addQuickCommand'))
+	]);
+	function runQuickItem(id: string) {
+		if (id === 'quick:add') return void commands.run('workbench.action.openSettings', 'kingu.terminal.quickCommands');
+		const q = quick[Number(id.slice(6))];
+		if (q) runQuick(q);
 	}
 
 	const key = $derived(adeLayout.key);
@@ -295,6 +335,28 @@
 		</button>
 	</div>
 	<span class="flex-1"></span>
+	{#if workspace.root}
+		<div class="my-auto mr-1 flex h-[22px] items-stretch rounded-md text-xs">
+			{#if primaryQuick}
+				{@const q = primaryQuick}
+				<button
+					class="flex max-w-40 items-center gap-1 rounded-l-md px-1.5 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+					title={tr('legacyAde.adeTabBar.runQuickCommand', { label: q.label, command: q.command })}
+					aria-label={tr('legacyAde.adeTabBar.runQuickCommand', { label: q.label, command: q.command })}
+					onclick={() => runQuick(q)}><Icon name="play" size={12} /><span class="truncate">{q.label}</span></button
+				>
+			{/if}
+			<button
+				class={['grid w-5 place-items-center text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)', primaryQuick ? 'rounded-r-md' : 'rounded-md']}
+				title={tr('legacyAde.adeTabBar.quickCommands')}
+				aria-label={tr('legacyAde.adeTabBar.quickCommands')}
+				onclick={(e) => {
+					const r = e.currentTarget.getBoundingClientRect();
+					quickMenu = { x: r.right - 200, y: r.bottom + 2 };
+				}}><Icon name={primaryQuick ? 'chevronDown' : 'terminal'} size={12} /></button
+			>
+		</div>
+	{/if}
 	{#if attention}
 		<button
 			class="needs-input my-auto mr-2 flex h-[22px] items-center gap-1.5 rounded-md px-2 text-xs text-(--vscode-editorWarning-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
@@ -305,6 +367,10 @@
 		</button>
 	{/if}
 </div>
+
+{#if quickMenu}
+	<PopupMenu items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={(n) => n.type === 'item' && runQuickItem(n.id)} onClose={() => (quickMenu = null)} />
+{/if}
 
 {#if create}
 	{@const at = create}

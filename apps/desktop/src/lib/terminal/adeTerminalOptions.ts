@@ -216,3 +216,8 @@ export function quickCommands(map: Readonly<Record<string, unknown>> | undefined
 export function quickCommandInput(command: string): string {
 	return `${command.replace(/\r?\n/g, '\r')}\r`;
 }
+
+/** The tab bar's Quick Commands button (Orca's split button): the command run last, else the first. */
+export function primaryQuickCommand<Q extends { label: string }>(list: readonly Q[], recent: string | null): Q | null {
+	return list.find((q) => q.label === recent) ?? list[0] ?? null;
+}

@@ -51,6 +51,28 @@ test('the Now page composer takes an optional task name with emoji', async ({ pa
 	expect(errors).toEqual([]);
 });
 
+test('the Quick Commands button runs the command in a new terminal tab', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.terminal.quickCommands': { Dev: 'bun run dev', Tests: 'bun test && echo done' } });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+
+	// The main part runs the first command until another one was used.
+	await page.getByRole('button', { name: /^Run Dev in a new terminal/ }).click();
+	await expect(page.getByRole('tab', { name: /Dev/ })).toBeVisible();
+
+	// The chevron lists every command; the one picked becomes the main button's.
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	await page.getByRole('menuitem', { name: 'Tests' }).click();
+	await expect(page.getByRole('tab', { name: /Tests/ })).toBeVisible();
+	await expect(page.getByRole('button', { name: /^Run Tests in a new terminal/ })).toBeVisible();
+
+	// The shell gets the line as typed (no quoting), each once.
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data))).toEqual(expect.arrayContaining(['bun run dev\r', 'bun test && echo done\r']));
+	const writes: string[] = await page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data));
+	expect(writes.filter((d) => d === 'bun test && echo done\r')).toHaveLength(1);
+	expect(errors).toEqual([]);
+});
+
 test('the Agents layout opens browser tabs from the tab row', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page);

@@ -144,6 +144,9 @@ export const legacyAde = {
 	'legacyAde.adeTabBar.close': 'ปิด',
 	'legacyAde.adeTabBar.newTerminal': 'Terminal ใหม่ใน worktree นี้',
 	'legacyAde.adeTabBar.newTerminalTip': 'Terminal ใหม่ใน worktree นี้ ({shortcut})',
+	'legacyAde.adeTabBar.quickCommands': 'คำสั่งด่วน',
+	'legacyAde.adeTabBar.runQuickCommand': 'รัน {label} ใน terminal ใหม่: {command}',
+	'legacyAde.adeTabBar.addQuickCommand': 'เพิ่มคำสั่ง…',
 	'legacyAde.adeTabBar.chooseSession': '{attention} — เลือก session',
 
 	// TaskCard.svelte

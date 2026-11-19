@@ -11,6 +11,8 @@ export type TerminalTab = {
 	n: number;
 	title?: string;
 	run?: string[];
+	/** A shell line typed into the new shell as is (a quick command: pipes, `&&`, aliases work). */
+	type?: string;
 	/** A `#rgb` / `#rrggbb` tab color (kingu.yaml defaultTabs). */
 	color?: string;
 	/** Split panes (Orca's pane layout); absent while the tab is one pane, whose id is the tab's. */

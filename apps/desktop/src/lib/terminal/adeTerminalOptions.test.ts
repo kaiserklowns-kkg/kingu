@@ -7,6 +7,7 @@ import {
 	jisYenInput,
 	paneOpacity,
 	parseOsc52,
+	primaryQuickCommand,
 	quickCommandInput,
 	quickCommands,
 	stripSelectionGutter,
@@ -102,4 +103,15 @@ describe('ADE terminal settings (Orca Terminal page)', () => {
 		]);
 		expect(quickCommandInput('a\nb')).toBe('a\rb\r');
 	});
+});
+
+test('the tab bar runs the quick command used last, else the first', () => {
+	const list = [
+		{ label: 'Dev', command: 'bun run dev' },
+		{ label: 'Tests', command: 'bun test' }
+	];
+	expect(primaryQuickCommand(list, 'Tests')?.label).toBe('Tests');
+	expect(primaryQuickCommand(list, 'Gone')?.label).toBe('Dev');
+	expect(primaryQuickCommand(list, null)?.label).toBe('Dev');
+	expect(primaryQuickCommand([], 'Dev')).toBeNull();
 });

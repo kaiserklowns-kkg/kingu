@@ -144,6 +144,9 @@ export const legacyAde = {
 	'legacyAde.adeTabBar.close': 'Close',
 	'legacyAde.adeTabBar.newTerminal': 'New terminal in this worktree',
 	'legacyAde.adeTabBar.newTerminalTip': 'New terminal in this worktree ({shortcut})',
+	'legacyAde.adeTabBar.quickCommands': 'Quick Commands',
+	'legacyAde.adeTabBar.runQuickCommand': 'Run {label} in a new terminal: {command}',
+	'legacyAde.adeTabBar.addQuickCommand': 'Add Command…',
 	'legacyAde.adeTabBar.chooseSession': '{attention} — choose a session',
 
 	// TaskCard.svelte

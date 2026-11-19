@@ -485,6 +485,7 @@
 								key={adeLayout.ptyKey(k, p)}
 								slug={k || undefined}
 								run={p === t.id ? t.run : undefined}
+								type={p === t.id ? t.type : undefined}
 								cwdFrom={adeLayout.cwdFrom(k, p)}
 								flavor="ade"
 								keyLabels={PANE_KEYS}
