@@ -44,6 +44,7 @@
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aggregateStats } from './model';
+	import { completeShortcode } from './emojiShortcodes';
 	import { baseName, cardProperties, hexColor, splitExternal, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
 	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
@@ -656,6 +657,14 @@
 									bind:value={renameValue}
 									onclick={(e) => e.stopPropagation()}
 									onkeydown={(e) => onRenameKey(e, r.key)}
+									oninput={(e) => {
+										// Orca's emoji names in rename too: a closed :code: becomes its emoji.
+										const el = e.currentTarget;
+										const done = completeShortcode(el.value, el.selectionStart);
+										if (!done) return;
+										renameValue = el.value = done.value;
+										el.setSelectionRange(done.cursor, done.cursor);
+									}}
 									onblur={() => void commitRename(r.key)}
 									onfocus={(e) => e.currentTarget.select()}
 								/>

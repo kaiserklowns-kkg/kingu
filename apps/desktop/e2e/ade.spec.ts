@@ -356,6 +356,31 @@ test('a Jira issue opens in a read-and-comment drawer', async ({ page }) => {
 	expect(errors).toEqual([]);
 });
 
+test('renaming a task turns :shortcodes: into emoji and ⌘J finds it by the shortcode', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	const description = page.getByRole('textbox', { name: /Describe the task/ });
+	if (!(await description.isVisible())) await page.getByRole('button', { name: 'New task', exact: true }).click();
+	await description.fill('Ship it');
+	await description.press('Enter');
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks.length)).toBeGreaterThan(0);
+
+	await page.getByText('Ship it', { exact: true }).first().dblclick();
+	const rename = page.getByRole('textbox', { name: 'Rename workspace' });
+	await rename.press('End');
+	await rename.pressSequentially(' :rocket:');
+	await expect(rename).toHaveValue('Ship it 🚀');
+	await rename.press('Enter');
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.tasks[0].title)).toBe('Ship it 🚀');
+
+	await page.keyboard.press('Meta+Shift+J');
+	await page.keyboard.type('rocket');
+	await expect(page.getByRole('option', { name: /^Ship it 🚀 / })).toBeVisible();
+	await page.keyboard.press('Escape');
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });

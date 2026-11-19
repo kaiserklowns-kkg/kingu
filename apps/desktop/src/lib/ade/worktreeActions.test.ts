@@ -64,4 +64,9 @@ describe('jump palette (Orca worktree-jump)', () => {
 		expect(items.at(-1)?.label).toBe('Create "docs"');
 		expect(jumpItems('zzz', { name: 'repo', branch: 'main' }, tasks, fuzzy, L).map((i) => i.id)).toEqual([`${JUMP_CREATE}zzz`]);
 	});
+	test('an emoji-named task matches by its shortcode', () => {
+		const emoji = [task('ship', 'review', 3, { title: '🚀 ship', branch: 'feature/x' })];
+		expect(jumpItems('rocket', { name: 'repo', branch: 'main' }, emoji, fuzzy, L)[0].id).toBe('ship');
+		expect(jumpItems('rocket', { name: 'repo', branch: 'main' }, tasks, fuzzy, L).map((i) => i.id)).toEqual([`${JUMP_CREATE}rocket`]);
+	});
 });
