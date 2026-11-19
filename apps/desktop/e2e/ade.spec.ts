@@ -126,6 +126,23 @@ test('Add Command saves a quick command for every project or this one', async ({
 	const menu = page.getByRole('dialog', { name: 'Quick Commands' });
 	await expect(menu.getByRole('menuitem', { name: /^Dev/ })).toBeVisible();
 	await expect(menu.getByRole('menuitem', { name: /^Seed/ })).toBeVisible();
+
+	// Edit: a new label and command replace the old entry.
+	await menu.getByRole('button', { name: 'Edit Dev' }).click();
+	const editForm = page.getByRole('form', { name: 'Edit Quick Command' });
+	await expect(editForm.getByRole('textbox', { name: 'Command' })).toHaveValue('bun run dev');
+	await editForm.getByRole('textbox', { name: 'Label' }).fill('Dev server');
+	await editForm.getByRole('textbox', { name: 'Command' }).fill('vite --port 5173');
+	await editForm.getByRole('button', { name: 'Save' }).click();
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	await expect(menu.getByRole('menuitem', { name: /^Dev server/ })).toContainText('vite --port 5173');
+	await expect(menu.getByRole('menuitem', { name: /^Dev\b(?! server)/ })).toHaveCount(0);
+
+	// Delete asks first.
+	await page.evaluate(() => ((window as any).__e2e.messageAnswer = 0));
+	await menu.getByRole('button', { name: 'Delete Seed' }).click();
+	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
+	await expect(menu.getByRole('menuitem', { name: /^Seed/ })).toHaveCount(0);
 	expect(errors).toEqual([]);
 });
 

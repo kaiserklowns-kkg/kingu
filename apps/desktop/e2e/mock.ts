@@ -230,6 +230,8 @@ export async function mockTauri(
 				jira_issues_list: () => (initialOpts.jira ? [jiraIssue] : []),
 				jira_issue_view: () => jiraIssue,
 				jira_issue_comment: (args: any) => (jiraIssue.comments.push({ author: 'E2E', body: String(args?.body), created_at: '2026-11-19T00:00:00Z' }), null),
+				// Native message boxes answer null (no button) unless a test sets `__e2e.messageAnswer`.
+				message_box: () => (window as any).__e2e?.messageAnswer ?? null,
 				gh_issues_list: () => [issue],
 				gh_issue_view: () => issue,
 				gh_issue_set_state: (args: any) => ((issue.state = args?.open ? 'OPEN' : 'CLOSED'), null),

@@ -238,3 +238,8 @@ export function withQuickCommand(map: unknown, label: string, command: string): 
 	if (!(name in current) && Object.keys(current).length >= MAX_QUICK_COMMANDS) return 'tooMany';
 	return { ...current, [name]: text };
 }
+
+/** One scope's `kingu.terminal.quickCommands` without `label` (Edit moved it, or Delete). */
+export function withoutQuickCommand(map: unknown, label: string): Record<string, string> {
+	return Object.fromEntries(Object.entries(map && typeof map === 'object' ? (map as Record<string, unknown>) : {}).filter((e): e is [string, string] => typeof e[1] === 'string' && e[0] !== label));
+}

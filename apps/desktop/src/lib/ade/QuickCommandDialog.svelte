@@ -2,19 +2,20 @@
 	// Add Quick Command (Orca's TerminalQuickCommandDialog: Label, Command, Scope Global / Project):
 	// saves into `kingu.terminal.quickCommands` of the user settings (Global) or of Kingu's own
 	// per-project store (Project), never the repository's file. Agent prompts are not offered yet.
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { withQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
+	import { withoutQuickCommand, withQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui';
 
-	let { onclose, onsaved }: { onclose: () => void; onsaved?: (label: string) => void } = $props();
+	type Scope = 'user' | 'repo';
+	let { onclose, onsaved, initial }: { onclose: () => void; onsaved?: (label: string) => void; /** Edit Quick Command: the one being changed and where it is kept. */ initial?: { label: string; command: string; scope: Scope } } = $props();
 
 	const ID = 'kingu.terminal.quickCommands';
-	let label = $state('');
-	let command = $state('');
-	let scope = $state<'user' | 'repo'>('user');
+	let label = $state(untrack(() => initial?.label ?? ''));
+	let command = $state(untrack(() => initial?.command ?? ''));
+	let scope = $state<Scope>(untrack(() => initial?.scope ?? 'user'));
 	let problem = $state('');
 	let saving = $state(false);
 	let first: HTMLInputElement | undefined = $state();
@@ -23,13 +24,17 @@
 	async function save(e: Event) {
 		e.preventDefault();
 		if (saving) return;
-		const layer = scope === 'repo' ? settings.repo.values : settings.user.values;
-		const next = withQuickCommand(layer[ID], label, command);
+		const layerOf = (s: Scope) => (s === 'repo' ? settings.repo.values : settings.user.values)[ID];
+		// Editing: the old entry leaves its scope first (a new label or another scope).
+		const moved = initial && (initial.label !== label.trim() || initial.scope !== scope);
+		const base = moved && initial.scope === scope ? withoutQuickCommand(layerOf(scope), initial.label) : layerOf(scope);
+		const next = withQuickCommand(base, label, command);
 		if (typeof next === 'string') return void (problem = t(`legacyAde.quickCommand.problem.${next}`));
 		saving = true;
 		problem = '';
 		try {
 			await settings.set(ID, next, scope);
+			if (moved && initial.scope !== scope) await settings.set(ID, withoutQuickCommand(layerOf(initial.scope), initial.label), initial.scope);
 			onsaved?.(label.trim());
 			onclose();
 		} catch (err) {
@@ -42,9 +47,9 @@
 
 <div class="fixed inset-0 z-50 grid place-items-center bg-black/30" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose()}>
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions (Escape from any field) -->
-	<form class="w-[460px] max-w-[calc(100vw-32px)] space-y-3 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-4 text-[13px] shadow-xl" aria-label={t('legacyAde.quickCommand.title')} onsubmit={save} onkeydown={(e) => e.key === 'Escape' && (e.stopPropagation(), onclose())}>
+	<form class="w-[460px] max-w-[calc(100vw-32px)] space-y-3 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-4 text-[13px] shadow-xl" aria-label={initial ? t('legacyAde.quickCommand.editTitle') : t('legacyAde.quickCommand.title')} onsubmit={save} onkeydown={(e) => e.key === 'Escape' && (e.stopPropagation(), onclose())}>
 		<div>
-			<h2 class="font-semibold">{t('legacyAde.quickCommand.title')}</h2>
+			<h2 class="font-semibold">{initial ? t('legacyAde.quickCommand.editTitle') : t('legacyAde.quickCommand.title')}</h2>
 			<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.quickCommand.hint')}</p>
 		</div>
 		<label class="block space-y-1">

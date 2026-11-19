@@ -1,12 +1,23 @@
 <script lang="ts" module>
+	import type { IconName } from '#lib/workbench/Icon.svelte';
 	/** One row of the new-tab menu; rows sharing a `group` sit under its heading, `agent` draws the agent's mark. */
-	export type NewTabItem = { id: string; label: string; keyLabel?: string; agent?: string; description?: string; group?: string };
+	export type NewTabItem = {
+		id: string;
+		label: string;
+		keyLabel?: string;
+		agent?: string;
+		description?: string;
+		group?: string;
+		/** Icon buttons at the row's end (Quick Commands: edit, delete); each runs its own id. */
+		actions?: { id: string; icon: IconName; label: string }[];
+	};
 </script>
 
 <script lang="ts">
 	// Orca's new-tab menu: a searchable popover under the tab row's "+" (New Terminal, New Browser
 	// Tab, New Markdown, Open Markdown…, then the agent CLIs found on the PATH).
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
+	import Icon from '#lib/workbench/Icon.svelte';
 	import { onMount } from 'svelte';
 
 	let { items, x, y, onRun, onClose, label = 'New Tab', placeholder, details = false }: { items: NewTabItem[]; x: number; y: number; onRun: (id: string) => void; onClose: () => void; label?: string; placeholder?: string; /** Show each row's description (Quick Commands: the command text). */ details?: boolean } = $props();
@@ -73,18 +84,21 @@
 			{#if g.title}<div class="px-2 pt-2 pb-1 text-[11px] text-(--vscode-descriptionForeground)">{g.title}</div>{/if}
 			{#each g.rows as item (item.id)}
 				{@const i = shown.indexOf(item)}
-				<button
-					role="menuitem"
-					class={['flex h-[28px] w-full items-center gap-2 rounded-md px-2 text-left', i === picked ? 'bg-[var(--vscode-menu-selectionBackground,#0078D4)] text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]' : 'hover:bg-[var(--vscode-menu-selectionBackground,#0078D4)] hover:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]']}
+				<div
+					class={['flex h-[28px] w-full items-center rounded-md', i === picked ? 'bg-[var(--vscode-menu-selectionBackground,#0078D4)] text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]' : 'hover:bg-[var(--vscode-menu-selectionBackground,#0078D4)] hover:text-[color:var(--vscode-menu-selectionForeground,#FFFFFF)]']}
+					role="presentation"
 					onpointerenter={() => (picked = i)}
-					onmousedown={(e) => e.preventDefault()}
-					onclick={() => run(item.id)}
 				>
-					<span class="grid w-4 shrink-0 place-items-center">{#if item.agent}<AgentIcon agent={item.agent} size={14} />{/if}</span>
-					<span class="min-w-0 flex-1 truncate">{item.label}</span>
-					{#if details && item.description}<span class="max-w-[55%] min-w-0 shrink truncate font-mono text-xs opacity-60">{item.description}</span>{/if}
-					{#if item.keyLabel}<span class="shrink-0 text-xs opacity-80">{item.keyLabel}</span>{/if}
-				</button>
+					<button role="menuitem" class="flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-left" onmousedown={(e) => e.preventDefault()} onclick={() => run(item.id)}>
+						<span class="grid w-4 shrink-0 place-items-center">{#if item.agent}<AgentIcon agent={item.agent} size={14} />{/if}</span>
+						<span class="min-w-0 flex-1 truncate">{item.label}</span>
+						{#if details && item.description}<span class="max-w-[55%] min-w-0 shrink truncate font-mono text-xs opacity-60">{item.description}</span>{/if}
+						{#if item.keyLabel}<span class="shrink-0 text-xs opacity-80">{item.keyLabel}</span>{/if}
+					</button>
+					{#each item.actions ?? [] as a (a.id)}
+						<button class="mr-1 grid size-5 shrink-0 place-items-center rounded opacity-70 hover:bg-black/20 hover:opacity-100" aria-label={a.label} title={a.label} onmousedown={(e) => e.preventDefault()} onclick={() => run(a.id)}><Icon name={a.icon} size={12} /></button>
+					{/each}
+				</div>
 			{/each}
 		{/each}
 		{#if !shown.length}<p class="px-2 py-3 text-xs text-(--vscode-descriptionForeground)">No matches</p>{/if}

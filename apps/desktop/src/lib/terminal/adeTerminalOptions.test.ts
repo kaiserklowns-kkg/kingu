@@ -9,6 +9,7 @@ import {
 	parseOsc52,
 	primaryQuickCommand,
 	withQuickCommand,
+	withoutQuickCommand,
 	quickCommandInput,
 	quickCommands,
 	stripSelectionGutter,
@@ -128,4 +129,9 @@ test('Add Quick Command checks the label and command, replacing one of the same 
 	const full = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`c${i}`, 'x']));
 	expect(withQuickCommand(full, 'new', 'x')).toBe('tooMany');
 	expect(withQuickCommand(full, 'c1', 'y')).not.toBe('tooMany');
+});
+
+test('a quick command leaves its scope by label', () => {
+	expect(withoutQuickCommand({ Dev: 'a', Tests: 'b', Bad: 1 }, 'Dev')).toEqual({ Tests: 'b' });
+	expect(withoutQuickCommand(undefined, 'Dev')).toEqual({});
 });

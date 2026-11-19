@@ -36,7 +36,8 @@
 	import { programLabel, withPercent } from './programStatus';
 	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
-	import { primaryQuickCommand, quickCommands } from '#lib/terminal/adeTerminalOptions.ts';
+	import { primaryQuickCommand, quickCommands, withoutQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
@@ -150,6 +151,19 @@
 	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
 	let quickMenu = $state<{ x: number; y: number } | null>(null);
 	let addingQuick = $state(false);
+	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
+	let editingQuick = $state<{ label: string; command: string; scope: 'user' | 'repo' } | null>(null);
+	const QUICK_ID = 'kingu.terminal.quickCommands';
+	const quickScope = (label: string): 'user' | 'repo' => {
+		const repo = settings.repo.values[QUICK_ID];
+		return repo && typeof repo === 'object' && label in repo ? 'repo' : 'user';
+	};
+	async function deleteQuick(q: { label: string }) {
+		if (!(await ask(tr('legacyAde.quickCommand.deleteAsk', { label: q.label }), { title: tr('legacyAde.quickCommand.deleteTitle'), kind: 'warning', okLabel: tr('legacyAde.quickCommand.deleteOk') }))) return;
+		const scope = quickScope(q.label);
+		const layer = (scope === 'repo' ? settings.repo.values : settings.user.values)[QUICK_ID];
+		await settings.set(QUICK_ID, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
+	}
 	function readRecentQuick(): string | null {
 		try {
 			return localStorage.getItem(RECENT_QUICK);
@@ -171,11 +185,31 @@
 	}
 	// Orca's menu: a search over label and command text, the command used last first.
 	const quickItems = $derived<NewTabItem[]>([
-		...quick.map((q, i) => ({ q, i })).toSorted((a, b) => Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label)).map(({ q, i }) => ({ id: `quick:${i}`, label: q.label, description: q.command.split('\n')[0], group: tr('legacyAde.adeTabBar.quickCommands') })),
+		...quick
+			.map((q, i) => ({ q, i }))
+			.toSorted((a, b) => Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label))
+			.map(({ q, i }) => ({
+				id: `quick:${i}`,
+				label: q.label,
+				description: q.command.split('\n')[0],
+				group: tr('legacyAde.adeTabBar.quickCommands'),
+				actions: [
+					{ id: `quickEdit:${i}`, icon: 'edit' as const, label: tr('legacyAde.quickCommand.edit', { label: q.label }) },
+					{ id: `quickDelete:${i}`, icon: 'trash' as const, label: tr('legacyAde.quickCommand.delete', { label: q.label }) }
+				]
+			})),
 		{ id: 'quick:add', label: tr('legacyAde.adeTabBar.addQuickCommand') }
 	]);
 	function runQuickItem(id: string) {
 		if (id === 'quick:add') return void (addingQuick = true);
+		const action = /^(quickEdit|quickDelete):(\d+)$/.exec(id);
+		if (action) {
+			const entry = quick[Number(action[2])];
+			if (!entry) return;
+			if (action[1] === 'quickDelete') return void deleteQuick(entry);
+			editingQuick = { ...entry, scope: quickScope(entry.label) };
+			return;
+		}
 		const q = quick[Number(id.slice(6))];
 		if (q) runQuick(q);
 	}
@@ -371,6 +405,8 @@
 
 {#if addingQuick}
 	<QuickCommandDialog onclose={() => (addingQuick = false)} onsaved={(label) => (recentQuick = label)} />
+{:else if editingQuick}
+	<QuickCommandDialog initial={editingQuick} onclose={() => (editingQuick = null)} onsaved={(label) => (recentQuick = label)} />
 {/if}
 {#if quickMenu}
 	<NewTabMenu details items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
