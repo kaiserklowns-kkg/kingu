@@ -125,3 +125,71 @@ function replaceRange(value: string, start: number, end: number, emoji: string, 
 	const space = trailing && !/\s/.test(value[end] ?? '') ? ' ' : '';
 	return { value: `${value.slice(0, start)}${emoji}${space}${value.slice(end)}`, cursor: start + emoji.length + (trailing ? 1 : 0) };
 }
+
+/**
+ * What the emoji picker button lists before a search (Orca's workspace-emoji-picker-defaults.ts):
+ * emoji that read well as task markers, all emoji-presentation code points.
+ */
+export const PICKER_DEFAULTS: readonly EmojiEntry[] = [
+	{ emoji: '🚀', shortcode: 'rocket' },
+	{ emoji: '🐛', shortcode: 'bug' },
+	{ emoji: '✨', shortcode: 'sparkles' },
+	{ emoji: '🔥', shortcode: 'fire' },
+	{ emoji: '⚡', shortcode: 'zap' },
+	{ emoji: '🧪', shortcode: 'test_tube' },
+	{ emoji: '📦', shortcode: 'package' },
+	{ emoji: '🔧', shortcode: 'wrench' },
+	{ emoji: '🔨', shortcode: 'hammer' },
+	{ emoji: '🔩', shortcode: 'nut_and_bolt' },
+	{ emoji: '🚧', shortcode: 'construction' },
+	{ emoji: '🚨', shortcode: 'rotating_light' },
+	{ emoji: '🔒', shortcode: 'lock' },
+	{ emoji: '🔑', shortcode: 'key' },
+	{ emoji: '🛡', shortcode: 'shield' },
+	{ emoji: '🧹', shortcode: 'broom' },
+	{ emoji: '📝', shortcode: 'memo' },
+	{ emoji: '📚', shortcode: 'books' },
+	{ emoji: '🔖', shortcode: 'bookmark' },
+	{ emoji: '📌', shortcode: 'pushpin' },
+	{ emoji: '📎', shortcode: 'paperclip' },
+	{ emoji: '🔗', shortcode: 'link' },
+	{ emoji: '📋', shortcode: 'clipboard' },
+	{ emoji: '📆', shortcode: 'calendar' },
+	{ emoji: '💡', shortcode: 'bulb' },
+	{ emoji: '🔍', shortcode: 'mag' },
+	{ emoji: '👀', shortcode: 'eyes' },
+	{ emoji: '💬', shortcode: 'speech_balloon' },
+	{ emoji: '🔔', shortcode: 'bell' },
+	{ emoji: '🛟', shortcode: 'lifebuoy' },
+	{ emoji: '🤖', shortcode: 'robot' },
+	{ emoji: '🔬', shortcode: 'microscope' },
+	{ emoji: '✅', shortcode: 'white_check_mark' },
+	{ emoji: '⛔', shortcode: 'no_entry' },
+	{ emoji: '⌛', shortcode: 'hourglass' },
+	{ emoji: '🏆', shortcode: 'trophy' },
+	{ emoji: '⭐', shortcode: 'star' },
+	{ emoji: '🎉', shortcode: 'tada' },
+	{ emoji: '🎯', shortcode: 'dart' },
+	{ emoji: '🧩', shortcode: 'puzzle_piece' },
+	{ emoji: '🌱', shortcode: 'seedling' },
+	{ emoji: '🌸', shortcode: 'cherry_blossom' },
+	{ emoji: '🌈', shortcode: 'rainbow' },
+	{ emoji: '🌻', shortcode: 'sunflower' },
+	{ emoji: '🌙', shortcode: 'crescent_moon' },
+	{ emoji: '💜', shortcode: 'purple_heart' },
+	{ emoji: '☕', shortcode: 'coffee' },
+	{ emoji: '👻', shortcode: 'ghost' }
+];
+
+/** Up to `limit` emoji for the picker: the defaults, or a search. */
+export const pickerEmojis = (query: string, limit = 50): readonly EmojiEntry[] => (query.trim() ? searchShortcodes(query, limit) : PICKER_DEFAULTS);
+
+/** A picked emoji at the selection, padded with spaces so it never fuses with the text around it. */
+export function insertEmoji(value: string, start: number, end: number, emoji: string): EmojiReplacement {
+	const s = Math.max(0, Math.min(start, value.length));
+	const e = Math.max(s, Math.min(end, value.length));
+	const before = value.slice(0, s);
+	const after = value.slice(e);
+	const inserted = `${before && !/\s$/.test(before) ? ' ' : ''}${emoji}${after && /^\s/.test(after) ? '' : ' '}`;
+	return { value: `${before}${inserted}${after}`, cursor: before.length + inserted.length };
+}

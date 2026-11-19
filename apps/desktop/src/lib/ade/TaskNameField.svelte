@@ -10,7 +10,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { adeTasks } from './tasks.svelte';
 	import { INPUT } from './ui';
-	import { activeShortcode, applySuggestion, completeShortcode, searchShortcodes, type EmojiEntry } from './emojiShortcodes';
+	import { activeShortcode, applySuggestion, completeShortcode, insertEmoji, pickerEmojis, searchShortcodes, type EmojiEntry } from './emojiShortcodes';
 	import { issueUrlRef, parseIssueUrl, titleAfterLink } from './issueUrl';
 	import { lookupIssueUrl, type LinkedIssue } from './issueUrlLookup';
 	import { taskForLink } from './taskSources';
@@ -121,6 +121,41 @@
 	function takeEmoji(entry: EmojiEntry) {
 		if (shortcode) replaceTitle(applySuggestion(title, shortcode, entry));
 	}
+	// The emoji picker button (Orca's WorkspaceEmojiPickerButton): a searchable list, the picked
+	// emoji goes in at the selection the field had when the picker opened.
+	let picker = $state<{ start: number; end: number } | null>(null);
+	let pickerQuery = $state('');
+	let pickerPick = $state(0);
+	const pickerRows = $derived(picker ? pickerEmojis(pickerQuery) : []);
+	function openPicker() {
+		picker = { start: input?.selectionStart ?? title.length, end: input?.selectionEnd ?? title.length };
+		pickerQuery = '';
+		pickerPick = 0;
+	}
+	function pickEmoji(entry: EmojiEntry) {
+		if (!picker) return;
+		const at = picker;
+		picker = null;
+		replaceTitle(insertEmoji(title, at.start, at.end, entry.emoji));
+	}
+	function onPickerKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (pickerRows.length) pickerPick = (pickerPick + (e.key === 'ArrowDown' ? 1 : -1) + pickerRows.length) % pickerRows.length;
+		} else if (e.key === 'Enter') {
+			// Picks; it must not also submit the form around the field.
+			e.preventDefault();
+			e.stopPropagation();
+			const row = pickerRows[Math.min(pickerPick, pickerRows.length - 1)];
+			if (row) pickEmoji(row);
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			picker = null;
+			input?.focus();
+		}
+	}
+
 	function onKey(e: KeyboardEvent) {
 		if (e.isComposing) return;
 		const plainEnter = e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
@@ -156,7 +191,7 @@
 <div class="relative">
 	<input
 		bind:this={input}
-		class={inputClass}
+		class={[inputClass, 'pr-7']}
 		{placeholder}
 		aria-label={label}
 		role="combobox"
@@ -170,6 +205,30 @@
 		onclick={() => (cursor = input?.selectionStart ?? null)}
 		onblur={() => (cursor = null)}
 	/>
+	<button
+		type="button"
+		class="absolute top-1/2 right-1 grid size-5 -translate-y-1/2 place-items-center rounded text-[13px] opacity-60 hover:bg-(--vscode-toolbar-hoverBackground) hover:opacity-100"
+		aria-label={t('adeWorktrees.form.emojiPicker')}
+		title={t('adeWorktrees.form.emojiPicker')}
+		aria-expanded={!!picker}
+		{disabled}
+		onmousedown={(e) => e.preventDefault()}
+		onclick={() => (picker ? (picker = null) : openPicker())}>😀</button
+	>
+	{#if picker}
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions (keys of the search box) -->
+		<div class="absolute top-full right-0 z-30 mt-0.5 w-72 rounded-md border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-1 text-xs shadow-lg" role="dialog" tabindex="-1" aria-label={t('adeWorktrees.form.emojiPicker')} onkeydown={onPickerKey}>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input class={[INPUT, 'mb-1 h-6 py-0']} placeholder={t('adeWorktrees.form.emojiSearch')} aria-label={t('adeWorktrees.form.emojiSearch')} bind:value={pickerQuery} oninput={() => (pickerPick = 0)} autofocus />
+			<div class="max-h-60 overflow-y-auto" role="listbox" aria-label={t('adeWorktrees.form.emoji')}>
+				{#each pickerRows as e, i (e.shortcode)}
+					<button type="button" role="option" aria-selected={i === pickerPick} class={['flex w-full items-center gap-2 rounded px-1.5 py-0.5 text-left', i === pickerPick ? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)']} onpointerenter={() => (pickerPick = i)} onclick={() => pickEmoji(e)}><span class="w-5 text-center">{e.emoji}</span><span class="truncate font-mono">:{e.shortcode}:</span></button>
+				{:else}
+					<p class="px-1.5 py-2 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.emojiNone')}</p>
+				{/each}
+			</div>
+		</div>
+	{/if}
 	{#if emojis.length}
 		<div id="kingu-task-name-emoji" role="listbox" aria-label={t('adeWorktrees.form.emoji')} class="absolute top-full right-0 left-0 z-20 mt-0.5 max-h-56 overflow-auto rounded-sm border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) py-0.5 text-xs shadow-lg">
 			{#each emojis as e, i (e.shortcode)}

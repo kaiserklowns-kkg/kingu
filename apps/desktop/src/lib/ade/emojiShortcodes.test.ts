@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { activeShortcode, applySuggestion, completeShortcode, emojiToShortcodes, searchShortcodes } from './emojiShortcodes.ts';
+import { activeShortcode, applySuggestion, completeShortcode, emojiToShortcodes, insertEmoji, pickerEmojis, searchShortcodes } from './emojiShortcodes.ts';
 import { uniqueSlug } from './model.ts';
 import { attemptSlugs } from './attempts.ts';
 
@@ -62,5 +62,19 @@ describe('slugs spell emoji out', () => {
 		expect(uniqueSlug('🚀 launch page', new Set())).toBe('rocket-launch-page');
 		expect(uniqueSlug('🐛', new Set())).toBe('bug');
 		expect(attemptSlugs('🚀 go', 2, new Set()).slugs).toEqual(['rocket-go-a', 'rocket-go-b']);
+	});
+});
+
+describe('the emoji picker button', () => {
+	test('lists the defaults until a search', () => {
+		expect(pickerEmojis('')[0]).toEqual({ emoji: '🚀', shortcode: 'rocket' });
+		expect(pickerEmojis('').length).toBe(48);
+		expect(pickerEmojis('tada')[0].emoji).toBe('🎉');
+	});
+	test('inserts at the selection with spaces around it', () => {
+		expect(insertEmoji('', 0, 0, '🚀')).toEqual({ value: '🚀 ', cursor: 3 });
+		expect(insertEmoji('fix', 3, 3, '🐛')).toEqual({ value: 'fix 🐛 ', cursor: 7 });
+		expect(insertEmoji('fix login', 3, 3, '🐛')).toEqual({ value: 'fix 🐛 login', cursor: 6 });
+		expect(insertEmoji('fix old login', 4, 7, '🐛')).toEqual({ value: 'fix 🐛 login', cursor: 6 });
 	});
 });

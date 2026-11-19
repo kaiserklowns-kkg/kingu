@@ -380,6 +380,15 @@ test('emoji shortcodes in the task name turn into emoji and name the branch', as
 	await expect(page.getByText('→ kingu/bug-fix-rocket')).toBeVisible();
 	expect((await calls(page)).worktree_create ?? 0).toBe(0);
 
+	// The picker button: defaults first, a search, Enter puts it at the end.
+	await page.getByRole('button', { name: 'Pick an emoji' }).click();
+	const picker = page.getByRole('dialog', { name: 'Pick an emoji' });
+	await expect(picker.getByRole('option').first()).toContainText(':rocket:');
+	await picker.getByRole('textbox', { name: 'Search emoji' }).fill('tada');
+	await picker.getByRole('textbox', { name: 'Search emoji' }).press('Enter');
+	await expect(picker).toHaveCount(0);
+	await expect(name).toHaveValue('🐛 fix 🚀 🎉 ');
+
 	// Escape closes the list, not the form.
 	await name.pressSequentially(':sm');
 	await expect(list).toBeVisible();
