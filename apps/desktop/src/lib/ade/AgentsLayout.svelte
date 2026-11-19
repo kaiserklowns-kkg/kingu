@@ -213,6 +213,9 @@
 	let taskTitle = $state('');
 	let taskLinked = $state<LinkedIssue | null>(null);
 	let taskResolving = $state(false);
+	/** Parent task (Orca's Advanced → Parent workspace): nests the new task in the side bar, no git change. */
+	let nestUnder = $state('');
+	const parentChoices = $derived(adeTasks.list.filter((x) => !x.archived_at).toSorted((a, b) => b.updated_at - a.updated_at));
 	const takenSlugs = $derived(new Set([...adeTasks.list.map((t) => t.slug), ...adeTasks.worktrees.map((w) => w.slug ?? '')]));
 	let creature = $state('');
 	$effect(() => {
@@ -237,11 +240,12 @@
 		// A pasted URL still being looked up would name the task after the URL.
 		if (taskResolving) return;
 		const named = composerTitle(text);
-		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, nameTyped: !!taskTitle.trim() || !!taskLinked, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link });
+		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, nameTyped: !!taskTitle.trim() || !!taskLinked, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
 		draft = '';
 		draftFiles = [];
 		taskTitle = '';
 		taskLinked = null;
+		nestUnder = '';
 		nudge++;
 	}
 	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
@@ -405,6 +409,16 @@
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 											</select>
 										</label>
+										{#if parentChoices.length}
+											<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('adeWorktrees.form.parentHint')}>
+												<Icon name="layout" size={12} />
+												<span class="sr-only">{t('adeWorktrees.form.parent')}</span>
+												<select class="max-w-40 bg-transparent outline-none focus-visible:outline-none" aria-label={t('adeWorktrees.form.parent')} bind:value={nestUnder}>
+													<option value="">{t('adeWorktrees.form.parentNoneShort')}</option>
+													{#each parentChoices as p (p.slug)}<option value={p.slug}>{p.title}</option>{/each}
+												</select>
+											</label>
+										{/if}
 									{/snippet}
 								</Composer>
 							{/key}

@@ -47,6 +47,7 @@ export const adeWorktrees = {
 	'adeWorktrees.form.create': 'สร้างและเริ่ม',
 	'adeWorktrees.form.advanced': 'ขั้นสูง',
 	'adeWorktrees.form.parent': 'งานแม่',
+	'adeWorktrees.form.parentNoneShort': 'ไม่มีงานแม่',
 	'adeWorktrees.form.parentNone': 'ไม่มี',
 	'adeWorktrees.form.parentHint': 'จัดงานใหม่ไว้ใต้งานนี้ในแถบด้านข้าง branch และประวัติ git ไม่เปลี่ยน',
 	'adeWorktrees.form.branchName': 'ชื่อ branch',

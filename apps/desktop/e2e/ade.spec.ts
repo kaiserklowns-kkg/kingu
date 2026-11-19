@@ -296,6 +296,25 @@ test('a GitHub issue opens in a drawer to close, label, assign and comment', asy
 	expect(errors).toEqual([]);
 });
 
+test('the composer nests a new task under a parent', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	for (const [text, parent] of [['Parent work', ''], ['Child work', 'Parent work']]) {
+		await page.getByRole('button', { name: 'Now', exact: true }).click();
+		const description = page.getByRole('textbox', { name: /Describe the task/ });
+		if (!(await description.isVisible())) await page.getByRole('button', { name: 'New task', exact: true }).click();
+		if (parent) await page.getByRole('combobox', { name: 'Parent task' }).selectOption({ label: parent });
+		await description.fill(text);
+		await description.press('Enter');
+		await expect.poll(async () => page.evaluate((t) => (window as any).__e2e.tasks.some((x: { title: string }) => x.title === t), text)).toBe(true);
+	}
+	const tasks: { title: string; slug: string; parent?: string }[] = await page.evaluate(() => (window as any).__e2e.tasks);
+	const parentSlug = tasks.find((x) => x.title === 'Parent work')!.slug;
+	expect(tasks.find((x) => x.title === 'Child work')?.parent).toBe(parentSlug);
+	expect(errors).toEqual([]);
+});
+
 test('emoji shortcodes in the task name turn into emoji and name the branch', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });

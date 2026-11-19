@@ -47,6 +47,7 @@ export const adeWorktrees = {
 	'adeWorktrees.form.create': 'Create and start',
 	'adeWorktrees.form.advanced': 'Advanced',
 	'adeWorktrees.form.parent': 'Parent task',
+	'adeWorktrees.form.parentNoneShort': 'No parent',
 	'adeWorktrees.form.parentNone': 'None',
 	'adeWorktrees.form.parentHint': 'Nests the new task under this one in the side bar; branches and history do not change.',
 	'adeWorktrees.form.branchName': 'Branch name',
