@@ -28,6 +28,29 @@ test('creates a task from the Now page', async ({ page }) => {
 	expect(errors).toEqual([]);
 });
 
+test('the Now page composer takes an optional task name with emoji', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page, READY, { 'kingu.agent.cli': 'claude' });
+
+	await page.getByRole('button', { name: 'Open in Agents' }).click();
+	await page.getByRole('button', { name: 'New task', exact: true }).click();
+	const name = page.getByRole('combobox', { name: 'Task name' });
+	await name.pressSequentially(':bug: crash');
+	await expect(name).toHaveValue('🐛 crash');
+
+	// Enter in the name moves on to the prompt; it does not start the task.
+	await name.press('Enter');
+	const description = page.getByRole('textbox', { name: /Describe the task/ });
+	await expect(description).toBeFocused();
+	expect((await calls(page)).worktree_create ?? 0).toBe(0);
+
+	await description.fill('Fix the crash on save');
+	await expect(page.getByText('kingu/bug-crash', { exact: true })).toBeVisible();
+	await description.press('Enter');
+	await expect.poll(async () => (await calls(page)).worktree_create ?? 0).toBeGreaterThan(0);
+	expect(errors).toEqual([]);
+});
+
 test('the Agents layout opens browser tabs from the tab row', async ({ page }) => {
 	const errors = watchErrors(page);
 	await openApp(page);

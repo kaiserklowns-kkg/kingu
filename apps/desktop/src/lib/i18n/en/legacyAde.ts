@@ -87,6 +87,8 @@ export const legacyAde = {
 	'legacyAde.agentsLayout.startInTerminal': 'Start in the terminal',
 	'legacyAde.agentsLayout.composerTitle': 'What should Arkai do?',
 	'legacyAde.agentsLayout.composerText': 'Each task gets its own worktree, so you can run several at once without conflicts',
+	'legacyAde.agentsLayout.taskName': 'Task name',
+	'legacyAde.agentsLayout.taskNamePlaceholder': 'Task name (optional): :emoji: or an issue URL',
 	'legacyAde.agentsLayout.composerPlaceholder': 'Describe the task, e.g. add a button to export the report as CSV…',
 	'legacyAde.agentsLayout.forkFromBranch': 'Fork from branch',
 	'legacyAde.agentsLayout.newWorktreePrefix': 'Create a new worktree on branch',

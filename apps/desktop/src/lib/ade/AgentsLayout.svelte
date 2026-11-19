@@ -30,6 +30,10 @@
 	import { ADE_SHORTCUTS } from './adeShortcuts.ts';
 	import RecentTabSwitcher from './RecentTabSwitcher.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
+	import TaskNameField from './TaskNameField.svelte';
+	import type { LinkedIssue } from './issueUrlLookup';
+	import { suggestCreatureName } from './taskNaming';
+	import { uniqueSlug } from './model';
 	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
@@ -203,12 +207,41 @@
 		nudge++; // remounts the composer, which autofocuses
 	}
 
+	// The optional name above the prompt (Orca's NewWorkspaceComposerNameSection): emoji names and
+	// a pasted issue URL work as in the New Task form (TaskNameField.svelte). Empty: the prompt's
+	// first line names the task, or an unused marine creature when it has nothing a branch keeps.
+	let taskTitle = $state('');
+	let taskLinked = $state<LinkedIssue | null>(null);
+	let taskResolving = $state(false);
+	const takenSlugs = $derived(new Set([...adeTasks.list.map((t) => t.slug), ...adeTasks.worktrees.map((w) => w.slug ?? '')]));
+	let creature = $state('');
+	$effect(() => {
+		if (!creature || takenSlugs.has(creature)) creature = suggestCreatureName(takenSlugs);
+	});
+	function composerTitle(text: string): { title: string; generated: boolean } {
+		if (taskTitle.trim()) return { title: taskTitle.trim(), generated: false };
+		const line = taskTitleFromPrompt(text);
+		if (/[a-z0-9]/i.test(line.normalize('NFKD'))) return { title: line, generated: false };
+		return { title: creature, generated: true };
+	}
+	const branchPreview = $derived(taskTitle.trim() || draft.trim() ? `kingu/${uniqueSlug(composerTitle(draft).title, takenSlugs)}` : 'kingu/…');
+	/** A taken link fills an empty prompt from the issue, then the prompt takes the focus. */
+	function onIssueLinked(issue: LinkedIssue) {
+		if (!draft.trim()) draft = issue.prompt;
+		nudge++;
+	}
+
 	// Orca: creation runs in the background — the composer clears at once, the side bar shows a
 	// progress row (with Retry on failure), and the new task opens when its worktree exists.
 	function start(text: string, attachments: Attachment[]) {
-		adeTasks.startCreate({ title: taskTitleFromPrompt(text), prompt: text, base, attachments, agent: agentPick || undefined });
+		// A pasted URL still being looked up would name the task after the URL.
+		if (taskResolving) return;
+		const named = composerTitle(text);
+		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link });
 		draft = '';
 		draftFiles = [];
+		taskTitle = '';
+		taskLinked = null;
 		nudge++;
 	}
 	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
@@ -348,6 +381,18 @@
 								<h1 class="text-lg font-semibold text-(--vscode-foreground)">{t('legacyAde.agentsLayout.composerTitle')}</h1>
 								<p class="text-[13px] text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.composerText')}</p>
 							</div>
+							<div class="space-y-1">
+								<TaskNameField
+									bind:title={taskTitle}
+									bind:linked={taskLinked}
+									bind:resolving={taskResolving}
+									label={t('legacyAde.agentsLayout.taskName')}
+									placeholder={t('legacyAde.agentsLayout.taskNamePlaceholder')}
+									inputClass="h-8 w-full rounded-lg border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-3 text-[13px] text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
+									onlink={onIssueLinked}
+									onenter={(e) => (e.preventDefault(), nudge++)}
+								/>
+							</div>
 							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder={t('legacyAde.agentsLayout.composerPlaceholder')} onsubmit={start}>
 									{#snippet left()}
@@ -370,7 +415,7 @@
 									</button>
 								{/each}
 							</div>
-							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.newWorktreePrefix')} <span class="font-mono">kingu/…</span> {t('legacyAde.agentsLayout.newWorktreeSuffix', { cli: cliSetting || 'claude' })}</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.newWorktreePrefix')} <span class="font-mono">{branchPreview}</span> {t('legacyAde.agentsLayout.newWorktreeSuffix', { cli: cliSetting || 'claude' })}</p>
 							{#if recent.length}
 								<section class="pt-5" aria-label={t('legacyAde.agentsLayout.recentTasks')}>
 									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.recentTasks')}</h2>

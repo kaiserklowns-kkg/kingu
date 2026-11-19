@@ -87,6 +87,8 @@ export const legacyAde = {
 	'legacyAde.agentsLayout.startInTerminal': 'เริ่มใน terminal',
 	'legacyAde.agentsLayout.composerTitle': 'อยากให้ Arkai ทำอะไร',
 	'legacyAde.agentsLayout.composerText': 'แต่ละงานได้ worktree ของตัวเอง ทำหลายงานพร้อมกันได้โดยไม่ชนกัน',
+	'legacyAde.agentsLayout.taskName': 'ชื่องาน',
+	'legacyAde.agentsLayout.taskNamePlaceholder': 'ชื่องาน (ไม่บังคับ): :emoji: หรือ URL ของ issue',
 	'legacyAde.agentsLayout.composerPlaceholder': 'อธิบายงาน เช่น เพิ่มปุ่ม export รายงานเป็น CSV…',
 	'legacyAde.agentsLayout.forkFromBranch': 'แตกจาก branch',
 	'legacyAde.agentsLayout.newWorktreePrefix': 'สร้าง worktree ใหม่บน branch',
