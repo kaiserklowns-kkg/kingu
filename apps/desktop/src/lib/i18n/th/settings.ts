@@ -230,6 +230,7 @@ export const settings = {
 	'settings.pane.agentChat': 'หน้าตาและการทำงานของแชทกับ agent',
 	'settings.pane.notifications': 'การแจ้งเตือนบนเดสก์ท็อปเมื่อ agent มีความเคลื่อนไหว',
 	'settings.pane.worktrees': 'ชื่อ branch, base branch, สคริปต์ และการแสดงผลของ worktree',
+	'settings.pane.browser': 'การเปิดลิงก์ การค้นหา การซูม และโปรไฟล์ข้อมูลของเบราว์เซอร์ในแอป',
 	'settings.pane.workspaceCleanup': 'ล้าง workspace ที่เสร็จแล้วอัตโนมัติ ตั้งกฎได้ทั้งทุกโปรเจกต์หรือรายโปรเจกต์',
 	'settings.pane.repository': 'สคริปต์ ชื่อ ไอคอน และสีของ repository',
 	'settings.pane.adeSidebar': 'สิ่งที่แถบข้างและบอร์ดของ ADE แสดง และวิธีแสดง',

@@ -46,3 +46,16 @@ test('saves a setting and keeps it after reload', async ({ page }) => {
 	await expect(page.getByRole('textbox', { name: 'Shell', exact: true })).toHaveValue('/bin/bash');
 	expect(errors).toEqual([]);
 });
+
+test('Settings has a Browser page with the search engine and default zoom', async ({ page }) => {
+	const errors = watchErrors(page);
+	await openApp(page);
+	await openSettings(page);
+
+	await page.getByRole('navigation', { name: 'Settings' }).getByRole('button', { name: 'Browser', exact: true }).click();
+	await expect(page.getByRole('heading', { name: 'Browser', exact: true })).toBeVisible();
+	await expect(page.getByText('Search Engine', { exact: true })).toBeVisible();
+	await expect(page.getByText('Default Zoom', { exact: true })).toBeVisible();
+	await expect(page.getByText('Open Links In App', { exact: true })).toBeVisible();
+	expect(errors).toEqual([]);
+});

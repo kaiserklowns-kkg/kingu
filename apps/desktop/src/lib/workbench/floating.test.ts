@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { anchorButton, anchorRect, browserTitle, browserUrl, buttonPos, isNewTabPage, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
+import { anchorButton, anchorRect, browserTitle, browserUrl, buttonPos, defaultBrowserZoom, isNewTabPage, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect } from './floating';
 
 test('default panel sits bottom right, 920×560', () => {
 	expect(defaultRect(1440, 900)).toEqual({ width: 920, height: 560, left: 496, top: 256 });
@@ -64,4 +64,21 @@ test('the app-served new-tab page reads as blank', () => {
 	expect(isNewTabPage('about:blank')).toBe(true);
 	expect(isNewTabPage('http://localhost:3000')).toBe(false);
 	expect(browserTitle('kingu-newtab://localhost/')).toBe('New Tab');
+});
+
+test('a bare word is searched with the chosen engine, Google otherwise', () => {
+	expect(browserUrl('react hooks')).toBe('https://www.google.com/search?q=react%20hooks');
+	expect(browserUrl('react hooks', 'duckduckgo')).toBe('https://duckduckgo.com/?q=react%20hooks');
+	expect(browserUrl('react hooks', 'kagi')).toBe('https://kagi.com/search?q=react%20hooks');
+	expect(browserUrl('react hooks', 'altavista')).toBe('https://www.google.com/search?q=react%20hooks');
+	// An address is never searched, whatever the engine.
+	expect(browserUrl('example.com', 'bing')).toBe('https://example.com');
+});
+
+test('the default zoom snaps to a zoom step', () => {
+	expect(defaultBrowserZoom(100)).toBe(1);
+	expect(defaultBrowserZoom(125)).toBe(1.25);
+	expect(defaultBrowserZoom(120)).toBe(1.25);
+	expect(defaultBrowserZoom(10)).toBe(0.5);
+	expect(defaultBrowserZoom('x')).toBe(1);
 });

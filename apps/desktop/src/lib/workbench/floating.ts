@@ -85,8 +85,22 @@ export function resizeRect(r: Rect, edge: Edge, dx: number, dy: number): Rect {
 	return { left, top, width, height };
 }
 
-/** The search a bare word (not a host) goes to, like Orca's address bar. */
-const SEARCH = 'https://www.google.com/search?q=';
+/** Where a bare word (not a host) is searched: Orca's engines (shared/browser-url.ts), `kingu.browser.searchEngine`. */
+export const SEARCH_ENGINES = {
+	google: 'https://www.google.com/search?q=',
+	duckduckgo: 'https://duckduckgo.com/?q=',
+	bing: 'https://www.bing.com/search?q=',
+	kagi: 'https://kagi.com/search?q='
+} as const;
+export type SearchEngine = keyof typeof SEARCH_ENGINES;
+const searchBase = (engine: unknown) => SEARCH_ENGINES[(typeof engine === 'string' && Object.hasOwn(SEARCH_ENGINES, engine) ? engine : 'google') as SearchEngine];
+
+/** Page zoom steps of a browser tab (⌘= ⌘-), and `kingu.browser.defaultZoom` snapped to one. */
+export const BROWSER_ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+export function defaultBrowserZoom(percent: unknown): number {
+	const want = typeof percent === 'number' && Number.isFinite(percent) ? percent / 100 : 1;
+	return BROWSER_ZOOMS.reduce((best, z) => (Math.abs(z - want) < Math.abs(best - want) ? z : best), 1 as number);
+}
 /** This machine's names and addresses: dev servers there speak http, not https. */
 const LOCAL = /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\]|(?:\d{1,3}\.){3}\d{1,3}|[^\s/]+\.localhost)(?::\d+)?(?:\/|$)/i;
 const HOST = /^[^\s/]+\.[a-z]{2,}(?::\d+)?(?:\/.*)?$/i;
@@ -96,7 +110,7 @@ const HOST_PORT = /^[^\s/]+:\d+(?:\/.*)?$/i;
  * The URL a browser tab loads: a bare host is https, except this machine (dev servers are http);
  * anything that is not a host is a web search (Orca's address bar).
  */
-export function browserUrl(raw: string): string {
+export function browserUrl(raw: string, engine?: unknown): string {
 	const s = raw.trim();
 	if (!s) return 'about:blank';
 	if (/^about:/i.test(s)) return s;
@@ -104,7 +118,7 @@ export function browserUrl(raw: string): string {
 	if (LOCAL.test(s)) return `http://${s}`;
 	if (HOST.test(s)) return `https://${s}`;
 	if (HOST_PORT.test(s)) return `http://${s}`;
-	return SEARCH + encodeURIComponent(s.toWellFormed());
+	return searchBase(engine) + encodeURIComponent(s.toWellFormed());
 }
 
 /** Whether a URL is the floating browser's own new-tab page (the app serves it). */

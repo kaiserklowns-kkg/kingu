@@ -296,7 +296,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['browserClientHostedRemoteEnabled', null, 'needs-feature', 'in-app browser'],
 	['browserGuestWorktreeRetentionBudget', null, 'needs-feature', 'in-app browser'],
 	['browserSshWorkspaceRoutingEnabled', null, 'needs-feature', 'in-app browser over SSH'],
-	['ui.browserDefaultZoomLevel', null, 'needs-feature', 'in-app browser'],
+	['ui.browserDefaultZoomLevel', 'kingu.browser.defaultZoom', 'added', 'percent of new tabs and of ⌘0'],
 	['mobile*', null, 'needs-feature', 'mobile pairing / emulator (8 settings)'],
 	['androidSdkPath', null, 'needs-feature', 'mobile emulator'],
 	['machineName', null, 'needs-feature', 'mobile pairing'],

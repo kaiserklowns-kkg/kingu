@@ -523,7 +523,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 	},
 	{
 		id: 'kingu.browser.profile',
-		group: 'Agent',
+		group: 'Browser',
 		type: 'string',
 		default: '',
 		description:
@@ -531,11 +531,32 @@ const CORE_SETTINGS: SettingSchema[] = [
 	},
 	{
 		id: 'kingu.browser.openLinksInApp',
-		group: 'Agent',
+		group: 'Browser',
 		type: 'boolean',
 		default: true,
 		description:
 			'ลิงก์เว็บที่ตามจาก terminal ใน Agents layout เปิดเป็นแท็บเบราว์เซอร์ใน worktree นั้น (แบบ Orca) กด Shift ค้างไว้ตอนคลิกเพื่อเปิดในเบราว์เซอร์ของระบบแทน (Web links followed in an Agents-layout terminal open as a browser tab of that worktree, like Orca; hold Shift too for the system browser.)'
+	},
+	{
+		id: 'kingu.browser.searchEngine',
+		group: 'Browser',
+		type: 'string',
+		enum: ['google', 'duckduckgo', 'bing', 'kagi'],
+		enumDescriptions: ['Google', 'DuckDuckGo', 'Bing', 'Kagi'],
+		default: 'google',
+		description:
+			'ข้อความที่ไม่ใช่ที่อยู่เว็บในช่อง address ของเบราว์เซอร์ในแอปจะค้นด้วย search engine นี้ (Orca: Default Search Engine) (Text that is not an address in the in-app browser address bar is searched with this engine.)'
+	},
+	{
+		id: 'kingu.browser.defaultZoom',
+		group: 'Browser',
+		type: 'number',
+		default: 100,
+		minimum: 50,
+		maximum: 300,
+		integer: true,
+		description:
+			'ระดับซูม (%) ของแท็บเบราว์เซอร์ที่เปิดใหม่ และระดับที่ ⌘0 กลับไป ซูมของแต่ละแท็บด้วย ⌘= ⌘- ยังปรับได้ (Orca: Default Zoom) (Zoom, in percent, of newly opened browser tabs and the level ⌘0 returns to; ⌘= ⌘- still zoom each tab.)'
 	},
 	{
 		id: 'kingu.agent.statusHooks',
