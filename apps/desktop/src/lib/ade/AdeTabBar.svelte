@@ -3,6 +3,7 @@
 	// session (or the new-task composer for the folder itself), its terminals, files and task diffs
 	// opened from the right side bar (italic while a preview, a dot while unsaved), and "+" for a
 	// new terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	import { untrack } from 'svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -151,6 +152,20 @@
 	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
 	let quickMenu = $state<{ x: number; y: number } | null>(null);
 	let addingQuick = $state(false);
+	let quickChevron: HTMLButtonElement | undefined = $state();
+	function toggleQuickMenu() {
+		if (quickMenu) return void (quickMenu = null);
+		const r = quickChevron?.getBoundingClientRect();
+		if (r) quickMenu = { x: r.right - 300, y: r.bottom + 2 };
+	}
+	// Toggle Quick Commands Menu from the palette or its key (not on mount).
+	let seenQuickRequest = untrack(() => adeLayout.quickMenuRequest);
+	$effect(() => {
+		const n = adeLayout.quickMenuRequest;
+		if (n === seenQuickRequest) return;
+		seenQuickRequest = n;
+		untrack(toggleQuickMenu);
+	});
 	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
 	let editingQuick = $state<{ label: string; command: string; scope: 'user' | 'repo' } | null>(null);
 	const QUICK_ID = 'kingu.terminal.quickCommands';
@@ -382,13 +397,11 @@
 				>
 			{/if}
 			<button
+				bind:this={quickChevron}
 				class={['grid w-5 place-items-center text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)', primaryQuick ? 'rounded-r-md' : 'rounded-md']}
 				title={tr('legacyAde.adeTabBar.quickCommands')}
 				aria-label={tr('legacyAde.adeTabBar.quickCommands')}
-				onclick={(e) => {
-					const r = e.currentTarget.getBoundingClientRect();
-					quickMenu = { x: r.right - 300, y: r.bottom + 2 };
-				}}><Icon name={primaryQuick ? 'chevronDown' : 'terminal'} size={12} /></button
+				onclick={toggleQuickMenu}><Icon name={primaryQuick ? 'chevronDown' : 'terminal'} size={12} /></button
 			>
 		</div>
 	{/if}

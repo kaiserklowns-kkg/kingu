@@ -59,6 +59,8 @@ const TABS_STORE = 'kingu.adeTabs';
 class AdeLayout {
 	/** The center shows a page from the side bar's top (Tasks = the board, Automations or Issues) instead of a worktree. */
 	page = $state<CenterPage | null>(null);
+	/** Toggle Quick Commands Menu (a command): the tab bar opens or closes its list on each change. */
+	quickMenuRequest = $state(0);
 	/** The side bar's search box: filters worktrees by title or branch. */
 	query = $state('');
 	terminals = $state<Record<string, TerminalTab[]>>({});

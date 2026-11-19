@@ -32,7 +32,9 @@ export const ADE_SHORTCUTS = {
 	equalizePanes: { id: 'kingu.ade.terminal.equalizePaneSizes', title: 'Equalize Pane Sizes' },
 	closePane: { id: 'kingu.ade.terminal.closePane', title: 'Close Pane' },
 	// Find (⌘F) is shared with the IDE panel: workbench.action.terminal.focusFind.
-	clear: { id: 'kingu.ade.terminal.clear', title: 'Clear Terminal', key: 'cmd+k' }
+	clear: { id: 'kingu.ade.terminal.clear', title: 'Clear Terminal', key: 'cmd+k' },
+	// Orca's tab.openQuickCommandsMenu: no default key; assign one in Keyboard Shortcuts.
+	quickCommands: { id: 'kingu.ade.tab.quickCommands', title: 'Toggle Quick Commands Menu' }
 } satisfies Record<string, Shortcut>;
 
 /** Orca's Select Tab 1–9: Ctrl+n on macOS, Alt+n elsewhere. */

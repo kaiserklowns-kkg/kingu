@@ -71,6 +71,13 @@ test('the Quick Commands button runs the command in a new terminal tab', async (
 	await expect(page.getByRole('tab', { name: /Tests/ })).toBeVisible();
 	await expect(page.getByRole('button', { name: /^Run Tests in a new terminal/ })).toBeVisible();
 
+	// Toggle Quick Commands Menu (no default key, like Orca) opens the list from the palette.
+	await page.keyboard.press('Meta+Shift+P');
+	await page.keyboard.type('Toggle Quick Commands Menu');
+	await page.getByRole('option', { name: /Toggle Quick Commands Menu/ }).first().click();
+	await expect(page.getByRole('dialog', { name: 'Quick Commands' })).toBeVisible();
+	await page.keyboard.press('Escape');
+
 	// The shell gets the line as typed (no quoting), each once.
 	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data))).toEqual(expect.arrayContaining(['bun run dev\r', 'bun test && echo done\r']));
 	const writes: string[] = await page.evaluate(() => (window as any).__e2e.writes.map((w: { data: string }) => w.data));
