@@ -17,8 +17,6 @@
 //!   their tombstone expired); ids older than `MAX_NEW_AGE_MS` are refused unless a row exists.
 //! - Rows are never capped by count, only pruned once expired. Loaded rows still `pending` or
 //!   `unknown` stay `unknown`: the host may have died mid-effect, so a retry must not re-run it.
-// Not called by the app yet (only by its own tests): the wiring lands with the supervisor work.
-#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 
@@ -46,10 +44,12 @@ pub fn op_timestamp(id: &str) -> Option<u64> {
 }
 
 /// A fresh operation id for `now_ms`.
+#[cfg(test)]
 pub fn new_operation_id(now_ms: u64) -> String {
   format!("{now_ms:013}-{}", random_hex32())
 }
 
+#[cfg(test)]
 fn random_hex32() -> String {
   let bytes = crate::mobile::random_bytes(16).unwrap_or_else(|_| {
     use std::hash::{BuildHasher, Hasher};
@@ -172,14 +172,12 @@ impl Ledger {
     self
   }
 
-  pub fn len(&self) -> usize {
-    self.rows.len()
-  }
-
+  #[cfg(test)]
   pub fn is_empty(&self) -> bool {
     self.rows.is_empty()
   }
 
+  #[cfg(test)]
   pub fn get(&self, caller: &str, op: &str) -> Option<&Row> {
     self.rows.get(&key(caller, op))
   }
