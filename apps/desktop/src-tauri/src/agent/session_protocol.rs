@@ -156,6 +156,7 @@ pub enum PartKind {
 /// Agent Host names.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::large_enum_variant)] // actions are built once and serialized; boxing would only add noise
 pub enum Action {
   #[serde(rename = "session/added")]
   SessionAdded { session: SessionState },
@@ -677,7 +678,7 @@ impl HookCursor {
       }
     }
     let mut turn = s.turn.clone();
-    let mut open_turn = |out: &mut Vec<Action>, cur: &mut Option<String>, prompt: Option<String>| -> String {
+    let open_turn = |out: &mut Vec<Action>, cur: &mut Option<String>, prompt: Option<String>| -> String {
       if let Some(t) = cur.clone() {
         return t;
       }
@@ -708,7 +709,6 @@ impl HookCursor {
         if let Some(t) = &s.turn {
           // A new prompt while a turn is open (a steered message): the open one is done.
           out.push(Action::TurnComplete { session_id: sid.clone(), turn_id: t.clone(), is_error: false, result: None });
-          turn = None;
         }
         self.lead_done = false;
         let t = next_turn(s);

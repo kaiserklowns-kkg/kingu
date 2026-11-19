@@ -32,6 +32,7 @@
 	import { indentGuideOffsets, isMultiSelect, isOpenToSide, rowClick, type ClickMode, type MultiSelectModifier } from './workbenchOptions';
 	import { listWheel } from './listWheel';
 	import { commands } from './commands.svelte';
+	import { menuLeft, menuTop } from './menus';
 
 	let { workspaceName }: { workspaceName: string } = $props();
 
@@ -62,6 +63,11 @@
 	let open = $state(true);
 	let inputError = $state('');
 	let menu = $state<{ x: number; y: number; target: string | null } | null>(null);
+	let menuBox = $state<HTMLDivElement>();
+	let menuSize = $state({ width: 0, height: 0 });
+	$effect(() => {
+		if (menuBox) menuSize = { width: menuBox.offsetWidth, height: menuBox.offsetHeight };
+	});
 	let tree: HTMLDivElement | undefined = $state();
 
 	// Multi-root: every root folder is a row of the tree (the first one's files keep relative paths).
@@ -342,10 +348,8 @@
 		e.stopPropagation();
 		// Right-click inside the selection keeps it (the menu acts on all of it), like VS Code.
 		if (target === null || !explorer.isSelected(target)) select(target);
-		// Keep the menu inside the window.
-		const x = Math.min(e.clientX, window.innerWidth - 240);
-		const y = Math.min(e.clientY, window.innerHeight - 260);
-		menu = { x, y, target };
+		// The rendered menu is kept inside the window once its real size is measured.
+		menu = { x: e.clientX, y: e.clientY, target };
 	}
 
 	// --- Find (⌥⌘F / F3, VS Code's list.find tree FindWidget) and type navigation ------------------
@@ -824,9 +828,10 @@
 	<div
 		role="menu"
 		aria-label={m.target ? baseName(m.target) : workspaceName}
-		class="fixed z-50 min-w-[220px] rounded-md border border-[color:var(--vscode-menu-border,#454545)] bg-[var(--vscode-menu-background,#1F1F1F)] py-1 text-[color:var(--vscode-menu-foreground,#CCCCCC)] shadow-[0_2px_8px_rgba(0,0,0,0.36)]"
-		style:left="{m.x}px"
-		style:top="{m.y}px"
+		bind:this={menuBox}
+		class="fixed z-50 max-h-[calc(100vh-8px)] min-w-[220px] overflow-y-auto rounded-md border border-[color:var(--vscode-menu-border,#454545)] bg-[var(--vscode-menu-background,#1F1F1F)] py-1 text-[color:var(--vscode-menu-foreground,#CCCCCC)] shadow-[0_2px_8px_rgba(0,0,0,0.36)]"
+		style:left="{menuLeft(m.x, menuSize.width, window.innerWidth)}px"
+		style:top="{menuTop(m.y, menuSize.height, window.innerHeight)}px"
 	>
 		{#each menuItems(m.target) as it, i (i)}
 			{#if it === 'sep'}

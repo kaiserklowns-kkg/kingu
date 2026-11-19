@@ -7,6 +7,8 @@ import { defineConfig } from '@playwright/test';
 // panel, every Activity Bar view, ADE tasks and Settings.
 export default defineConfig({
 	testDir: './e2e',
+	// Boots the app once so the first spec does not pay for Vite's cold start (e2e/warmup.ts).
+	globalSetup: './e2e/warmup.ts',
 	timeout: 30_000,
 	expect: { timeout: 10_000 },
 	fullyParallel: false,

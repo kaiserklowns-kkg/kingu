@@ -57,7 +57,7 @@ fn hosts_go_through_the_filter_and_nothing_else_gets_out() {
     let mut a = vec!["/usr/bin/curl", "-s", "-f", "--max-time", "10"];
     a.extend_from_slice(extra);
     a.push(url);
-    snap_exec(root.path(), &["--network", "on", "--host", &host], &a.iter().map(|s| *s).collect::<Vec<_>>())
+    snap_exec(root.path(), &["--network", "on", "--host", &host], &a.to_vec())
   };
   assert_eq!(curl(&format!("http://127.0.0.1:{allowed}/"), &[]), (true, "ok".to_string()));
   // Another host (here: port) is refused by the proxy.

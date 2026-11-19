@@ -13,7 +13,7 @@ describe('workspace cleanup labels', () => {
 	test('keep causes use plain words and waiting includes both numbers', () => {
 		expect(formatWorkspaceCleanupKeepCause('rules-off')).toBe('no rule on');
 		expect(formatWorkspaceCleanupKeepCause('uncommitted-changes')).toBe('uncommitted changes');
-		expect(formatWorkspaceCleanupKeepCause('archive-unavailable')).toBe('archive not available');
+		expect(formatWorkspaceCleanupKeepCause('already-archived')).toBe('already archived');
 		expect(formatWorkspaceCleanupKeepCause('waiting', { elapsedDays: 3, afterDays: 7 })).toBe('waiting 3 of 7 days');
 	});
 });

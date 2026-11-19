@@ -9,7 +9,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
-import { paneRow, type AgentRow, type PtyListing } from './agentPresence';
+import { paneRow, topRow, type AgentRow, type PtyListing } from './agentPresence';
 import { applyTitle, type TitleTrack } from './agentTitle';
 import { adeLayout } from './adeLayout.svelte';
 import { tabPanes } from './adeTabs';
@@ -66,6 +66,25 @@ class PaneAgents {
 				if (row) out.push(row);
 			}
 		return out;
+	}
+
+	/**
+	 * The agent of one terminal tab (Orca: every agent terminal tab shows its own state). A tab with
+	 * split panes shows its most urgent agent: needs you, then working, then idle.
+	 */
+	tabRow(slug: string, tabId: string): AgentRow | undefined {
+		if (slug === PRIMARY) return undefined;
+		const tab = (adeLayout.terminals[slug] ?? []).find((t) => t.id === tabId);
+		if (!tab) return undefined;
+		const now = Math.max(this.now, cliSessions.now);
+		const rows: AgentRow[] = [];
+		for (const pane of tabPanes(tab)) {
+			const key = adeLayout.ptyKey(slug, pane);
+			const p = this.panes[key];
+			const row = p && paneRow({ id: key, ...p }, now);
+			if (row) rows.push(row);
+		}
+		return topRow(rows);
 	}
 
 	/** The tab id of a pane's PTY key in task `slug`, for labels. */

@@ -31,7 +31,7 @@ export async function mockTauri(
 	setup: SetupReport = READY,
 	workspace = '/tmp/kingu-e2e',
 	initialSettings: Record<string, unknown> = {},
-	initialOpts: { probeFail?: boolean; live?: boolean } = {}
+	initialOpts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[]; jira?: boolean } = {}
 ) {
 	await page.addInitScript(
 		({ setup, workspace, initialSettings, initialOpts }) => {
@@ -86,6 +86,46 @@ export async function mockTauri(
 				open_files: []
 			};
 			const calls: Record<string, number> = {};
+			/** What was typed into terminals (`pty_write`), in order. */
+			const writes: { key: string; data: string }[] = [];
+			/** Terminals started (`pty_spawn`): their key and the argv they run, in order. */
+			const spawns: { key: string; run: string[] | null }[] = [];
+			/** Agent status hook events a test pushes (`__e2e.hookEvents`), served by `agent_hook_read`. */
+			const hookEvents: object[] = [];
+			const jiraIssue = {
+				key: 'OPS-7',
+				number: 7,
+				title: 'Rotate the staging keys',
+				url: 'https://acme.atlassian.net/browse/OPS-7',
+				state: 'In Progress',
+				state_category: 'indeterminate',
+				priority: 'High',
+				issue_type: 'Task',
+				project: 'OPS',
+				labels: [] as { name: string; color: string }[],
+				assignees: ['E2E'],
+				updated_at: '2026-11-18T00:00:00Z',
+				author: 'Ops Bot',
+				body: 'Keys expire on Friday.',
+				body_truncated: false,
+				comments: [] as { author: string; body: string; created_at: string }[],
+				comments_omitted: 0
+			};
+			/** The folder's one GitHub issue (gh issue list / view / close / edit / comment). */
+			const issue = {
+				number: 12,
+				title: 'Login fails on Safari',
+				url: 'https://github.com/acme/app/issues/12',
+				state: 'OPEN',
+				labels: [{ name: 'bug', color: 'd73a4a' }],
+				assignees: [] as string[],
+				updated_at: '2026-11-01T00:00:00Z',
+				author: 'octo',
+				body: 'Steps to reproduce…',
+				body_truncated: false,
+				comments: [] as { author: string; body: string; created_at: string }[],
+				comments_omitted: 0
+			};
 			const handlers: Record<string, (args: any) => unknown> = {
 				app_info: () => ({ name: 'Kingu', version: '0.0.0-e2e', os: 'macos', arch: 'aarch64', workspace }),
 				workspace_state: () => state,
@@ -143,7 +183,27 @@ export async function mockTauri(
 					return taskList;
 				},
 				projects_list: () => [],
-				worktree_list: () => [],
+				project_groups_list: () => [],
+				ssh_targets_list: () => [],
+				ssh_forwards_list: () => [],
+				ssh_unrestored_forwards: () => [],
+				ssh_projects_list: () => [],
+				worktree_list: () => initialOpts.worktrees ?? [],
+				// Link issue at create: the issue a pasted GitHub URL names.
+				gh_project_issue_view: (args: any) => ({
+					number: 12,
+					title: 'Login fails on Safari',
+					url: args?.url,
+					state: 'OPEN',
+					labels: [],
+					assignees: [],
+					updated_at: '2026-11-01T00:00:00Z',
+					author: 'octo',
+					body: 'Steps to reproduce…',
+					body_truncated: false,
+					comments: [],
+					comments_omitted: 0
+				}),
 				worktree_create: (args: any) => ({
 					path: `${workspace}/.kingu/worktrees/${args?.slug}`,
 					head: null,
@@ -166,12 +226,36 @@ export async function mockTauri(
 				worktree_list_files: () => [],
 				pty_list: () => [],
 				pty_attach: () => null,
-				pty_spawn: () => ({ replay: '', spawned: true }),
-				pty_write: () => null,
+				pty_spawn: (args: any) => (spawns.push({ key: String(args?.key), run: args?.run ?? null }), { replay: '', spawned: true }),
+				// Jira, when a test connects it (`jira`): one issue to list, read and comment on.
+				jira_status: () => (initialOpts.jira ? { name: 'E2E', email: 'e2e@example.com', site: 'acme.atlassian.net' } : null),
+				jira_issues_list: () => (initialOpts.jira ? [jiraIssue] : []),
+				jira_issue_view: () => jiraIssue,
+				jira_issue_comment: (args: any) => (jiraIssue.comments.push({ author: 'E2E', body: String(args?.body), created_at: '2026-11-19T00:00:00Z' }), null),
+				// Native message boxes answer null (no button) unless a test sets `__e2e.messageAnswer`.
+				message_box: () => (window as any).__e2e?.messageAnswer ?? null,
+				gh_issues_list: () => [issue],
+				gh_issue_view: () => issue,
+				gh_issue_set_state: (args: any) => ((issue.state = args?.open ? 'OPEN' : 'CLOSED'), null),
+				gh_issue_edit: (args: any) => {
+					const e = args?.edit ?? {};
+					issue.labels = [...issue.labels.filter((l) => !(e.removeLabels ?? []).includes(l.name)), ...(e.addLabels ?? []).map((name: string) => ({ name, color: 'ededed' }))];
+					if (typeof e.title === 'string') issue.title = e.title;
+					if (typeof e.body === 'string') issue.body = e.body;
+					issue.assignees = [...issue.assignees.filter((a) => !(e.removeAssignees ?? []).includes(a)), ...(e.addAssignees ?? []).map((a: string) => (a === '@me' ? 'e2e' : a))];
+					return null;
+				},
+				gh_issue_comment: (args: any) => (issue.comments.push({ author: 'e2e', body: String(args?.body), created_at: '2026-11-19T00:00:00Z' }), null),
+				agent_hook_settings: () => '/tmp/kingu-e2e-hooks.json',
+				agent_hook_read: (args: any) => {
+					const offset = Number(args?.offset ?? 0);
+					return { events: hookEvents.slice(offset), offset: hookEvents.length };
+				},
+				pty_write: (args: any) => (writes.push({ key: String(args?.key), data: String(args?.data) }), null),
 				pty_resize: () => null,
 				pty_kill: () => null,
 				pty_foreground: () => ({}),
-				agent_cli_found: () => [],
+				agent_cli_found: (args: any) => ((args?.names ?? []) as string[]).filter((n) => n === 'claude' || n === 'codex'),
 				agent_runtimes: () => [
 					{ id: 'claude', name: 'Claude Code', installed: true, models: [] },
 					{ id: 'opencode', name: 'OpenCode', protocol: 'acp', features: { rewind: false, models: true }, custom: false },
@@ -334,7 +418,7 @@ export async function mockTauri(
 				metadata: { currentWindow: { label: 'main' }, currentWebview: { windowLabel: 'main', label: 'main' } }
 			};
 			(window as any).__TAURI_INTERNALS__ = internals;
-			(window as any).__e2e = { calls, files };
+			(window as any).__e2e = { calls, files, writes, spawns, hookEvents, tasks: taskList };
 			(window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: noop };
 			(window as any).matchMedia ??= () => ({ matches: false, addEventListener: noop, removeEventListener: noop });
 		},

@@ -4,7 +4,8 @@
 //   which keeps that one and offers the others to Clean Up Tasks.
 // - New Task from This Task: a task forked from another task's branch (its PR goes into it).
 // - Hibernation (kingu.agent.hibernation, experimental, off by default): idle finished agent CLIs
-//   are closed every minute by the planner in hibernation.ts; the task resumes its session.
+//   are closed every minute by the planner in hibernation.ts; the task continues its session by
+//   itself when its terminal comes back on screen (Orca's reveal wake), once per return.
 
 import { untrack } from 'svelte';
 import { commands } from '#lib/workbench/commands.svelte.ts';
@@ -22,12 +23,17 @@ import { cliSessions } from './cliSessions.svelte';
 import { cliOf } from './agentCli';
 import { profileOf } from './agentProfiles';
 import { attemptLetter, attemptSlugs, losersOf, MAX_ATTEMPTS, validModel } from './attempts';
-import { hibernationCandidates, idleMs, TICK_MS, type HibernationRow } from './hibernation';
+import { autoResumeOnReturn, hibernationCandidates, idleMs, TICK_MS, type HibernationRow } from './hibernation';
 import type { TaskMeta } from './model';
 
 class Attempts {
 	/** New Task from This Task: the task whose branch the New Task form forks from. */
 	stackOn = $state<string | null>(null);
+	/** Tasks whose CLI launch is in flight: the claim that keeps one task from starting twice. */
+	resuming = $state<Record<string, true>>({});
+	/** Tasks whose CLI this run's hibernation closed (the armed wakes), and the closes still being saved. */
+	armed = new Set<string>();
+	closing = new Map<string, Promise<void>>();
 
 	/**
 	 * Best-of-N: creates one task per model (`''` = the agent's default) from the same prompt, in
@@ -62,6 +68,39 @@ class Attempts {
 		}
 		if (first) status.flash(t('adeAttempts.started', { count: slugs.length, title }), 6000);
 		return first;
+	}
+
+	/** Hibernation closes the task's idle CLI and arms its wake for the next return. */
+	hibernate(slug: string) {
+		this.armed.add(slug);
+		const done = adeTasks
+			.hibernate(slug)
+			.catch((e) => void notifications.error(String(e)))
+			.finally(() => this.closing.delete(slug));
+		this.closing.set(slug, done);
+	}
+
+	/**
+	 * Starts the task's CLI again, continuing its session unless `fresh`: the one way in for the
+	 * return wake and for the resume buttons, so a click racing a return starts one process.
+	 * False when a launch was in flight already or the CLI did not start.
+	 */
+	async resume(slug: string, fresh = false): Promise<boolean> {
+		if (this.resuming[slug]) return false;
+		this.resuming[slug] = true;
+		try {
+			// A close still being saved would mark the new CLI hibernated.
+			await this.closing.get(slug);
+			await adeTasks.resumeCli(slug, fresh);
+		} catch (e) {
+			notifications.error(t('adeAttempts.hibernated.resumeFailed', { title: adeTasks.find(slug)?.meta.title ?? slug, error: String(e) }));
+		} finally {
+			delete this.resuming[slug];
+		}
+		const started = cliSessions.has(slug);
+		// A failed launch stays armed for the next return (Orca re-arms its wake target).
+		if (started) this.armed.delete(slug);
+		return started;
 	}
 
 	/** The compare view of the task's group. */
@@ -113,7 +152,12 @@ const resumable = (meta: TaskMeta) => {
 export function installAttempts(): () => void {
 	/** When each CLI's terminal was last on screen. */
 	const seen: Record<string, number> = {};
-	const shown = () => (appMode.isAgents && !adeLayout.board && adeLayout.activeTab(adeLayout.key) === 'main' && document.visibilityState === 'visible' ? adeLayout.key : null);
+	let windowVisible = $state(document.visibilityState === 'visible');
+	const onVisibility = () => (windowVisible = document.visibilityState === 'visible');
+	document.addEventListener('visibilitychange', onVisibility);
+	const shown = () => (appMode.isAgents && !adeLayout.board && adeLayout.activeTab(adeLayout.key) === 'main' && windowVisible ? adeLayout.key : null);
+	/** The terminal on screen at the last look; undefined before the first. */
+	let lastShown: string | null | undefined;
 	let timer: ReturnType<typeof setInterval> | undefined;
 	const tick = () => {
 		const now = Date.now();
@@ -139,7 +183,7 @@ export function installAttempts(): () => void {
 		});
 		for (const slug of hibernationCandidates(rows, now, idleMs(settings.get<number>('kingu.agent.hibernationIdleMinutes')))) {
 			clientLog('info', `hibernating the idle agent CLI of ${slug}`);
-			void adeTasks.hibernate(slug).catch((e) => notifications.error(String(e)));
+			attempts.hibernate(slug);
 		}
 	};
 	const stopEffects = $effect.root(() => {
@@ -157,6 +201,28 @@ export function installAttempts(): () => void {
 		$effect(() => {
 			const front = shown();
 			if (front) untrack(() => (seen[front] = Date.now()));
+		});
+		// Returning to a hibernated CLI's terminal continues its session (hibernation.ts). Not tied to
+		// the setting: a CLI already asleep still wakes after the setting is turned off, as in Orca.
+		$effect(() => {
+			const front = shown();
+			untrack(() => {
+				const prev = lastShown;
+				lastShown = front;
+				const meta = front ? adeTasks.find(front)?.meta : undefined;
+				const task = meta
+					? {
+							armed: attempts.armed.has(meta.slug),
+							hibernated: !!meta.hibernated_at || attempts.closing.has(meta.slug),
+							running: cliSessions.has(meta.slug),
+							resumable: resumable(meta),
+							resuming: !!attempts.resuming[meta.slug]
+						}
+					: null;
+				if (!front || !autoResumeOnReturn(prev, front, task)) return;
+				clientLog('info', `resuming the hibernated agent CLI of ${front}`);
+				void attempts.resume(front);
+			});
 		});
 	});
 	const active = () => (appMode.isAgents ? appMode.activeSession : null);
@@ -185,6 +251,7 @@ export function installAttempts(): () => void {
 	return () => {
 		if (timer) clearInterval(timer);
 		timer = undefined;
+		document.removeEventListener('visibilitychange', onVisibility);
 		stopEffects();
 		unregister.forEach((u) => u());
 	};

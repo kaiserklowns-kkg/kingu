@@ -31,6 +31,9 @@
 
 	// "Has one" / "None" for the PR and ticket facets; pressing the active one goes back to "any".
 	const PRESENCE = ['some', 'none'] as const;
+	// "Only" / "Hide" for the archived and comment facets; pressing the active one goes back to "any".
+	const TRI = ['only', 'exclude'] as const;
+	const TRI_FACETS = ['archived', 'comment'] as const;
 	const CHIP = 'rounded-full border px-2.5 py-0.5 text-xs transition-colors';
 	const chip = (on: boolean) => [CHIP, on ? 'border-(--vscode-focusBorder) bg-(--vscode-list-inactiveSelectionBackground)' : 'border-(--vscode-widget-border) text-(--vscode-descriptionForeground) hover:bg-(--vscode-list-hoverBackground)'];
 	const INPUT = 'h-7 rounded-md border border-(--vscode-input-border) bg-(--vscode-input-background) px-2 text-xs outline-none focus:border-(--vscode-focusBorder)';
@@ -120,6 +123,14 @@
 					{#each BROWSE_TICKET_SOURCES as s (s)}<button class={chip(f.ticket.sources.includes(s))} aria-pressed={f.ticket.sources.includes(s)} onclick={() => edit((n) => (n.ticket.sources = toggle(n.ticket.sources, s)))}>{t(`workspaceCleanup.filter.ticket.${s}` as never)}</button>{/each}
 				</div>
 			</div>
+			{#each TRI_FACETS as k (k)}
+				<div>
+					<span class={LABEL}>{t(`workspaceCleanup.filter.${k}`)}</span>
+					<div class="flex flex-wrap gap-1.5">
+						{#each TRI as v (v)}<button class={chip(f.status[k] === v)} aria-pressed={f.status[k] === v} onclick={() => edit((n) => (n.status[k] = n.status[k] === v ? 'any' : v))}>{t(`workspaceCleanup.filter.triState.${v}`)}</button>{/each}
+					</div>
+				</div>
+			{/each}
 			<div class="sm:col-span-2">
 				<div class="mb-1 flex items-center gap-2">
 					<span class="text-[11px] font-medium text-(--vscode-descriptionForeground)">{t('workspaceCleanup.filter.blockers')}</span>

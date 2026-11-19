@@ -223,6 +223,7 @@ fn webview(app: &AppHandle, label: &str) -> Result<Webview, String> {
 
 /// Opens a browser tab's webview over the panel (logical px, relative to the window's client area).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
 pub async fn floating_browser_open(
   app: AppHandle,
   label: String,

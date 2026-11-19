@@ -3,6 +3,7 @@
 	// session (or the new-task composer for the folder itself), its terminals, files and task diffs
 	// opened from the right side bar (italic while a preview, a dot while unsaved), and "+" for a
 	// new terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	import { untrack } from 'svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
@@ -22,13 +23,23 @@
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import NewTabMenu, { type NewTabItem } from './NewTabMenu.svelte';
+	import QuickCommandDialog from './QuickCommandDialog.svelte';
+	import { quickPromptArgv } from './quickPrompt';
 	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
 	import { enabledBins } from './agentCli';
 	import { isMarkdownEditor } from './adeMarkdown.ts';
 	import type { AdeTab } from './adeTabs';
 	import { splittable } from './adeSplit';
 	import { terminalBells } from './terminalBell.svelte';
+	import { paneAgents } from './paneAgents.svelte';
+	import { rowCardStatus, rowText } from './agentPresence';
+	import CardStatusDot from './CardStatusDot.svelte';
+	import { paneProgram } from './paneProgram.svelte';
+	import { programLabel, withPercent } from './programStatus';
+	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
+	import { primaryQuickCommand, quickCommands, withoutQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
@@ -133,6 +144,117 @@
 		} else adeLayout.newTerminal(key);
 	}
 
+	// Orca's Quick Commands split button (tab-bar/TabBarQuickCommandsMenu.tsx, terminal.mdx): the
+	// main part runs the command used last in a new terminal tab of this worktree, the chevron
+	// lists every `kingu.terminal.quickCommands` entry and Add Command (the setting).
+	const RECENT_QUICK = 'kingu.ade.quickCommand.recent';
+	// Commands (typed into a shell) and prompts (Orca's Prompt action: the agent CLI started with it).
+	type QuickKind = 'command' | 'prompt';
+	type Quick = { kind: QuickKind; label: string; command: string };
+	const QUICK_IDS: Record<QuickKind, string> = { command: 'kingu.terminal.quickCommands', prompt: 'kingu.terminal.quickPrompts' };
+	const quick = $derived<Quick[]>([
+		...quickCommands(settings.get<Record<string, unknown>>(QUICK_IDS.command)).map((q) => ({ ...q, kind: 'command' as const })),
+		...quickCommands(settings.get<Record<string, unknown>>(QUICK_IDS.prompt)).map((q) => ({ ...q, kind: 'prompt' as const }))
+	]);
+	let recentQuick = $state<string | null>(readRecentQuick());
+	const primaryQuick = $derived(primaryQuickCommand(quick, recentQuick));
+	let quickMenu = $state<{ x: number; y: number } | null>(null);
+	let addingQuick = $state(false);
+	let quickChevron: HTMLButtonElement | undefined = $state();
+	function toggleQuickMenu() {
+		if (quickMenu) return void (quickMenu = null);
+		const r = quickChevron?.getBoundingClientRect();
+		if (r) quickMenu = { x: r.right - 300, y: r.bottom + 2 };
+	}
+	// Toggle Quick Commands Menu from the palette or its key (not on mount).
+	let seenQuickRequest = untrack(() => adeLayout.quickMenuRequest);
+	$effect(() => {
+		const n = adeLayout.quickMenuRequest;
+		if (n === seenQuickRequest) return;
+		seenQuickRequest = n;
+		untrack(toggleQuickMenu);
+	});
+	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
+	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo'; agent?: string } | null>(null);
+	const AGENTS_ID = 'kingu.terminal.quickPromptAgents';
+	/** A prompt's own agent (kingu.terminal.quickPromptAgents), '' for kingu.agent.cli. */
+	const promptAgent = (label: string): string => {
+		const v = settings.get<Record<string, unknown>>(AGENTS_ID)?.[label];
+		return typeof v === 'string' ? v.trim() : '';
+	};
+	const quickScope = (q: Pick<Quick, 'kind' | 'label'>): 'user' | 'repo' => {
+		const repo = settings.repo.values[QUICK_IDS[q.kind]];
+		return repo && typeof repo === 'object' && q.label in repo ? 'repo' : 'user';
+	};
+	async function deleteQuick(q: Quick) {
+		if (!(await ask(tr('legacyAde.quickCommand.deleteAsk', { label: q.label }), { title: tr('legacyAde.quickCommand.deleteTitle'), kind: 'warning', okLabel: tr('legacyAde.quickCommand.deleteOk') }))) return;
+		const scope = quickScope(q);
+		const id = QUICK_IDS[q.kind];
+		const layer = (scope === 'repo' ? settings.repo.values : settings.user.values)[id];
+		await settings.set(id, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
+		const agents = (scope === 'repo' ? settings.repo.values : settings.user.values)[AGENTS_ID];
+		if (q.kind === 'prompt' && agents && typeof agents === 'object' && q.label in agents) await settings.set(AGENTS_ID, withoutQuickCommand(agents, q.label), scope).catch((e) => status.error(String(e)));
+	}
+	function readRecentQuick(): string | null {
+		try {
+			return localStorage.getItem(RECENT_QUICK);
+		} catch {
+			return null;
+		}
+	}
+	function runQuick(q: Quick) {
+		if (q.kind === 'prompt') {
+			const cli = promptAgent(q.label) || settings.get<string>('kingu.agent.cli') || 'claude';
+			const argv = quickPromptArgv(cli, q.command);
+			if (!argv) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: cli }), 8000);
+			adeLayout.newTerminal(key, { title: q.label, run: argv });
+		} else {
+			runCommandLine(q);
+		}
+		recentQuick = q.label;
+		try {
+			localStorage.setItem(RECENT_QUICK, q.label);
+		} catch {
+			// The last used command is a convenience; the first one runs without it.
+		}
+	}
+	function runCommandLine(q: Quick) {
+		// A line past the tty's input limit (1024 bytes on macOS) typed before the shell is ready
+		// is cut; a long one goes through the daemon, which waits for the line editor (`sh -c`).
+		const long = new TextEncoder().encode(q.command).length > 900;
+		adeLayout.newTerminal(key, long ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command });
+	}
+	// Orca's menu: a search over label and command text, the command used last first.
+	const quickItems = $derived<NewTabItem[]>([
+		...quick
+			.map((q, i) => ({ q, i }))
+			.toSorted((a, b) => Number(a.q.kind === 'prompt') - Number(b.q.kind === 'prompt') || Number(b.q.label === primaryQuick?.label) - Number(a.q.label === primaryQuick?.label))
+			.map(({ q, i }) => ({
+				id: `quick:${i}`,
+				label: q.label,
+				description: q.command.split('\n')[0],
+				group: q.kind === 'prompt' ? tr('legacyAde.quickCommand.prompts') : tr('legacyAde.adeTabBar.quickCommands'),
+				actions: [
+					{ id: `quickEdit:${i}`, icon: 'edit' as const, label: tr('legacyAde.quickCommand.edit', { label: q.label }) },
+					{ id: `quickDelete:${i}`, icon: 'trash' as const, label: tr('legacyAde.quickCommand.delete', { label: q.label }) }
+				]
+			})),
+		{ id: 'quick:add', label: tr('legacyAde.adeTabBar.addQuickCommand') }
+	]);
+	function runQuickItem(id: string) {
+		if (id === 'quick:add') return void (addingQuick = true);
+		const action = /^(quickEdit|quickDelete):(\d+)$/.exec(id);
+		if (action) {
+			const entry = quick[Number(action[2])];
+			if (!entry) return;
+			if (action[1] === 'quickDelete') return void deleteQuick(entry);
+			editingQuick = { ...entry, scope: quickScope(entry), agent: entry.kind === 'prompt' ? promptAgent(entry.label) : undefined };
+			return;
+		}
+		const q = quick[Number(id.slice(6))];
+		if (q) runQuick(q);
+	}
+
 	const key = $derived(adeLayout.key);
 	const view = $derived(key ? adeTasks.find(key) : undefined);
 	const tabs = $derived(adeLayout.tabs(key));
@@ -225,7 +347,30 @@
 						<span class={['truncate', t.preview && 'italic']} title={t.kind === 'diff' ? tr('legacyAde.adeTabBar.diffOfTask', { file: fileOf(t.key) }) : t.key}>{t.label}</span>
 						{#if t.kind === 'diff'}<Icon name="git" size={12} />{/if}
 					{:else}
-						<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} /><span class="truncate">{t.label}</span>
+						<!-- An agent typed into this terminal (or started from the new-tab menu) shows its own state, like the main agent tab. -->
+						{@const row = t.kind === 'terminal' ? paneAgents.tabRow(key, t.id) : undefined}
+						<!-- OSC 7501 (Orca's progress ring): a reported percentage turns a live state glyph into a ring filled that far. -->
+						{@const program = t.kind === 'terminal' && !row ? paneProgram.tab(key, t.id) : undefined}
+						{#if row}
+							{@const percent = paneProgram.agentProgress(row.id, row.state)}
+							{#if percent !== undefined}
+								<span class="grid size-3 shrink-0 place-items-center" title={withPercent(rowText(row), percent)}><ProgressRing {percent} tone={row.state === 'working' ? 'working' : 'attention'} label={withPercent(rowText(row), percent)} /></span>
+							{:else}
+								<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={rowText(row)} title={rowText(row)}><CardStatusDot status={rowCardStatus(row)} size="size-2" /></span>
+							{/if}
+							{#if row.agent}<AgentIcon agent={row.agent} size={14} />{:else}<Icon name="terminal" size={14} />{/if}
+						{:else if program}
+							<!-- A program that is not an agent: a ring for its percentage, else the spinner (no percentage given), a question mark (blocked), a green (done) or red (error) dot. -->
+							{#if program.progress !== undefined}
+								<span class="grid size-3 shrink-0 place-items-center" title={programLabel(program)}><ProgressRing percent={program.progress} tone={program.status === 'working' ? 'working' : 'attention'} label={programLabel(program)} /></span>
+							{:else}
+								<span class="grid size-3 shrink-0 place-items-center" role="status" aria-label={programLabel(program)} title={programLabel(program)}><CardStatusDot status={program.status} size="size-2" /></span>
+							{/if}
+							<Icon name="terminal" size={14} />
+						{:else}
+							<Icon name={t.kind === 'compose' ? 'agent' : 'terminal'} size={14} />
+						{/if}
+						<span class="truncate">{t.label}</span>
 					{/if}
 					{#if !active && terminalBells.has(key, t.id)}
 						<!-- kingu.agent.notifications.terminalBell: this terminal rang while hidden. -->
@@ -266,6 +411,26 @@
 		</button>
 	</div>
 	<span class="flex-1"></span>
+	{#if workspace.root}
+		<div class="my-auto mr-1 flex h-[22px] items-stretch rounded-md text-xs">
+			{#if primaryQuick}
+				{@const q = primaryQuick}
+				<button
+					class="flex max-w-40 items-center gap-1 rounded-l-md px-1.5 text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
+					title={tr('legacyAde.adeTabBar.runQuickCommand', { label: q.label, command: q.command })}
+					aria-label={tr('legacyAde.adeTabBar.runQuickCommand', { label: q.label, command: q.command })}
+					onclick={() => runQuick(q)}><Icon name="play" size={12} /><span class="truncate">{q.label}</span></button
+				>
+			{/if}
+			<button
+				bind:this={quickChevron}
+				class={['grid w-5 place-items-center text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)', primaryQuick ? 'rounded-r-md' : 'rounded-md']}
+				title={tr('legacyAde.adeTabBar.quickCommands')}
+				aria-label={tr('legacyAde.adeTabBar.quickCommands')}
+				onclick={toggleQuickMenu}><Icon name={primaryQuick ? 'chevronDown' : 'terminal'} size={12} /></button
+			>
+		</div>
+	{/if}
 	{#if attention}
 		<button
 			class="needs-input my-auto mr-2 flex h-[22px] items-center gap-1.5 rounded-md px-2 text-xs text-(--vscode-editorWarning-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
@@ -276,6 +441,15 @@
 		</button>
 	{/if}
 </div>
+
+{#if addingQuick}
+	<QuickCommandDialog onclose={() => (addingQuick = false)} onsaved={(label) => (recentQuick = label)} />
+{:else if editingQuick}
+	<QuickCommandDialog initial={editingQuick} onclose={() => (editingQuick = null)} onsaved={(label) => (recentQuick = label)} />
+{/if}
+{#if quickMenu}
+	<NewTabMenu details items={quickItems} label={tr('legacyAde.adeTabBar.quickCommands')} placeholder={tr('legacyAde.adeTabBar.searchQuickCommands')} x={quickMenu.x} y={quickMenu.y} onRun={runQuickItem} onClose={() => (quickMenu = null)} />
+{/if}
 
 {#if create}
 	{@const at = create}

@@ -216,6 +216,15 @@ export const ade = {
 	'ade.agentRow.idle': 'Waiting for you',
 	'ade.agentRow.unknown': 'Agent',
 
+	// programStatus.ts: what a program in a terminal reports about itself (OSC 7501), on its tab
+	'ade.program.working': 'Working',
+	'ade.program.blocked': 'Needs you',
+	'ade.program.permission': 'Needs approval',
+	'ade.program.question': 'Needs an answer',
+	'ade.program.auth': 'Sign-in required',
+	'ade.program.done': 'Done',
+	'ade.program.failed': 'Failed',
+
 	// terminalBell.svelte.ts: kingu.agent.notifications.terminalBell
 	'ade.bell.title': 'Terminal bell: {task}',
 	'ade.bell.body': '{tab} needs your attention',
@@ -275,5 +284,19 @@ export const ade = {
 	'ade.archive.unarchive': 'Unarchive',
 	'ade.lineage.sleepAll': 'Sleep with Descendants ({count})',
 	'ade.lineage.deleteAll': 'Delete with Descendants ({count})…',
-	'ade.lineage.deleteAsk': 'Delete {title} and its {count|# descendant|# descendants}? {names}'
+	'ade.lineage.deleteAsk': 'Delete {title} and its {count|# descendant|# descendants}? {names}',
+	'ade.amend.item': 'Commit (Amend)',
+	'ade.amend.busy': 'Amend',
+	'ade.amend.unchanged': 'Nothing to amend: nothing is staged and the message is the same',
+	'ade.amend.confirmTitle': 'Amend Pushed Commit',
+	'ade.amend.confirm': 'The last commit is already on {refs}. Amending replaces it with a new commit: the remote keeps the old copy until you force push, and anyone who already pulled it will have diverged. Amend anyway?',
+	'ade.amend.confirmOk': 'Amend',
+	'ade.amend.forceTitle': 'Force Push',
+	'ade.amend.forceAsk': '{upstream} still has the old copy of the commit you amended. Force push with lease to replace it? The push is refused if the remote changed since your last fetch.',
+	'ade.amend.forceOk': 'Force Push',
+	'ade.amend.forceLater': 'Not pushed: use Force Push in the commit menu to update {upstream}',
+	'ade.amend.forceTip': '{upstream} still has the commit you amended: force push with lease to replace it',
+	'ade.amend.pullBackTitle': 'Undo the Amend?',
+	'ade.amend.pullBack': '{upstream} still has the commit you amended. Pulling merges that old copy back into this branch next to the amended one. Pull anyway?',
+	'ade.amend.pullBackOk': 'Pull Anyway'
 } as const;

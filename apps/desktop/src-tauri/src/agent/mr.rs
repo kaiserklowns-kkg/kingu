@@ -312,15 +312,35 @@ pub fn pick_for_branch(list: &Value, source_id: u64) -> Option<u64> {
   open.or_else(|| list.first()).and_then(|m| m["iid"].as_u64())
 }
 
-/// The merge request of `branch`, looked up in the route's target (where a fork's MR lives).
-pub fn find(t: &dyn Transport, r: &Route, branch: &str) -> Result<Option<u64>, String> {
+/// The merge requests of `branch`, newest first, from the route's target (where a fork's MR lives).
+fn branch_mrs(t: &dyn Transport, r: &Route, branch: &str) -> Result<Value, String> {
   let query = url::form_urlencoded::Serializer::new(String::new())
     .append_pair("source_branch", branch)
     .append_pair("order_by", "updated_at")
     .append_pair("sort", "desc")
     .append_pair("per_page", &BRANCH_MRS.to_string())
     .finish();
-  Ok(pick_for_branch(&call(t, Request::get(r.target.api(&format!("/merge_requests?{query}"))))?, r.source_id))
+  call(t, Request::get(r.target.api(&format!("/merge_requests?{query}"))))
+}
+
+/// The merge request of `branch`, looked up in the route's target (where a fork's MR lives).
+pub fn find(t: &dyn Transport, r: &Route, branch: &str) -> Result<Option<u64>, String> {
+  Ok(pick_for_branch(&branch_mrs(t, r, branch)?, r.source_id))
+}
+
+/// The head commit of the newest merged merge request in `list` from `source_id`.
+pub fn pick_merged_head(list: &Value, source_id: u64) -> Option<String> {
+  list
+    .as_array()?
+    .iter()
+    .filter(|m| m["source_project_id"].as_u64() == Some(source_id) && m["state"] == "merged")
+    .find_map(|m| m["sha"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned))
+}
+
+/// The head commit `branch`'s newest merged merge request had (Workspace Cleanup's fallback when
+/// the base moved on after the merge).
+pub fn merged_head(t: &dyn Transport, r: &Route, branch: &str) -> Result<Option<String>, String> {
+  Ok(pick_merged_head(&branch_mrs(t, r, branch)?, r.source_id))
 }
 
 /// One merge request with its approvals and head pipeline's jobs. Approvals and jobs are extras:
@@ -844,6 +864,30 @@ mod tests {
     assert_eq!(seen[0], "/projects/acme%2Fsub%2Fapp/merge_requests?source_branch=kingu%2Ffix-login&order_by=updated_at&sort=desc&per_page=20");
     assert_eq!(&seen[1..], ["/projects/acme%2Fsub%2Fapp/merge_requests/12", "/projects/acme%2Fsub%2Fapp/merge_requests/12/approvals", "/projects/acme%2Fsub%2Fapp/pipelines/1490311/jobs?per_page=100"]);
     assert_eq!(pick_for_branch(&json!([]), 61204), None);
+  }
+
+  #[test]
+  fn finds_the_head_of_the_branchs_merged_merge_request() {
+    let list = json!([
+      { "iid": 15, "state": "merged", "source_project_id": 70555, "sha": "fff000" },
+      { "iid": 14, "state": "opened", "source_project_id": 61204, "sha": "eee111" },
+      { "iid": 12, "state": "merged", "source_project_id": 61204, "sha": "abc123" },
+      { "iid": 9, "state": "merged", "source_project_id": 61204, "sha": "old999" }
+    ]);
+    let t = Fake::new(&[(200, list.clone())]);
+    assert_eq!(merged_head(&t, &own(), "kingu/fix-login").unwrap().as_deref(), Some("abc123"), "the newest merged one of ours, not another fork's or an open one");
+    assert_eq!(t.requests()[0].path, "/projects/acme%2Fsub%2Fapp/merge_requests?source_branch=kingu%2Ffix-login&order_by=updated_at&sort=desc&per_page=20");
+    let t = Fake::new(&[(200, list)]);
+    merged_head(&t, &fork(), "kingu/fix-login").unwrap();
+    assert!(t.requests()[0].path.starts_with("/projects/acme%2Fsub%2Fapp/merge_requests?"), "a fork's MRs are read from the parent");
+    assert_eq!(pick_merged_head(&json!([{ "state": "opened", "source_project_id": 61204, "sha": "eee111" }]), 61204), None);
+    assert_eq!(pick_merged_head(&json!([{ "state": "merged", "source_project_id": 70555, "sha": "fff000" }]), 61204), None);
+    assert_eq!(pick_merged_head(&json!([{ "state": "merged", "source_project_id": 61204 }]), 61204), None);
+    assert_eq!(pick_merged_head(&json!([{ "state": "merged", "source_project_id": 61204, "sha": "" }]), 61204), None);
+    assert_eq!(pick_merged_head(&json!([]), 61204), None);
+    assert_eq!(pick_merged_head(&json!({ "message": "x" }), 61204), None);
+    let t = Fake::new(&[(404, json!({ "message": "404 Not found" }))]);
+    assert!(merged_head(&t, &own(), "kingu/fix-login").is_err());
   }
 
   #[test]

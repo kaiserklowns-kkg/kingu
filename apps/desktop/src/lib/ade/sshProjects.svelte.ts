@@ -50,7 +50,7 @@ class SshProjects {
 	#timer: ReturnType<typeof setInterval> | undefined;
 
 	async load() {
-		this.list = await invoke<RemoteProject[]>('ssh_projects_list').catch(() => []);
+		this.list = (await invoke<RemoteProject[]>('ssh_projects_list').catch(() => [])) ?? [];
 		if (!sshHosts.targets.length && this.list.length) await sshHosts.refresh();
 	}
 

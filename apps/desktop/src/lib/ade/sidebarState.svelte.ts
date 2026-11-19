@@ -16,6 +16,7 @@ export function sidebarPrefs(): SidebarPrefs {
 		sortBy: settings.get<SortBy>('kingu.sidebar.sortBy'),
 		showActiveOnly: settings.get<boolean>('kingu.sidebar.showActiveOnly') === true,
 		hideAutomation: settings.get<boolean>('kingu.sidebar.hideAutomationTasks') === true,
+		hideCliCreated: settings.get<boolean>('kingu.sidebar.hideCliCreatedTasks') === true,
 		hideSleeping: settings.get<boolean>('kingu.sidebar.hideSleeping') === true,
 		hideDetached: settings.get<boolean>('kingu.sidebar.hideDetachedHead') === true
 	};

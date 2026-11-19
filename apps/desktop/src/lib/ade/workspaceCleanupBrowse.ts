@@ -1,7 +1,7 @@
 // Workspace Cleanup, browse side: filtering and sorting the dialog's rows with Orca 1.4.259's filter
 // state (workspaceCleanupFilters.ts). Orca's state covers more than Kingu knows about a task, so
 // this applies the facets Kingu has data for and the dialog offers only those: search, idle days,
-// Git state, branch, task status, agent state and blockers. A facet the dialog never sets stays at
+// Git state, branch, task status, archived, comment, agent state and blockers. A facet the dialog never sets stays at
 // its default and filters nothing, so a state saved by another build still loads (normalize…).
 
 import { getWorkspaceCleanupAgentRank, getWorkspaceCleanupBlockerSeverity, getWorkspaceCleanupGitRank, type WorkspaceCleanupAgentState, type WorkspaceCleanupBlockerValue, type WorkspaceCleanupFilterState, type WorkspaceCleanupGitState, type WorkspaceCleanupReviewState, type WorkspaceCleanupSortField, type WorkspaceCleanupSortState, type WorkspaceCleanupTicketSource } from './workspaceCleanupFilters';
@@ -10,7 +10,7 @@ import { candidateInput, type CleanupCandidate, type CleanupTaskContext } from '
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The blockers Kingu can know (the ones a task can have), most protective first. */
-export const BROWSE_BLOCKERS: readonly WorkspaceCleanupBlockerValue[] = ['active-workspace', 'live-agent', 'dirty-editor-buffer', 'unpushed-commits', 'dirty-files', 'ignored-files', 'git-status-error'];
+export const BROWSE_BLOCKERS: readonly WorkspaceCleanupBlockerValue[] = ['active-workspace', 'live-agent', 'running-terminal', 'dirty-editor-buffer', 'unpushed-commits', 'dirty-files', 'ignored-files', 'pinned', 'git-status-error'];
 export const BROWSE_GIT_STATES: readonly WorkspaceCleanupGitState[] = ['clean', 'dirty', 'unpushed', 'unknown'];
 export const BROWSE_AGENT_STATES: readonly WorkspaceCleanupAgentState[] = ['idle', 'working', 'permission'];
 /** Review states the dialog offers; `unknown` is a PR that has not been read (or is not recognised). */
@@ -38,6 +38,8 @@ export type CleanupRowFacts = {
 	review: WorkspaceCleanupReviewState | null;
 	/** Where the task's linked ticket lives; `null` when it has none. */
 	ticket: WorkspaceCleanupTicketSource | null;
+	archived: boolean;
+	hasComment: boolean;
 };
 
 /** The slice of Kingu's PR status the cleanup facet needs. */
@@ -77,7 +79,7 @@ export function rowFacts(
 	candidate: CleanupCandidate | undefined,
 	ctx: CleanupTaskContext | undefined,
 	sizeBytes: number | null = null,
-	extra: { pr?: CleanupPrFact | null; issue?: { provider?: string } | null } = {}
+	extra: { pr?: CleanupPrFact | null; issue?: { provider?: string } | null; archived?: boolean; comment?: string | null } = {}
 ): CleanupRowFacts {
 	const blockers = candidate ? (candidateInput(candidate, ctx).blockers as readonly string[]).filter((b) => (BROWSE_BLOCKERS as readonly string[]).includes(b)) as WorkspaceCleanupBlockerValue[] : [];
 	return {
@@ -92,7 +94,9 @@ export function rowFacts(
 		createdAt: task.createdAt,
 		sizeBytes,
 		review: reviewStateOf(extra.pr),
-		ticket: ticketSourceOf(extra.issue)
+		ticket: ticketSourceOf(extra.issue),
+		archived: !!extra.archived,
+		hasComment: !!extra.comment?.trim()
 	};
 }
 
@@ -122,6 +126,8 @@ export function matchesCleanupFilters(row: CleanupRowFacts, f: WorkspaceCleanupF
 	if (f.git.branchQuery.trim() && !contains(row.branch, f.git.branchQuery)) return false;
 	if (f.status.workspaceStatuses.length && !f.status.workspaceStatuses.includes(row.status)) return false;
 	if (f.agent.states.length && !f.agent.states.includes(row.agent)) return false;
+	if (f.status.archived !== 'any' && row.archived !== (f.status.archived === 'only')) return false;
+	if (f.status.comment !== 'any' && row.hasComment !== (f.status.comment === 'only')) return false;
 	if (f.safety.blockers.length) {
 		const has = f.safety.blockers.filter((b) => row.blockers.includes(b));
 		if (f.safety.blockerMode === 'any-of' ? !has.length : has.length) return false;

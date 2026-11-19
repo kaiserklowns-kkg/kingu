@@ -3,6 +3,7 @@
 
 import type { TaskStatus } from './model';
 import { t } from '#lib/i18n/index.ts';
+import { emojiToShortcodes } from './emojiShortcodes.ts';
 
 export type WorktreeAction =
 	| 'open'
@@ -126,8 +127,11 @@ export function jumpItems(
 		}
 		const m = match(q, x.title);
 		const b = m ? null : match(q, x.branch);
+		// Orca: an emoji-named workspace matches by its shortcode (🚀 fix → "rocket").
+		const e = m || b || !/[^\x00-\x7f]/.test(x.title) ? null : match(q, emojiToShortcodes(x.title).replace(/\s+/g, ' ').trim());
 		if (m) scored.push({ item: { id: x.slug, label: x.title, description: describe(x), positions: m.positions }, score: m.score + 1000 });
 		else if (b) scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: b.score });
+		else if (e) scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: e.score + 500 });
 	}
 	const f = match(q, folder.name);
 	if (f) scored.push({ item: { ...folderItem, positions: f.positions }, score: f.score });

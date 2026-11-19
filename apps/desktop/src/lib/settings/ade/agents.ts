@@ -98,7 +98,7 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		type: 'boolean',
 		default: false,
 		description:
-			'ทดลอง: ปิด agent CLI ที่ทำรอบเสร็จแล้วและว่างนานเกิน kingu.agent.hibernationIdleMinutes เพื่อคืนหน่วยความจำ เฉพาะ CLI ที่ resume session ได้และไม่ได้แสดงอยู่บนจอ งานจะขึ้นปุ่มให้ทำงานต่อใน session เดิมได้ในคลิกเดียว (Orca: experimentalAgentHibernation) (Experimental: closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session with one click.)'
+			'ทดลอง: ปิด agent CLI ที่ทำรอบเสร็จแล้วและว่างนานเกิน kingu.agent.hibernationIdleMinutes เพื่อคืนหน่วยความจำ เฉพาะ CLI ที่ resume session ได้และไม่ได้แสดงอยู่บนจอ เมื่อกลับมาที่งาน agent จะทำงานต่อใน session เดิมเอง (Orca: experimentalAgentHibernation) (Experimental: closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session when you return to it.)'
 	},
 	{
 		id: 'kingu.agent.hibernationIdleMinutes',

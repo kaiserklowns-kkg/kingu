@@ -231,6 +231,7 @@ pub fn map_legacy(v: &Value) -> Option<Window> {
   Some(Window { used_percent: (q.1 / q.2 * 100.0).clamp(0.0, 100.0), window_minutes: MONTH_MINUTES, resets_at: ts(&v["startOfMonth"]).map(add_month) })
 }
 
+#[allow(clippy::result_large_err)] // the error is the usage row shown to the user
 fn get(http: &dyn Http, url: &str, s: &Session, now: i64) -> Result<Value, ProviderUsage> {
   let req = Request::get(url).header("Cookie", cookie(s)).header("Accept", "application/json").header("Origin", ORIGIN).header("Referer", format!("{ORIGIN}/dashboard"));
   let r = http.send(&req).map_err(|kind| ProviderUsage::failed(P, "error", kind, &tr!(UsageMsg::Network, provider = "Cursor")))?;

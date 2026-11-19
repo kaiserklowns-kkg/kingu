@@ -120,7 +120,7 @@ export function shortAgo(then: number, now: number): string {
 }
 
 /** The Filters switches: `kingu.sidebar.*` settings, except `exceptDefault` (a side bar preference). */
-export type Filters = { hideSleeping: boolean; exceptDefault: boolean; hideDefault: boolean; showActiveOnly: boolean; hideAutomation: boolean; hideDetached: boolean };
+export type Filters = { hideSleeping: boolean; exceptDefault: boolean; hideDefault: boolean; showActiveOnly: boolean; hideAutomation: boolean; hideCliCreated: boolean; hideDetached: boolean };
 /** The active-filter count on the options button. */
 export const activeFilterCount = (f: Filters) =>
-	Number(f.hideSleeping) + Number(f.hideSleeping && f.exceptDefault) + Number(f.hideDefault) + Number(f.showActiveOnly) + Number(f.hideAutomation) + Number(f.hideDetached);
+	Number(f.hideSleeping) + Number(f.hideSleeping && f.exceptDefault) + Number(f.hideDefault) + Number(f.showActiveOnly) + Number(f.hideAutomation) + Number(f.hideCliCreated) + Number(f.hideDetached);

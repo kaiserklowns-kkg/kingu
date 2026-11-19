@@ -33,7 +33,7 @@ const MAX_WORKFLOW_STATUS: usize = 40;
 const MAX_AGENT: usize = 256;
 const MAX_MODEL: usize = 128;
 /// What created a task other than you (Orca's automation / CLI workspace badges); the side bar can hide them.
-pub const ORIGINS: &[&str] = &["automation"];
+pub const ORIGINS: &[&str] = &["automation", "cli"];
 
 /// The issue a task was started from (its PR says `Fixes #number`, or `Fixes ENG-123` for Linear).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -149,6 +149,9 @@ pub struct TaskMeta {
   /// Unix ms it was archived (Orca's `isArchived`: off the side bar, worktree kept); absent otherwise.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub archived_at: Option<u64>,
+  /// The `task.create --request-id` that made it, so a retry returns this task instead of another.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub request_id: Option<String>,
 }
 
 /// One agent session a task ran, so it can be continued later (or handed to another agent).
@@ -272,6 +275,11 @@ pub fn validate(tasks: &[TaskMeta]) -> Result<(), String> {
       && (validate_slug(d).is_err() || d == &t.slug)
     {
       return Err(format!("{}: invalid dispatching task", t.slug));
+    }
+    if let Some(id) = &t.request_id
+      && !kingu_cli::protocol::valid_request_id(id)
+    {
+      return Err(format!("{}: invalid request id", t.slug));
     }
   }
   Ok(())
@@ -424,6 +432,7 @@ mod tests {
       dispatched_by: Some("coordinator".into()),
       comment: None,
       archived_at: None,
+      request_id: Some("retry_1".into()),
     }
   }
 
@@ -510,6 +519,9 @@ mod tests {
       t.issue = Some(link(provider, key));
       assert_eq!(validate(&[t]).is_ok(), ok, "{provider} {key}");
     }
+    let mut cli = task("c");
+    cli.origin = Some("cli".into());
+    assert!(validate(&[cli]).is_ok());
     assert!(bad(|t| t.origin = Some("cli; rm".into())));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([("b.txt".into(), vec!["../x".into()])])));
     assert!(bad(|t| t.accepted_hunks = BTreeMap::from([(String::new(), vec!["ab".into()])])));
@@ -523,6 +535,7 @@ mod tests {
     assert!(bad(|t| t.parent = Some("../x".into())));
     assert!(bad(|t| t.parent = Some(t.slug.clone())));
     assert!(bad(|t| t.dispatched_by = Some("../x".into())));
+    assert!(bad(|t| t.request_id = Some("a b".into())));
     assert!(bad(|t| t.dispatched_by = Some(t.slug.clone())));
     assert!(save(tmp.path(), &[task("a"), task("a")]).is_err());
     assert!(!tmp.path().join(".kingu/tasks.json").exists());

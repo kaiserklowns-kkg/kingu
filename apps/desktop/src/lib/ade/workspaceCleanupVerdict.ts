@@ -15,6 +15,7 @@ export const WORKSPACE_CLEANUP_RULE_REASON_LABELS: Record<WorkspaceCleanupRuleRe
 /** Plain-words names for why the runner left a workspace alone. */
 export const WORKSPACE_CLEANUP_KEEP_CAUSE_LABELS: Record<WorkspaceCleanupKeepCause, string> = {
 	'not-removable': 'main workspace or folder project',
+	'already-archived': 'already archived',
 	'project-off': 'cleanup off for this project',
 	'rules-off': 'no rule on',
 	pinned: 'pinned',
@@ -30,7 +31,6 @@ export const WORKSPACE_CLEANUP_KEEP_CAUSE_LABELS: Record<WorkspaceCleanupKeepCau
 	'unpushed-commits': 'unpushed commits',
 	'ignored-files': 'ignored local files',
 	'git-unknown': 'Git status unknown',
-	'archive-unavailable': 'archive not available',
 	'archive-script': 'has an archive script',
 	removing: 'already being removed'
 };

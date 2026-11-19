@@ -3,6 +3,7 @@
 
 import { firstLine, formatUsage, slugify, toolArg, type AgentEvent, type RunState, type RunStatus } from '#lib/agent/events.ts';
 import { isQuestionTool, questionText } from './agentHooks.ts';
+import { emojiToShortcodes } from './emojiShortcodes.ts';
 import type { AgentRow } from './agentPresence.ts';
 import type { SessionRef } from './sessionHistory.ts';
 import { locale, t } from '#lib/i18n/index.ts';
@@ -34,8 +35,8 @@ export type TaskMeta = {
 	last_run: RunSummary | null;
 	/** The issue the task was started from; its PR body says `Fixes #number` (`Fixes ENG-123` for Linear). */
 	issue: IssueLink | null;
-	/** `automation`: an automation started it (Orca's automation badge); absent when you did. */
-	origin?: 'automation' | null;
+	/** `automation`: an automation started it (Orca's automation badge); `cli`: `kingu task create` made the worktree. */
+	origin?: 'automation' | 'cli' | null;
 	/** The branch still has the name made from the title and waits for one made from the work
 	 *  (Orca's autoRenameBranchFromWork); absent once renamed, or for a branch you chose. */
 	auto_name?: boolean;
@@ -57,6 +58,8 @@ export type TaskMeta = {
 	comment?: string | null;
 	/** Unix ms it was archived (Orca's isArchived: hidden from the side bar, worktree kept). */
 	archived_at?: number | null;
+	/** The `task.create --request-id` that made it (a retry returns this task, not another). */
+	request_id?: string | null;
 };
 
 /**
@@ -179,7 +182,7 @@ export function newTask(
 		base: string;
 		agent?: string;
 		issue?: IssueLink | null;
-		origin?: 'automation';
+		origin?: 'automation' | 'cli';
 		prUrl?: string;
 		autoName?: boolean;
 		status?: TaskStatus;
@@ -189,6 +192,8 @@ export function newTask(
 		parent?: string;
 		/** The task whose agent dispatched it (orchestration). */
 		dispatchedBy?: string;
+		/** `kingu task create --request-id`: makes the create idempotent. */
+		requestId?: string;
 	},
 	now: number
 ): TaskMeta {
@@ -213,7 +218,8 @@ export function newTask(
 		...(input.group ? { group: input.group } : {}),
 		...(input.model ? { attempt_model: input.model } : {}),
 		...(input.parent ? { parent: input.parent } : {}),
-		...(input.dispatchedBy ? { dispatched_by: input.dispatchedBy } : {})
+		...(input.dispatchedBy ? { dispatched_by: input.dispatchedBy } : {}),
+		...(input.requestId ? { request_id: input.requestId } : {})
 	};
 }
 
@@ -287,7 +293,8 @@ export function adoptOrphans(list: TaskMeta[], slugs: string[], base: string, no
 
 /** Slug for a new task's title, suffixed `-2`, `-3`… when taken. */
 export function uniqueSlug(title: string, taken: Set<string>): string {
-	const base = slugify(title);
+	// Known emoji are spelled out first (Orca: 🚀 fix → `rocket-fix`), not dropped.
+	const base = slugify(emojiToShortcodes(title));
 	if (!taken.has(base)) return base;
 	for (let n = 2; ; n++) {
 		const suffix = `-${n}`;

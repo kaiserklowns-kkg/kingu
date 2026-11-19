@@ -13,12 +13,13 @@
 	import { adeDialogs } from './dialogs.svelte.ts';
 	import { ask } from '#lib/workbench/messageBox.ts';
 	import { menuTargets, rangeSelect, toggleSelect } from './sidebarSelection';
+	import { deleteShortcutHasFocus, deleteShortcutTarget } from './deleteShortcut';
 	import CreatingRows from './CreatingRows.svelte';
 	import { untrack } from 'svelte';
 	import Icon, { type IconName } from '#lib/workbench/Icon.svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
-	import type { MenuNode } from '#lib/workbench/menus.ts';
+	import { menuLeft, menuTop, type MenuNode } from '#lib/workbench/menus.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
 	import { appMode } from '#lib/workbench/mode.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
@@ -38,11 +39,13 @@
 	import { newSession } from './agentsMode.svelte';
 	import { jumpToWorktree, sidebarOrder } from './worktreeMenu.svelte';
 	import { rowCardStatus, rowText } from './agentPresence';
+	import CardStatusDot from './CardStatusDot.svelte';
 	import { activeFilterCount, cardStatus, CARD_STATUS_LABEL, reorder, shortAgo, SORT_LABEL, sortItems, statusColumn, type CardStatus, type GroupBy, type SortBy } from './sidebarModel';
 	import { sidebarPrefs as prefs } from './sidebarPrefs.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aggregateStats } from './model';
-	import { baseName, cardProperties, externalWorktrees, hexColor, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
+	import { activeShortcode, applySuggestion, completeShortcode, searchShortcodes, type EmojiEntry } from './emojiShortcodes';
+	import { baseName, cardProperties, hexColor, splitExternal, hiddenBy, PR_GROUPS, prGroupOf, type Visibility } from './sidebarView';
 	import { sidebarPrefs as sidebarFilters, sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
 	import { issueRef } from './issues.ts';
@@ -69,15 +72,26 @@
 	const repoBadge = $derived(hexColor(settings.get<string>('kingu.repo.badgeColor')));
 	const repoIcon = $derived([...(settings.get<string>('kingu.repo.icon') ?? '').trim()].slice(0, 2).join(''));
 	// Worktrees Kingu did not make (Orca's external / agent worktree visibility): read-only cards.
-	const externals = $derived(
+	const shownExternal = $derived(settings.get<string[]>('kingu.worktree.shownExternal') ?? []);
+	const externalSplit = $derived(
 		workspace.root
-			? externalWorktrees(adeTasks.listed, workspace.root, {
+			? splitExternal(adeTasks.listed, workspace.root, {
 					external: settings.get<Visibility>('kingu.worktree.externalVisibility'),
 					agent: settings.get<Visibility>('kingu.worktree.agentVisibility'),
-					custom: settings.get<string[]>('kingu.worktree.visibilitySources')
+					custom: settings.get<string[]>('kingu.worktree.visibilitySources'),
+					shown: shownExternal
 				})
-			: []
+			: { shown: [], hidden: [] }
 	);
+	const externals = $derived(externalSplit.shown);
+	// Orca's hidden worktrees card → Non-Orca worktrees dialog: Show one, kept for this project.
+	let hiddenOpen = $state(false);
+	let hiddenQuery = $state('');
+	const hiddenRows = $derived(externalSplit.hidden.filter((w) => !hiddenQuery.trim() || w.path.toLowerCase().includes(hiddenQuery.trim().toLowerCase()) || (w.branch ?? '').toLowerCase().includes(hiddenQuery.trim().toLowerCase())));
+	function setShown(path: string, show: boolean) {
+		const next = show ? [...new Set([...shownExternal, path])] : shownExternal.filter((p) => p !== path);
+		void settings.set('kingu.worktree.shownExternal', next, 'repo').catch((e) => status.error(String(e)));
+	}
 	let externalMenu = $state<{ path: string; x: number; y: number } | null>(null);
 
 	// PR state for grouping and the card's PR property: read once per task (gh) when either needs it.
@@ -260,8 +274,46 @@
 			if (adeTasks.renaming === slug) adeTasks.renaming = null;
 		}
 	}
+	// Emoji while renaming (Orca's useWorkspaceEmojiShortcodeInput in WorktreeTitleInlineRename):
+	// `:roc` lists matches under the box; ↑↓ pick, Enter or Tab takes one, Escape closes the list.
+	let renameEl: HTMLInputElement | undefined = $state();
+	let renameCursor = $state<number | null>(null);
+	let renamePick = $state(0);
+	const renameShortcode = $derived(adeTasks.renaming ? activeShortcode(renameValue, renameCursor) : null);
+	const renameEmojis = $derived(renameShortcode ? searchShortcodes(renameShortcode.query) : []);
+	const renameAt = $derived.by(() => {
+		void renameEmojis.length;
+		const r = renameEl?.getBoundingClientRect();
+		return r ? { x: r.left, y: r.bottom + 2, w: Math.max(220, r.width) } : null;
+	});
+	function setRename(next: { value: string; cursor: number }) {
+		renameValue = next.value;
+		renameCursor = null;
+		if (!renameEl) return;
+		renameEl.value = next.value;
+		renameEl.setSelectionRange(next.cursor, next.cursor);
+	}
+	function takeRenameEmoji(entry: EmojiEntry) {
+		if (renameShortcode) setRename(applySuggestion(renameValue, renameShortcode, entry));
+	}
 	function onRenameKey(e: KeyboardEvent, slug: string) {
 		if (e.isComposing) return;
+		if (renameEmojis.length) {
+			if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+				e.preventDefault();
+				renamePick = (renamePick + (e.key === 'ArrowDown' ? 1 : -1) + renameEmojis.length) % renameEmojis.length;
+				return;
+			}
+			if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
+				e.preventDefault();
+				return takeRenameEmoji(renameEmojis[Math.min(renamePick, renameEmojis.length - 1)]);
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				renameCursor = null;
+				return;
+			}
+		}
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			void commitRename(slug);
@@ -403,6 +455,31 @@
 			move(e.key === 'ArrowDown' ? 1 : -1);
 		}
 	}
+	// ⇧⌘⌫ (Orca's workspace.delete): the selected card, or the multi-selection; see deleteShortcut.ts.
+	const deleteTarget = (repeat = false) =>
+		deleteShortcutTarget({
+			selection,
+			current: selectedKey,
+			deletable: (k) => k !== PRIMARY && !!adeTasks.find(k),
+			repeat,
+			overlay: !!menu || !!options || !!repoMenu || !!adeDialogs.current
+		});
+	function deleteKeyHasFocus() {
+		const el = document.activeElement;
+		return deleteShortcutHasFocus({
+			inList: !!list && !!el && list.contains(el),
+			typing: el instanceof HTMLElement && (el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)
+		});
+	}
+	function deleteSelected() {
+		// Commands run inside the keydown handler: a held key must not delete card after card
+		// (with kingu.worktree.confirmRemove off nothing else would stop it).
+		const e = window.event;
+		const target = deleteTarget(e instanceof KeyboardEvent && e.repeat);
+		// The same paths as the context menu: the remove dialog and its guards, or the bulk confirmation.
+		if (target.kind === 'single') runWorktreeAction(target.key, 'remove');
+		else if (target.kind === 'bulk') void runBulk('bulk:delete', target.keys);
+	}
 	// Registered once (register reads and writes the command list, so not tracked).
 	$effect(() => {
 		const off = untrack(() => [
@@ -413,8 +490,9 @@
 				title: 'Delete Workspace',
 				category: 'Agents',
 				key: 'cmd+shift+backspace',
-				when: () => appMode.isAgents && !!selectedKey && selectedKey !== PRIMARY,
-				run: () => selectedKey && runWorktreeAction(selectedKey, 'remove')
+				when: () => appMode.isAgents && deleteTarget().kind !== 'none',
+				keyWhen: deleteKeyHasFocus,
+				run: deleteSelected
 			}),
 			commands.register({ id: 'kingu.agents.revealActiveWorkspace', title: 'Reveal Active Workspace', category: 'Agents', when: () => appMode.isAgents, run: () => reveal() }),
 			commands.register({ id: 'kingu.agents.focusWorktreeList', title: 'Focus Worktree List', category: 'Agents', key: 'cmd+shift+0', when: () => appMode.isAgents, run: () => list?.focus() })
@@ -435,6 +513,11 @@
 
 	// --- Header, options and footer menus ------------------------------------------------------
 	let options = $state<{ x: number; y: number } | null>(null);
+	let optionsBox = $state<HTMLDivElement>();
+	let optionsHeight = $state(0);
+	$effect(() => {
+		if (optionsBox) optionsHeight = optionsBox.offsetHeight;
+	});
 	let repoMenu = $state<{ x: number; y: number } | null>(null);
 	const filterCount = $derived(activeFilterCount(prefs.filters));
 	const repoItems: MenuNode[] = [
@@ -546,17 +629,7 @@
 <svelte:window onkeydown={onKey} onkeyup={onKey} onblur={() => (altHeld = false)} />
 
 {#snippet statusDot(s: CardStatus, size = 'size-2')}
-	{#if s === 'working'}
-		<span class="size-2.5 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent"></span>
-	{:else if s === 'permission'}
-		<span class="text-violet-400"><Icon name="question" size={12} filled /></span>
-	{:else if s === 'failed'}
-		<span class="size-1.5 rounded-full bg-red-500"></span>
-	{:else if s === 'done' || s === 'active'}
-		<span class={[size, 'rounded-full bg-emerald-500']}></span>
-	{:else}
-		<span class={[size, 'rounded-full bg-neutral-500/40']}></span>
-	{/if}
+	<CardStatusDot status={s} {size} />
 {/snippet}
 
 {#snippet card(r: Row, groupId: string)}
@@ -615,6 +688,7 @@
 							{#if adeTasks.renaming === r.key}
 								<!-- svelte-ignore a11y_autofocus -->
 								<input
+									bind:this={renameEl}
 									class="h-5 min-w-0 flex-1 border-0 bg-transparent p-0 text-[13px] leading-5 outline-none"
 									aria-label="Rename workspace"
 									autofocus
@@ -622,6 +696,14 @@
 									bind:value={renameValue}
 									onclick={(e) => e.stopPropagation()}
 									onkeydown={(e) => onRenameKey(e, r.key)}
+									oninput={(e) => {
+										// Orca's emoji names in rename too: a closed :code: becomes its emoji.
+										const el = e.currentTarget;
+										const done = completeShortcode(el.value, el.selectionStart);
+										if (done) return setRename(done);
+										renameCursor = el.selectionStart;
+										renamePick = 0;
+									}}
 									onblur={() => void commitRename(r.key)}
 									onfocus={(e) => e.currentTarget.select()}
 								/>
@@ -964,6 +1046,11 @@
 					</button>
 				</div>
 			{/each}
+			{#if externalSplit.hidden.length}
+				<button class="mx-2 mt-1 flex h-6 w-[calc(100%-16px)] items-center gap-1.5 rounded px-2 text-[11px] {MUTED} hover:bg-(--vscode-list-hoverBackground)" onclick={() => ((hiddenQuery = ''), (hiddenOpen = true))}>
+					<Icon name="eye" size={12} />{t('legacyAde.adeSidebar.hiddenWorktrees', { count: externalSplit.hidden.length })}
+				</button>
+			{/if}
 			{#if archived.length}
 				<button class="mx-2 mt-1 flex h-6 w-[calc(100%-16px)] items-center gap-1.5 rounded px-2 text-[11px] {MUTED} hover:bg-(--vscode-list-hoverBackground)" onclick={openArchived}>
 					<Icon name="bookmark" size={12} />{t('ade.archive.section', { count: archived.length })}
@@ -1027,11 +1114,49 @@
 	{@const key = menu.key}
 	<PopupMenu items={menuItems} label="Workspace" x={menu.x} y={menu.y} onRun={(node) => node.type === 'item' && runMenu(node.id, key)} onClose={() => (menu = null)} />
 {/if}
+{#if renameEmojis.length && renameAt}
+	<div class="fixed z-50 max-h-56 overflow-auto rounded-sm border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) py-0.5 text-xs shadow-lg" style:left="{renameAt.x}px" style:top="{renameAt.y}px" style:width="{renameAt.w}px" role="listbox" aria-label={t('adeWorktrees.form.emoji')}>
+		{#each renameEmojis as e, i (e.shortcode)}
+			<button
+				type="button"
+				role="option"
+				aria-selected={i === renamePick}
+				class={['flex w-full items-center gap-2 px-1.5 py-0.5 text-left', i === renamePick ? 'bg-(--vscode-list-activeSelectionBackground) text-(--vscode-list-activeSelectionForeground)' : 'hover:bg-(--vscode-list-hoverBackground)']}
+				onmousedown={(ev) => ev.preventDefault()}
+				onclick={() => takeRenameEmoji(e)}><span class="w-4 text-center">{e.emoji}</span><span class="truncate font-mono">:{e.shortcode}:</span></button
+			>
+		{/each}
+	</div>
+{/if}
+{#if hiddenOpen}
+	<div class="fixed inset-0 z-40 grid place-items-center bg-black/30" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && (hiddenOpen = false)}>
+		<div class="w-[440px] max-w-[calc(100vw-32px)] rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background) p-3 text-[13px] shadow-xl" role="dialog" aria-label={t('legacyAde.adeSidebar.hiddenTitle')} tabindex="-1" onkeydown={(e) => e.key === 'Escape' && (hiddenOpen = false)}>
+			<div class="mb-1 font-medium">{t('legacyAde.adeSidebar.hiddenTitle')}</div>
+			<p class="mb-2 text-[11px] {MUTED}">{t('legacyAde.adeSidebar.hiddenHint')}</p>
+			<!-- svelte-ignore a11y_autofocus -->
+			<input class="mb-2 h-7 w-full rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-2 text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)" placeholder={t('legacyAde.adeSidebar.hiddenSearch')} aria-label={t('legacyAde.adeSidebar.hiddenSearch')} bind:value={hiddenQuery} autofocus />
+			<div class="max-h-72 space-y-0.5 overflow-y-auto">
+				{#each hiddenRows as w (w.path)}
+					<div class="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-(--vscode-list-hoverBackground)">
+						<div class="min-w-0 flex-1">
+							<div class="truncate">{baseName(w.path)} <span class="text-[11px] {MUTED}">{w.kind === 'agent' ? 'agent' : 'external'}</span></div>
+							<div class="truncate text-[11px] {MUTED}" title={w.path}>{w.branch ?? (w.detached ? 'detached HEAD' : '')} · {w.path}</div>
+						</div>
+						<button class="h-6 shrink-0 rounded px-2 text-[12px] text-(--vscode-button-secondaryForeground) bg-(--vscode-button-secondaryBackground) hover:opacity-90" onclick={() => setShown(w.path, true)}>{t('legacyAde.adeSidebar.showWorktree')}</button>
+					</div>
+				{:else}
+					<p class="py-3 text-center text-[11px] {MUTED}">{t('legacyAde.adeSidebar.hiddenNone')}</p>
+				{/each}
+			</div>
+			<div class="mt-2 flex justify-end"><button class="h-7 rounded px-3 text-[12px] hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => (hiddenOpen = false)}>{t('legacyAde.adeSidebar.hiddenDone')}</button></div>
+		</div>
+	</div>
+{/if}
 {#if externalMenu}
 	{@const path = externalMenu.path}
 	{@const openIn = actionsFor('').flatMap((r) => (r !== 'separator' && r.id.startsWith('openIn:') ? [r] : []))}
 	<PopupMenu
-		items={[menuItem('open', t('legacyAde.adeSidebar.openInKingu')), menuSeparator, ...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath'))]}
+		items={[menuItem('open', t('legacyAde.adeSidebar.openInKingu')), menuSeparator, ...openIn.map((r) => menuItem(r.id, r.label)), ...(openIn.length ? [menuSeparator] : []), menuItem('copyPath', t('legacyAde.adeSidebar.copyPath')), ...(shownExternal.includes(path) ? [menuSeparator, menuItem('hide', t('legacyAde.adeSidebar.hideWorktree'))] : [])]}
 		label="Worktree"
 		x={externalMenu.x}
 		y={externalMenu.y}
@@ -1039,6 +1164,7 @@
 			if (node.type !== 'item') return;
 			if (node.id === 'open') void workspace.openFolder(path);
 			else if (node.id.startsWith('openIn:')) openWorktreeIn(node.id.slice(7), path);
+			else if (node.id === 'hide') setShown(path, false);
 			else void navigator.clipboard.writeText(path).then(() => status.flash(t('legacyAde.adeSidebar.copiedPath')));
 		}}
 		onClose={() => (externalMenu = null)}
@@ -1064,9 +1190,10 @@
 		role="menu"
 		aria-label="Workspace options"
 		tabindex="-1"
-		class="fixed z-50 w-72 rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) pb-2 text-xs text-(--vscode-foreground) shadow-xl shadow-black/40"
-		style:left="{Math.min(options.x, window.innerWidth - 296)}px"
-		style:top="{Math.min(options.y, window.innerHeight - 420)}px"
+		bind:this={optionsBox}
+		class="fixed z-50 max-h-[calc(100vh-8px)] w-72 overflow-y-auto rounded-lg border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) pb-2 text-xs text-(--vscode-foreground) shadow-xl shadow-black/40"
+		style:left="{menuLeft(options.x, 288, window.innerWidth)}px"
+		style:top="{menuTop(options.y, optionsHeight, window.innerHeight)}px"
 		onkeydown={(e) => e.key === 'Escape' && (options = null)}
 	>
 		<div class="px-3 pt-2.5 pb-1 text-sm">Workspace options</div>
@@ -1098,7 +1225,7 @@
 		{/each}
 		<div class="my-2 border-t border-(--vscode-widget-border)"></div>
 		<div class="px-3 pb-1 text-[11px] font-semibold {MUTED}">Filters</div>
-		{#each [{ key: 'showActiveOnly', label: 'Show active only', icon: 'activity', indent: false, show: true }, { key: 'hideSleeping', label: 'Hide sleeping', icon: 'sleep', indent: false, show: true }, { key: 'exceptDefault', label: 'Except default branch', icon: 'git', indent: true, show: prefs.filters.hideSleeping }, { key: 'hideDefault', label: 'Hide default branch', icon: 'git', indent: false, show: true }, { key: 'hideAutomation', label: 'Hide automation workspaces', icon: 'clock', indent: false, show: true }, { key: 'hideDetached', label: 'Hide detached HEAD', icon: 'git', indent: false, show: true }] as f (f.key)}
+		{#each [{ key: 'showActiveOnly', label: 'Show active only', icon: 'activity', indent: false, show: true }, { key: 'hideSleeping', label: 'Hide sleeping', icon: 'sleep', indent: false, show: true }, { key: 'exceptDefault', label: 'Except default branch', icon: 'git', indent: true, show: prefs.filters.hideSleeping }, { key: 'hideDefault', label: 'Hide default branch', icon: 'git', indent: false, show: true }, { key: 'hideAutomation', label: 'Hide automation workspaces', icon: 'clock', indent: false, show: true }, { key: 'hideCliCreated', label: 'Hide CLI-created', icon: 'terminal', indent: false, show: true }, { key: 'hideDetached', label: 'Hide detached HEAD', icon: 'git', indent: false, show: true }] as f (f.key)}
 			{#if f.show}
 				{@const on = prefs.filters[f.key as 'hideSleeping']}
 				<button role="switch" aria-checked={on} class={['mx-1 flex w-[calc(100%-8px)] items-center gap-2 rounded-[5px] py-1.5 pr-2 text-[12px] font-medium hover:bg-(--vscode-list-hoverBackground)', f.indent ? 'pl-7' : 'pl-2']} onclick={() => prefs.setFilter(f.key as 'hideSleeping', !on)}>

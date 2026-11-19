@@ -116,6 +116,7 @@ fn base_url(host: &dyn Host) -> String {
   host.var("GROK_CLI_CHAT_PROXY_BASE_URL").map(|u| u.trim_end_matches('/').to_owned()).unwrap_or_else(|| "https://cli-chat-proxy.grok.com/v1".into())
 }
 
+#[allow(clippy::result_large_err)] // the error is the usage row shown to the user
 fn billing(http: &dyn Http, url: &str, s: &Session) -> Result<Value, ProviderUsage> {
   let mut req = Request::get(url).header("Authorization", format!("Bearer {}", s.token)).header("X-XAI-Token-Auth", "xai-grok-cli").header("Accept", "application/json");
   if let Some(id) = &s.user_id {

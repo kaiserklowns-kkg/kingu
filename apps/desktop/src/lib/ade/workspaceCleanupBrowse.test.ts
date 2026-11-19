@@ -7,7 +7,7 @@ import type { CleanupCandidate } from './workspaceCleanupScan';
 
 const NOW = Date.UTC(2026, 10, 16);
 const DAY = 86_400_000;
-const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, review: null, ticket: null, ...over });
+const row = (over: Partial<CleanupRowFacts> = {}): CleanupRowFacts => ({ slug: 'a', title: 'Fix login', branch: 'kingu/fix-login', status: 'done', agent: 'idle', git: 'clean', blockers: [], lastActivityAt: NOW - 10 * DAY, createdAt: NOW - 20 * DAY, sizeBytes: null, review: null, ticket: null, archived: false, hasComment: false, ...over });
 const cand = (over: Partial<CleanupCandidate> = {}): CleanupCandidate => ({ path: '/p', branch: 'kingu/a', head: 'x', slug: 'a', isMain: false, detached: false, locked: false, checkedAt: NOW, clean: true, ignoredFiles: false, unpushed: false, merged: true, unchanged: false, squashMerged: false, prMerged: false, unknownBase: false, base: 'main', error: null, lastActivityAt: NOW - DAY, ...over });
 const filters = () => createDefaultWorkspaceCleanupFilterState();
 const ok = (r: CleanupRowFacts, patch: (f: ReturnType<typeof filters>) => void) => {
@@ -65,8 +65,8 @@ describe('workspace cleanup browse', () => {
 		expect(agentStateOf({ status: 'waiting', working: true })).toBe('permission');
 		expect(agentStateOf({ status: 'running', working: true })).toBe('working');
 		expect(agentStateOf({ status: 'done', working: false })).toBe('idle');
-		const f = rowFacts({ slug: 'a', title: 'T', branch: 'b', status: 'done', working: false, createdAt: 1, updatedAt: NOW }, cand({ clean: false, ignoredFiles: true }), { liveAgent: true, active: false, dirtyEditor: false });
-		expect(f.blockers).toEqual(['live-agent', 'dirty-files', 'ignored-files']);
+		const f = rowFacts({ slug: 'a', title: 'T', branch: 'b', status: 'done', working: false, createdAt: 1, updatedAt: NOW }, cand({ clean: false, ignoredFiles: true }), { liveAgent: true, active: false, dirtyEditor: false, pinned: true });
+		expect(f.blockers).toEqual(['live-agent', 'pinned', 'dirty-files', 'ignored-files']);
 		expect(f.lastActivityAt).toBe(NOW);
 	});
 
@@ -81,7 +81,11 @@ describe('workspace cleanup browse', () => {
 			...BROWSE_REVIEW_STATES.map((v) => `review.${v}`),
 			...BROWSE_TICKET_SOURCES.map((v) => `ticket.${v}`),
 			'presence.some',
-			'presence.none'
+			'presence.none',
+			'archived',
+			'comment',
+			'triState.only',
+			'triState.exclude'
 		].map((k) => `workspaceCleanup.filter.${k}`);
 		for (const k of keys) expect([k, k in en, k in th]).toEqual([k, true, true]);
 	});
@@ -135,6 +139,26 @@ describe('workspace cleanup browse', () => {
 		expect([f.review, f.ticket]).toEqual(['draft', 'linear']);
 		const g = rowFacts(task, undefined, undefined);
 		expect([g.review, g.ticket]).toEqual([null, null]);
+	});
+
+	test('archived and comment: only keeps the ones that have it, exclude hides them', () => {
+		const archived = row({ archived: true });
+		expect(ok(archived, (f) => (f.status.archived = 'only'))).toBe(true);
+		expect(ok(row(), (f) => (f.status.archived = 'only'))).toBe(false);
+		expect(ok(archived, (f) => (f.status.archived = 'exclude'))).toBe(false);
+		expect(ok(row(), (f) => (f.status.archived = 'exclude'))).toBe(true);
+		const noted = row({ hasComment: true });
+		expect(ok(noted, (f) => (f.status.comment = 'only'))).toBe(true);
+		expect(ok(row(), (f) => (f.status.comment = 'only'))).toBe(false);
+		expect(ok(noted, (f) => (f.status.comment = 'exclude'))).toBe(false);
+		expect(ok(row(), (f) => (f.status.comment = 'exclude'))).toBe(true);
+	});
+
+	test('rowFacts reads archived and a non-blank comment', () => {
+		const task = { slug: 'a', title: 'T', branch: 'b', status: 'done', working: false, createdAt: 1, updatedAt: NOW };
+		const f = rowFacts(task, undefined, undefined, null, { archived: true, comment: 'keep for demo' });
+		expect([f.archived, f.hasComment]).toEqual([true, true]);
+		expect([rowFacts(task, undefined, undefined, null, { comment: '  ' }).hasComment, rowFacts(task, undefined, undefined).archived]).toEqual([false, false]);
 	});
 
 	test('size: min and max narrow the measured ones; an unmeasured one follows "include unmeasured"', () => {

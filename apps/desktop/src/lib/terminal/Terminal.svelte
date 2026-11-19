@@ -29,6 +29,7 @@
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { isPassiveInput, parseProgramStatus, PROGRAM_STATUS_OSC, type ProgramEvent } from '#lib/ade/programStatus.ts';
 	import { INSERT_EVENT } from '#lib/voice/target.ts';
 	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
@@ -44,6 +45,7 @@
 	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
 	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
+	 * `type`: a shell line typed as is into a new shell (a quick command), not on a re-attach.
 	 * `cwdFrom`: a split pane starts in that terminal's current directory. `folder`: the root folder
 	 * of a multi-root window it starts in (Rust checks it is one). `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
@@ -56,6 +58,7 @@
 		key,
 		slug,
 		run,
+		type,
 		task,
 		cwdFrom,
 		folder,
@@ -67,6 +70,7 @@
 		keyLabels = {},
 		onoutput,
 		ontitle,
+		onprogram,
 		onbell,
 		onaction,
 		onopenfile,
@@ -76,6 +80,7 @@
 		key: string;
 		slug?: string;
 		run?: string[];
+		type?: string;
 		task?: TaskSpawn;
 		cwdFrom?: string;
 		folder?: string;
@@ -89,6 +94,8 @@
 		onoutput?: () => void;
 		/** The program set the terminal's title (OSC 0/2): agent status evidence (agentTitle.ts). */
 		ontitle?: (title: string) => void;
+		/** The program reported its own status or progress (OSC 7501), ended, or the user typed (programStatus.ts). */
+		onprogram?: (event: ProgramEvent) => void;
 		/** The program rang the bell (BEL), whatever terminal.integrated.enableVisualBell says. */
 		onbell?: () => void;
 		/** A context menu item the terminal does not run itself (split, rename, kill…). */
@@ -394,6 +401,8 @@
 		function connected(a: Attached) {
 			if (disposed) return;
 			if (a.epoch) epoch = a.epoch;
+			// The shell reads typed-ahead input once it is ready, like keys pressed while it starts.
+			if (a.spawned && type?.trim()) invoke('pty_write', { key, data: quickCommandInput(type) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;
@@ -475,6 +484,8 @@
 		}).catch(() => () => {});
 		const input = t.onData((data) => {
 			if (live) invoke('pty_write', { key, data }).catch(() => {});
+			// Typing dismisses a finished program's result on the tab.
+			if (live && onprogram && !isPassiveInput(data)) onprogram({ type: 'input' });
 		});
 		let dimensionsTimer: ReturnType<typeof setTimeout> | undefined;
 		const resized = t.onResize(({ cols, rows }) => {
@@ -497,6 +508,22 @@
 			bellTimer = setTimeout(() => (bell = false), setting<number>('terminal.integrated.bellDuration'));
 		});
 		const titled = t.onTitleChange((title) => ontitle?.(title));
+		// OSC 7501 (Orca's program status): a program reports its state and progress for the tab's ring.
+		// Not while replaying old output after a reload: those reports are about a past moment.
+		// A `?` query gets no reply: answering makes agent CLIs stop marking their state in the title,
+		// which is what the launched agent's status still reads.
+		const program = (event: ProgramEvent) => live && !replaying && onprogram?.(event);
+		const programStatus = [
+			t.parser.registerOscHandler(PROGRAM_STATUS_OSC, (data) => {
+				const m = parseProgramStatus(data);
+				if (m?.type === 'report') program(m);
+				return true;
+			}),
+			// A new shell prompt (OSC 133;A, VS Code's 633;A) ends the program; the shell integration still sees the mark.
+			...[133, 633].map((code) => t.parser.registerOscHandler(code, (data) => ((data === 'A' || data.startsWith('A;')) && program({ type: 'end' }), false))),
+			// RIS (`ESC c`): every record goes.
+			t.parser.registerEscHandler({ final: 'c' }, () => (program({ type: 'reset' }), false))
+		];
 		// terminal.integrated.enableNotifications: OSC 99 desktop notifications from programs in the terminal.
 		const osc99 = new Osc99();
 		const notifier = t.parser.registerOscHandler(99, (data) => {
@@ -675,6 +702,7 @@
 			clearTimeout(bellTimer);
 			rang.dispose();
 			titled.dispose();
+			for (const d of programStatus) d.dispose();
 			notifier.dispose();
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });

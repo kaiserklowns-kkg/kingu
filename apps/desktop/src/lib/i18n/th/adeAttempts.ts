@@ -36,13 +36,12 @@ export const adeAttempts = {
 	'adeAttempts.cleanup.title': 'ล้างงาน',
 	'adeAttempts.cleanup.titleLosers': 'ล้างรอบที่เหลือ',
 	'adeAttempts.cleanup.onlyDone': 'เลือกเฉพาะที่เสร็จแล้ว',
-	'adeAttempts.cleanup.hint': 'ลบ worktree และนำงานออกจากรายการ งานที่ agent กำลังทำอยู่เลือกไม่ได้',
+	'adeAttempts.cleanup.hint': 'ลบ worktree หรือเก็บถาวรตามที่กฎล้างกำหนด ไม่แบบไหนงานก็ออกจากรายการ งานที่ agent กำลังทำอยู่เลือกไม่ได้',
 	'adeAttempts.cleanup.hintLosers': 'รอบที่ไม่ได้เลือก การลบจะลบ worktree ของรอบเหล่านี้ ส่วน branch ยังอยู่ ยกเว้นติ๊กช่องด้านล่าง',
 	'adeAttempts.cleanup.empty': 'ไม่มีงาน',
 	'adeAttempts.cleanup.deleteBranches': 'ลบ branch ที่ merge แล้วด้วย',
 	'adeAttempts.cleanup.deleteBranchesLosers': 'ลบ branch ของรอบเหล่านี้ด้วย (งานในนั้นจะหายไป)',
-	'adeAttempts.cleanup.progress': 'กำลังลบ {done}/{total}…',
-	'adeAttempts.cleanup.remove': 'ลบ {count} งาน',
+	'adeAttempts.cleanup.progress': 'กำลังล้าง {done}/{total}…',
 	// worktreeActions.ts, the side bar and the board
 	'adeAttempts.action.newFromTask': 'งานใหม่ต่อจากงานนี้',
 	'adeAttempts.action.compare': 'เทียบผลแต่ละรอบ…',
@@ -51,5 +50,7 @@ export const adeAttempts = {
 	'adeAttempts.badge.hibernated': 'agent พักไว้เมื่อ {ago} กดทำงานต่อเพื่อใช้ session เดิม',
 	'adeAttempts.badge.resume': 'ให้ agent ทำงานต่อ',
 	// AgentsLayout.svelte
-	'adeAttempts.hibernated.text': 'agent ว่างอยู่นาน Kingu จึงปิดไว้เมื่อ {ago} เพื่อคืนหน่วยความจำ session ยังเก็บไว้อยู่'
+	'adeAttempts.hibernated.text': 'agent ว่างอยู่นาน Kingu จึงปิดไว้เมื่อ {ago} เพื่อคืนหน่วยความจำ session ยังเก็บไว้อยู่',
+	'adeAttempts.hibernated.resuming': 'กำลังให้ agent ทำงานต่อใน session เดิม…',
+	'adeAttempts.hibernated.resumeFailed': 'ให้ agent ของ {title} ทำงานต่อไม่สำเร็จ: {error}'
 } satisfies Record<keyof typeof en, string>;

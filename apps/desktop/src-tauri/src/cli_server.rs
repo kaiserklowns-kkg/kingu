@@ -59,6 +59,8 @@ pub struct CliServer {
   waits: Waits,
   /// `workspaceCleanup.run` requests by id (cli_ledger.rs).
   cleanup_runs: Mutex<crate::cli_ledger::Ledger>,
+  /// `task.create` requests by id: the same id never makes a second task.
+  task_creates: Mutex<crate::cli_ledger::Ledger>,
 }
 
 /// `kingu --wait`: each wait has the window it opened in; it ends when the window reports its
@@ -201,7 +203,24 @@ pub fn check_create(params: &Value) -> Result<Value, RpcError> {
     return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::BadMode, mode = m)));
   }
   let open = params.get("open").and_then(Value::as_bool).unwrap_or(true);
-  Ok(json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": open }))
+  let request_id = str_param(params, "requestId").filter(|id| !id.is_empty());
+  if let Some(id) = request_id.filter(|id| !protocol::valid_request_id(id)) {
+    return Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::CleanupBadRequestId, id)));
+  }
+  let mut checked = json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": open });
+  if let Some(id) = request_id {
+    checked["requestId"] = json!(id);
+  }
+  Ok(checked)
+}
+
+/// An optional `requestId` on a mutating request; absent when empty.
+fn optional_request_id(params: &Value) -> Result<Option<String>, RpcError> {
+  match str_param(params, "requestId").filter(|id| !id.is_empty()) {
+    None => Ok(None),
+    Some(id) if protocol::valid_request_id(id) => Ok(Some(id.to_owned())),
+    Some(id) => Err(rpc(ERR_BAD_REQUEST, tr!(CliMsg::CleanupBadRequestId, id))),
+  }
 }
 
 /// What `open` sends to the window: the real path, file or folder, and the position.
@@ -586,6 +605,65 @@ fn cleanup_run(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
   }
 }
 
+/// `kingu task create [--request-id id]`: the same id returns the first task instead of making
+/// another. The receipt is kept in the app's config folder (like cleanup's), and the task itself
+/// remembers the id, so a retry in this or another window finds it too.
+fn task_create(app: &AppHandle, params: &Value) -> Result<Value, RpcError> {
+  let id = optional_request_id(params)?;
+  if let Some(id) = &id {
+    let server = app.state::<CliServer>();
+    let mut ledger = server.task_creates.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(dir) = app.path().app_config_dir() {
+      ledger.open(dir.join("task-creates.json"));
+    }
+    if let Some(mut receipt) = ledger.receipt(id) {
+      receipt["replayed"] = json!(true);
+      return Ok(receipt);
+    }
+  }
+  let root = folder(app, params)?;
+  let mut checked = check_create(params)?;
+  // Orchestration: an agent in a task's worktree dispatches a sub-task, within the depth fence.
+  let max = app.path().app_config_dir().ok().and_then(|d| crate::settings::user_value(&d, orchestration::MAX_DEPTH_KEY));
+  let dispatch = orchestration::check_dispatch(&root, cwd_of(params).as_deref(), &tasks(&root)?, orchestration::resolve_max_depth(max.as_ref()))
+    .map_err(|e| rpc(ERR_FAILED, e))?;
+  checked["dispatchedBy"] = json!(dispatch.by);
+  let cwd = cwd_of(params);
+  let focus = checked["open"] == json!(true);
+  let Some(id) = id else {
+    return ask_window(app, cwd.as_deref(), protocol::METHOD_TASK_CREATE, checked, focus);
+  };
+  let server = app.state::<CliServer>();
+  let begin = {
+    let mut ledger = server.task_creates.lock().unwrap_or_else(|e| e.into_inner());
+    if let Ok(dir) = app.path().app_config_dir() {
+      ledger.open(dir.join("task-creates.json"));
+    }
+    ledger.begin(&id)
+  };
+  match begin {
+    crate::cli_ledger::Begin::Running => return Err(rpc(ERR_FAILED, tr!(CliMsg::RequestRunning, id))),
+    crate::cli_ledger::Begin::Replay(mut receipt) => {
+      receipt["replayed"] = json!(true);
+      return Ok(receipt);
+    }
+    crate::cli_ledger::Begin::New => {}
+  }
+  let answer = ask_window(app, cwd.as_deref(), protocol::METHOD_TASK_CREATE, checked, focus);
+  let mut ledger = server.task_creates.lock().unwrap_or_else(|e| e.into_inner());
+  match answer {
+    Ok(mut receipt) => {
+      receipt["requestId"] = json!(id);
+      ledger.finish(&id, receipt.clone());
+      Ok(receipt)
+    }
+    Err(e) => {
+      ledger.abort(&id);
+      Err(e)
+    }
+  }
+}
+
 fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcError> {
   match method {
     protocol::METHOD_STATUS => {
@@ -597,17 +675,7 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
       let list = tasks(&folder(app, params)?)?;
       Ok(json!({ "tasks": list.iter().map(task_row).collect::<Vec<_>>() }))
     }
-    protocol::METHOD_TASK_CREATE => {
-      let root = folder(app, params)?;
-      let mut checked = check_create(params)?;
-      // Orchestration: an agent in a task's worktree dispatches a sub-task, within the depth fence.
-      let max = app.path().app_config_dir().ok().and_then(|d| crate::settings::user_value(&d, orchestration::MAX_DEPTH_KEY));
-      let dispatch = orchestration::check_dispatch(&root, cwd_of(params).as_deref(), &tasks(&root)?, orchestration::resolve_max_depth(max.as_ref()))
-        .map_err(|e| rpc(ERR_FAILED, e))?;
-      checked["dispatchedBy"] = json!(dispatch.by);
-      let focus = checked["open"] == json!(true);
-      ask_window(app, cwd_of(params).as_deref(), method, checked, focus)
-    }
+    protocol::METHOD_TASK_CREATE => task_create(app, params),
     protocol::METHOD_TASK_OPEN => {
       let slug = str_param(params, "slug").unwrap_or_default();
       crate::agent::worktree::validate_slug(slug).map_err(|e| rpc(ERR_BAD_REQUEST, e))?;
@@ -634,7 +702,7 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
       }
       ask_window(app, cwd_of(params).as_deref(), method, json!({ "slug": slug, "comment": comment }), false)
     }
-    protocol::METHOD_CLEANUP_PREVIEW => {
+    protocol::METHOD_CLEANUP_PREVIEW | protocol::METHOD_CLEANUP_REPORT => {
       folder(app, params)?;
       ask_window(app, cwd_of(params).as_deref(), method, json!({}), false)
     }
@@ -1065,6 +1133,8 @@ mod tests {
     assert!(check_create(&json!({ "title": "x", "prompt": "a".repeat(MAX_PROMPT + 1) })).is_err());
     assert!(check_create(&json!({ "title": "x", "mode": "cloud" })).is_err());
     assert!(check_create(&json!({ "title": "x", "base": "--upload-pack=evil" })).is_err());
+    assert_eq!(check_create(&json!({ "title": "x", "requestId": "retry_1" })).unwrap()["requestId"], "retry_1");
+    assert!(check_create(&json!({ "title": "x", "requestId": "a b" })).is_err());
   }
 
   #[test]

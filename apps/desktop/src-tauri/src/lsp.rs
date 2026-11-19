@@ -676,18 +676,18 @@ mod tests {
     }
     let rust = spec_for("rust").unwrap();
     let ra = fake_bin(&home.join(".cargo/bin"), "rust-analyzer", "");
-    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap(), ra);
+    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), std::slice::from_ref(&root)).unwrap(), ra);
     let on_path = fake_bin(&bin, "rust-analyzer", "");
-    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap(), on_path);
+    assert_eq!(resolve_binary(&rust, None, Some(bin.as_os_str()), Some(&home), std::slice::from_ref(&root)).unwrap(), on_path);
 
-    let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), &[root.clone()]).unwrap_err();
+    let err = resolve_binary(&MISSING, None, Some(bin.as_os_str()), Some(&home), std::slice::from_ref(&root)).unwrap_err();
     assert!(err.starts_with("Not installed: Missing server"), "{err}");
     assert!(err.starts_with("Not installed:"), "{err}");
     assert!(err.contains("kingu-test-no-such-server") && err.contains("KINGU_LSP_MISSING"), "{err}");
 
     let custom = fake_bin(tmp.path(), "my-server", "");
-    assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, &[root.clone()]).unwrap(), custom);
-    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, &[root.clone()]).unwrap_err().starts_with("Not installed:"));
+    assert_eq!(resolve_binary(&MISSING, Some(custom.clone().into()), None, None, std::slice::from_ref(&root)).unwrap(), custom);
+    assert!(resolve_binary(&MISSING, Some("/nonexistent/srv".into()), None, None, std::slice::from_ref(&root)).unwrap_err().starts_with("Not installed:"));
   }
 
   #[cfg(unix)]
@@ -700,13 +700,13 @@ mod tests {
     for lang in ["svelte", "python", "json", "css", "html", "yaml", "toml"] {
       let spec = spec_for(lang).unwrap();
       let fake = fake_bin(&bin, spec.binaries[0], "");
-      assert_eq!(resolve_binary(&spec, None, Some(bin.as_os_str()), None, &[root.clone()]).unwrap(), fake, "{lang}");
+      assert_eq!(resolve_binary(&spec, None, Some(bin.as_os_str()), None, std::slice::from_ref(&root)).unwrap(), fake, "{lang}");
     }
     // A project-local install (node_modules/.bin) is found when PATH has none.
     let local = fake_bin(&root.join("node_modules/.bin"), "svelteserver", "");
     let empty = tmp.path().join("empty");
     std::fs::create_dir_all(&empty).unwrap();
-    assert_eq!(resolve_binary(&spec_for("svelte").unwrap(), None, Some(empty.as_os_str()), None, &[root.clone()]).unwrap(), local);
+    assert_eq!(resolve_binary(&spec_for("svelte").unwrap(), None, Some(empty.as_os_str()), None, std::slice::from_ref(&root)).unwrap(), local);
   }
 
   #[cfg(unix)]
@@ -742,10 +742,10 @@ mod tests {
     fake_bin(&bin, "pyright-langserver", "");
     // basedpyright in an extra dir (pipx's ~/.local/bin) beats pyright on PATH.
     let based = fake_bin(&home.join(".local/bin"), "basedpyright-langserver", "");
-    let got = resolve_binary(&py, None, path, Some(&home), &[root.clone()]).unwrap();
+    let got = resolve_binary(&py, None, path, Some(&home), std::slice::from_ref(&root)).unwrap();
     assert!(got.ends_with("basedpyright-langserver"), "{got:?}");
     let based_on_path = fake_bin(&bin, "basedpyright-langserver", "");
-    assert_eq!(resolve_binary(&py, None, path, Some(&home), &[root.clone()]).unwrap(), based_on_path);
+    assert_eq!(resolve_binary(&py, None, path, Some(&home), std::slice::from_ref(&root)).unwrap(), based_on_path);
     assert_ne!(based, based_on_path);
   }
 
@@ -883,7 +883,7 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let spec = spec_for("rust").unwrap();
-    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &[root.clone()]) else {
+    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), std::slice::from_ref(&root)) else {
       eprintln!("rust-analyzer not installed; skipping");
       return;
     };
@@ -959,7 +959,7 @@ mod tests {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let spec = spec_for("rust").unwrap();
-    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), &[root.clone()]) else {
+    let Ok(program) = resolve_binary(&spec, std::env::var_os(override_name(&spec)), std::env::var_os("PATH").as_deref(), home.as_deref(), std::slice::from_ref(&root)) else {
       eprintln!("rust-analyzer not installed; skipping");
       return;
     };

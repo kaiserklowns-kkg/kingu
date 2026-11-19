@@ -216,3 +216,30 @@ export function quickCommands(map: Readonly<Record<string, unknown>> | undefined
 export function quickCommandInput(command: string): string {
 	return `${command.replace(/\r?\n/g, '\r')}\r`;
 }
+
+/** The tab bar's Quick Commands button (Orca's split button): the command run last, else the first. */
+export function primaryQuickCommand<Q extends { label: string }>(list: readonly Q[], recent: string | null): Q | null {
+	return list.find((q) => q.label === recent) ?? list[0] ?? null;
+}
+
+export type QuickCommandProblem = 'label' | 'command' | 'tooMany';
+
+/**
+ * Adds (or replaces, by label) a quick command in one scope's `kingu.terminal.quickCommands` map
+ * (Orca's Add Quick Command dialog): a one-line label of 1-80 characters and a command of up to
+ * 4000. The problem instead when the input does not fit.
+ */
+export function withQuickCommand(map: unknown, label: string, command: string): Record<string, string> | QuickCommandProblem {
+	const name = label.trim();
+	const text = command.replace(/\s+$/, '');
+	if (!name || name.length > 80 || /[\r\n]/.test(name)) return 'label';
+	if (!text.trim() || text.length > 4000) return 'command';
+	const current = Object.fromEntries(Object.entries(map && typeof map === 'object' ? (map as Record<string, unknown>) : {}).filter((e): e is [string, string] => typeof e[1] === 'string'));
+	if (!(name in current) && Object.keys(current).length >= MAX_QUICK_COMMANDS) return 'tooMany';
+	return { ...current, [name]: text };
+}
+
+/** One scope's `kingu.terminal.quickCommands` without `label` (Edit moved it, or Delete). */
+export function withoutQuickCommand(map: unknown, label: string): Record<string, string> {
+	return Object.fromEntries(Object.entries(map && typeof map === 'object' ? (map as Record<string, unknown>) : {}).filter((e): e is [string, string] => typeof e[1] === 'string' && e[0] !== label));
+}

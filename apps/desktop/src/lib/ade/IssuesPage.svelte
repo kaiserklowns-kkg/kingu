@@ -16,11 +16,17 @@
 	import { SOURCE_NAMES, SOURCES, filterItems, isoTime, type SourceId, type SourceItem } from './taskSources.ts';
 	import { adeTasks } from './tasks.svelte.ts';
 	import { BUTTON, BUTTON_SECONDARY, ICON_BUTTON, INPUT } from './ui.ts';
+	import IssueDrawer from './IssueDrawer.svelte';
+	import TrackerIssueDrawer from './TrackerIssueDrawer.svelte';
 
 	let label = $state(sources.filter.label);
 	let search = $state(sources.filter.search);
 	let base = $state('');
 	let busy = $state(false);
+	/** The folder's GitHub issue open in the drawer (Orca's issue dialog); other trackers open in the browser. */
+	let drawer = $state<number | null>(null);
+	/** A Linear, Jira or GitLab issue in its read-and-comment drawer. */
+	let tracker = $state<SourceItem | null>(null);
 	const cliSetting = $derived(settings.get<string>('kingu.agent.cli') ?? '');
 	const enabled = $derived(sources.enabled());
 	const shown = $derived(filterItems(sources.items, sources.only));
@@ -84,7 +90,8 @@
 	const tab = (on: boolean) => [TAB, on ? 'bg-(--vscode-list-activeSelectionBackground)/40' : 'hover:bg-(--vscode-toolbar-hoverBackground)'];
 </script>
 
-<div class="flex h-full flex-col overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
+<div class="flex h-full overflow-hidden bg-(--vscode-editor-background) text-(--vscode-foreground)">
+<div class="flex min-w-0 flex-1 flex-col overflow-hidden">
 	<header class="flex shrink-0 flex-wrap items-center gap-2 border-b border-(--vscode-widget-border) px-4 py-2">
 		<h1 class="text-sm font-semibold">Issues</h1>
 		<div class="flex items-center gap-0.5" role="group" aria-label={t('adeSources.mineGroup')}>
@@ -135,7 +142,14 @@
 								<span class="rounded-sm bg-(--vscode-badge-background)/60 px-1 text-[10px] leading-4 text-(--vscode-badge-foreground)">{SOURCE_NAMES[item.source]}</span>
 							</span>
 							<div class="min-w-0 flex-1 space-y-1">
-								<p class="truncate text-[13px]" title={item.title}>{item.title}</p>
+								{#if item.raw.source === 'github'}
+									{@const n = item.raw.issue.number}
+									<button class={['block max-w-full truncate text-left text-[13px] hover:underline', drawer === n && 'font-semibold']} title={t('adeSources.drawer.openTitle', { title: item.title })} onclick={() => ((tracker = null), (drawer = drawer === n ? null : n))}>{item.title}</button>
+								{:else if item.source === 'linear' || item.source === 'jira' || item.source === 'gitlab'}
+									<button class={['block max-w-full truncate text-left text-[13px] hover:underline', tracker?.id === item.id && 'font-semibold']} title={t('adeSources.drawer.openTitle', { title: item.title })} onclick={() => ((drawer = null), (tracker = tracker?.id === item.id ? null : item))}>{item.title}</button>
+								{:else}
+									<p class="truncate text-[13px]" title={item.title}>{item.title}</p>
+								{/if}
 								<p class="flex flex-wrap items-center gap-1.5 text-(--vscode-descriptionForeground)">
 									{#each item.labels as l (l.name)}
 										<span class="rounded-full border px-1.5 text-[10px] leading-4" style:border-color={/^[0-9a-f]{6}$/i.test(l.color) ? `#${l.color}` : undefined}>{l.name}</span>
@@ -145,7 +159,7 @@
 									{#if item.assignees.length}<span>· {item.assignees.map((a) => (item.source === 'jira' || item.source === 'linear' ? a : `@${a}`)).join(', ')}</span>{/if}
 									{#if task}
 										<span>·</span>
-										<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => adeLayout.show(task.meta.slug)}>kingu/{task.meta.slug}</button>
+										<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => adeLayout.show(task.meta.slug)}>{adeTasks.branchOf(task.meta.slug)}</button>
 									{/if}
 								</p>
 							</div>
@@ -188,4 +202,10 @@
 			</ul>
 		{/if}
 	</div>
+</div>
+	{#if drawer !== null}
+		<IssueDrawer number={drawer} onclose={() => (drawer = null)} onchanged={() => void sources.load()} />
+	{:else if tracker}
+		<TrackerIssueDrawer link={tracker.link} ref={tracker.ref} onclose={() => (tracker = null)} />
+	{/if}
 </div>

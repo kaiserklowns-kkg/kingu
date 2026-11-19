@@ -5,7 +5,8 @@
 	import { onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
-	import { browserTitle, browserUrl, isNewTabPage, readHistory, recordHistory, BROWSER_ACTION, type PickedElement } from './floating';
+	import { settings } from '#lib/settings/settings.svelte.ts';
+	import { BROWSER_ZOOMS, browserTitle, browserUrl, defaultBrowserZoom, isNewTabPage, readHistory, recordHistory, BROWSER_ACTION, type PickedElement } from './floating';
 	import { notifications } from './notifications.svelte';
 	import { quick } from './quick.svelte';
 	import { status } from './status.svelte';
@@ -52,8 +53,11 @@
 			const r = el.getBoundingClientRect();
 			if (r.width < 1 || r.height < 1) return;
 			const at = { label, x: r.left, y: r.top, width: r.width, height: r.height };
-			const call = opened ? invoke('floating_browser_bounds', at) : invoke('floating_browser_open', { ...at, url: browserUrl(address), profile: profile || null });
+			const first = !opened;
+			const call = opened ? invoke('floating_browser_bounds', at) : invoke('floating_browser_open', { ...at, url: browserUrl(address, settings.get('kingu.browser.searchEngine')), profile: profile || null });
 			opened = true;
+			// kingu.browser.defaultZoom (Orca's Default Zoom): a new page starts at it.
+			if (first && baseZoom !== 1) void call.then(() => setZoom(baseZoom));
 			void call.catch((e) => status.error(String(e)));
 		};
 		const sync = () => {
@@ -99,7 +103,7 @@
 	});
 
 	function go() {
-		void invoke('floating_browser_navigate', { label, url: browserUrl(address) }).catch((e) => status.error(String(e)));
+		void invoke('floating_browser_navigate', { label, url: browserUrl(address, settings.get('kingu.browser.searchEngine')) }).catch((e) => status.error(String(e)));
 	}
 	function step(back: boolean) {
 		void invoke('floating_browser_history', { label, back }).catch(() => {});
@@ -109,14 +113,16 @@
 	}
 	// Orca's browser tools: zoom (⌘= ⌘- ⌘0), find in page (⌘F), DevTools (⌥⌘I). Commands reach
 	// the shown surface through a window event (BROWSER_ACTION) naming its label.
+	/** kingu.browser.defaultZoom: where a page starts and where ⌘0 returns. */
+	const baseZoom = $derived(defaultBrowserZoom(settings.get('kingu.browser.defaultZoom')));
 	let zoom = $state(1);
-	const ZOOMS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+	const ZOOMS = BROWSER_ZOOMS;
 	function setZoom(next: number) {
 		zoom = next;
 		void invoke('floating_browser_zoom', { label, factor: next }).catch((e) => status.error(String(e)));
 	}
 	function stepZoom(dir: 1 | -1 | 0) {
-		if (dir === 0) return setZoom(1);
+		if (dir === 0) return setZoom(baseZoom);
 		const i = ZOOMS.findIndex((z) => z >= zoom - 0.001);
 		setZoom(ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, (i < 0 ? ZOOMS.length - 1 : i) + dir))]);
 	}
@@ -189,7 +195,7 @@
 	}
 
 	function openExternal() {
-		void invoke('floating_browser_open_external', { url: browserUrl(address) }).catch((e) => status.error(String(e)));
+		void invoke('floating_browser_open_external', { url: browserUrl(address, settings.get('kingu.browser.searchEngine')) }).catch((e) => status.error(String(e)));
 	}
 
 	const BTN = 'grid size-6 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)';
@@ -218,7 +224,7 @@
 				}}
 			/>
 		</div>
-		{#if zoom !== 1}
+		{#if zoom !== baseZoom}
 			<button class="h-6 shrink-0 rounded px-1.5 text-[11px] text-(--vscode-descriptionForeground) tabular-nums hover:bg-(--vscode-toolbar-hoverBackground)" title="Reset zoom (⌘0)" onclick={() => stepZoom(0)}>{Math.round(zoom * 100)}%</button>
 		{/if}
 		<button class={BTN} aria-label="Zoom out" title="Zoom out (⌘-)" onclick={() => stepZoom(-1)}><Icon name="minus" size={14} /></button>

@@ -81,7 +81,7 @@
 									{formatWhen(a.last_run_at, automations.now)}
 									{#if a.last_task_slug}
 										{#if lastTask}
-											<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => openTask(a.last_task_slug!)}>kingu/{a.last_task_slug}</button>
+											<button class="font-mono text-(--vscode-textLink-foreground) hover:underline" onclick={() => openTask(a.last_task_slug!)}>{adeTasks.branchOf(a.last_task_slug!)}</button>
 										{:else}
 											<span class="font-mono">kingu/{a.last_task_slug}</span> {t('legacyAde.automationsPage.deleted')}
 										{/if}

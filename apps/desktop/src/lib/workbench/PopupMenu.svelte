@@ -18,6 +18,7 @@
 	// A context menu or dropdown at a point (title bar right-click, split button, layout menu,
 	// the compact menu bar's hamburger), drawn with the menu bar's MenuList.
 	import MenuList from './MenuList.svelte';
+	import { menuLeft, menuTop } from './menus';
 
 	type Props = {
 		items: MenuNode[];
@@ -32,7 +33,17 @@
 	let { items, label, x, y, focusFirst = false, onRun, onClose }: Props = $props();
 
 	const MENU_WIDTH = 248;
-	const left = $derived(Math.max(4, Math.min(x, (typeof window === 'undefined' ? 1200 : window.innerWidth) - MENU_WIDTH - 4)));
+	const viewportWidth = () => (typeof window === 'undefined' ? 1200 : window.innerWidth);
+	const viewportHeight = () => (typeof window === 'undefined' ? 800 : window.innerHeight);
+	const left = $derived(menuLeft(x, MENU_WIDTH, viewportWidth()));
+	// A tall menu near the bottom (the task menu) must move up, or its last rows cannot be reached.
+	let box = $state<HTMLDivElement>();
+	let height = $state(0);
+	$effect(() => {
+		const menu = box?.firstElementChild;
+		height = menu instanceof HTMLElement ? menu.offsetHeight : 0;
+	});
+	const top = $derived(menuTop(y, height, viewportHeight()));
 	const previous = typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null);
 
 	function close() {
@@ -49,6 +60,6 @@
 <svelte:window onblur={close} />
 
 <div class="fixed inset-0 z-40" role="presentation" data-tauri-drag-region="false" onpointerdown={close} oncontextmenu={(e) => (e.preventDefault(), close())}></div>
-<div class="fixed z-50" style:left="{left}px" style:top="{y}px" data-tauri-drag-region="false">
+<div bind:this={box} class="fixed z-50" style:left="{left}px" style:top="{top}px" data-tauri-drag-region="false">
 	<MenuList {items} {label} {focusFirst} onRun={run} onClose={close} />
 </div>

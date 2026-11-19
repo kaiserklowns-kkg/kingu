@@ -621,12 +621,22 @@ mod tests {
     let client = http_client(&cfg).unwrap();
     let stop = Arc::new(Stop::default());
     let s2 = stop.clone();
+    // Stop once connected (a fixed delay raced the connection on slow CI machines), well before
+    // the server's late event.
+    let (connected_tx, connected_rx) = std::sync::mpsc::channel::<()>();
     std::thread::spawn(move || {
-      std::thread::sleep(Duration::from_millis(60));
+      if connected_rx.recv_timeout(Duration::from_secs(5)).is_ok() {
+        std::thread::sleep(Duration::from_millis(20));
+      }
       s2.stop();
     });
     let mut signals = Vec::new();
-    run(&client, &cfg, &base, "kgu_x", &stop, &mut |s| signals.push(s));
+    run(&client, &cfg, &base, "kgu_x", &stop, &mut |s| {
+      if s == Signal::State(StreamState::Connected) {
+        let _ = connected_tx.send(());
+      }
+      signals.push(s)
+    });
     server.join().unwrap();
     assert_eq!(signals, vec![Signal::State(StreamState::Connected), Signal::State(StreamState::Off)]);
   }

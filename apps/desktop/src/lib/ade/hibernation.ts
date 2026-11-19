@@ -1,8 +1,12 @@
 // Agent hibernation (Orca's experimentalAgentHibernation, kingu.agent.hibernation): an agent CLI
 // that finished its turn and has sat idle for `kingu.agent.hibernationIdleMinutes` is closed to
-// free its process and memory, and its task continues the same session with one click. Which CLIs
+// free its process and memory, and its task continues the same session when you return to it. Which CLIs
 // may go is decided here, the way Orca's planner does: a finished turn (not waiting on you), a
 // session the CLI can resume, nothing printed and not on screen for the whole idle time. Pure.
+//
+// Waking is Orca's reveal wake (terminal-pane/pty-connection/lifecycle/hibernated-pane-wake.ts,
+// viewport/pane-visibility-identity.ts): the CLI this run put to sleep continues its session by
+// itself the moment its terminal comes back on screen, once (`autoResumeOnReturn`).
 
 export const DEFAULT_IDLE_MINUTES = 30;
 export const MIN_IDLE_MINUTES = 1;
@@ -49,4 +53,31 @@ export function hibernationCandidates(rows: readonly HibernationRow[], now: numb
 		})
 		.map((r) => r.slug)
 		.sort();
+}
+
+/** The task whose terminal just came on screen, as the wake sees it. */
+export type ReturnedTask = {
+	/** This run's coordinator closed its CLI (Orca's hibernatedWakeTarget: armed in memory at the kill, never from a restart). */
+	armed: boolean;
+	/** The task still says its CLI is hibernated: any launch since clears it. */
+	hibernated: boolean;
+	/** A CLI is running for the task: another flow owns it already. */
+	running: boolean;
+	/** The saved session can still be continued by the CLI. */
+	resumable: boolean;
+	/** A launch of this task is in flight (Orca's hibernatedWakeInFlightClaimKey). */
+	resuming: boolean;
+};
+
+/**
+ * Whether the task that came on screen continues its session now. Only a real return wakes: the
+ * terminal on screen changed from something observed (`prev`: another task's slug, or null for
+ * none) to this task. The first look after start (`prev` undefined) and a repeat of the same
+ * terminal are not returns (Orca's isTerminalPaneVisibilityResume: previous must be exactly
+ * hidden). There is no delay and no setting, as in Orca; a failed launch stays armed for the
+ * next return.
+ */
+export function autoResumeOnReturn(prev: string | null | undefined, shown: string | null, task: ReturnedTask | null): boolean {
+	if (prev === undefined || shown === null || prev === shown || !task) return false;
+	return task.armed && task.hibernated && !task.running && task.resumable && !task.resuming;
 }

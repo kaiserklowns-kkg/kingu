@@ -17,6 +17,9 @@
 	import { branchChoices, branchTitle, looksLikePr, prTitle, type BranchChoice, type PrHead } from './worktreeSource';
 	import { BUTTON, BUTTON_SECONDARY, INPUT } from './ui';
 	import AgentPick from './AgentPick.svelte';
+	import type { LinkedIssue } from './issueUrlLookup';
+	import TaskNameField from './TaskNameField.svelte';
+	import { splitBranchOverride, suggestCreatureName, taskName } from './taskNaming';
 
 	type Kind = 'new' | 'branch' | 'pr';
 	let kind = $state<Kind>('new');
@@ -78,14 +81,40 @@
 	});
 
 	const taken = $derived(new Set([...adeTasks.list.map((t) => t.slug), ...adeTasks.worktrees.map((w) => w.slug ?? '')]));
-	const slug = $derived(kind === 'new' && title.trim() ? (count > 1 && !parent ? attemptSlugs(title, count, taken).slugs.join(', ') : uniqueSlug(title, taken)) : '');
+	// Default name (Orca): an empty name takes the prompt's first line, else a marine creature no
+	// task uses. The creature stays the same while the form is open, unless a task takes it.
+	let creature = $state('');
+	$effect(() => {
+		if (!creature || taken.has(creature)) creature = suggestCreatureName(taken);
+	});
+	const plain = $derived(kind === 'new' && !parent && count === 1);
+	const named = $derived(taskName(title, prompt, creature));
+	/** Best-of-N and stacked tasks start from words the user wrote: a creature is not a prompt. */
+	const name = $derived(kind === 'new' && (plain || !named.generated) ? named.title : '');
+	/** Advanced → Branch name (Orca's branchNameOverride): the whole branch name of a plain new task. */
+	let advanced = $state(false);
+	/**
+	 * Advanced → Parent task (Orca's Parent workspace, model/worktrees.mdx): the new task nests under
+	 * an open task of this folder in the side bar; git history and branches stay as they are.
+	 */
+	let nestUnder = $state('');
+	const parents = $derived(adeTasks.list.filter((x) => !x.archived_at).toSorted((a, b) => b.updated_at - a.updated_at));
+	let branchName = $state('');
+	const override = $derived(plain && branchName.trim() ? splitBranchOverride(branchName) : undefined);
+	const slug = $derived(name ? (count > 1 && !parent ? attemptSlugs(name, count, taken).slugs.join(', ') : uniqueSlug(name, taken)) : '');
 	const badModel = $derived(kind === 'new' && !parent ? models.find((m) => m.trim() && !validModel(m.trim())) : undefined);
 	const picked = $derived(prs?.find((p) => String(p.number) === pr.trim().replace(/^#/, '')) ?? null);
 	/** Starting from a merge request is not built for GitLab yet; the form says so instead. */
 	const prOnGitlab = $derived(adeTasks.gh?.provider === 'gitlab');
-	const ready = $derived(kind === 'new' ? !!title.trim() && !badModel : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
 	const mac = keyLabel('cmd+a').startsWith('⌘');
 
+	// Link issue at create and emoji names live in the name field (TaskNameField.svelte). Only a
+	// plain new task carries a link: best-of-N and stacked tasks have their own flows.
+	let linked = $state<LinkedIssue | null>(null);
+	let resolving = $state(false);
+	let field = $state<ReturnType<typeof TaskNameField>>();
+	const linkable = $derived(kind === 'new' && !parent && count === 1);
+	const ready = $derived(kind === 'new' ? !!name && !badModel && override !== null && !resolving : kind === 'branch' ? !!branch : !prOnGitlab && looksLikePr(pr));
 	onMount(() => {
 		void loadPresets();
 		void adeTasks.refreshBranches().then(() => {
@@ -114,10 +143,12 @@
 
 	async function submit(e?: Event) {
 		e?.preventDefault();
+		// ⌘Enter on a looked-up URL takes the link; it never becomes the task's name by accident.
+		if (field?.takeLink()) return;
 		if (!ready || busy) return;
 		// A plain new task is created in the background (Orca): the form closes at once.
 		if (kind === 'new' && !parent && count === 1) {
-			adeTasks.startCreate({ title, prompt, base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined });
+			adeTasks.startCreate({ title: name, nameGenerated: named.generated && !linked, nameTyped: !!title.trim() || !!linked, branch: override ? branchName.trim() : undefined, prompt: prompt.trim() ? prompt : (linked?.prompt ?? prompt), base, model: models[0].trim() || undefined, sparse: sparseOn ? sparseDirs : undefined, agent: agentPick || undefined, issue: linked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
 			adeTasks.composing = false;
 			return;
 		}
@@ -129,8 +160,8 @@
 					: kind === 'pr'
 						? await adeTasks.createFromPr(picked ?? pr.trim(), { title, prompt })
 						: parent
-							? await attempts.createStacked(parent.meta.slug, { title, prompt })
-							: await attempts.createAttempts({ title, prompt, base, models });
+							? await attempts.createStacked(parent.meta.slug, { title: name, prompt })
+							: await attempts.createAttempts({ title: name, prompt, base, models });
 			if (created) adeTasks.composing = false;
 		} finally {
 			busy = false;
@@ -191,7 +222,7 @@
 		</datalist>
 		{#if prsError}<div class="truncate text-[11px] text-(--vscode-errorForeground)" title={prsError}>{prsError}</div>{/if}
 	{/if}
-	<input bind:this={input} class={INPUT} placeholder={titleHint} aria-label={t('adeWorktrees.form.title')} bind:value={title} disabled={busy} />
+	<TaskNameField bind:this={field} bind:title bind:linked bind:resolving bind:input {linkable} disabled={busy} placeholder={titleHint} />
 	<textarea
 		class={[INPUT, 'h-20 resize-none']}
 		placeholder={kind === 'new' ? t('adeWorktrees.form.promptPlaceholder') : t('adeWorktrees.form.promptOptional')}
@@ -265,7 +296,35 @@
 			</div>
 		{/if}
 	{/if}
-	{#if slug}<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ kingu/{slug}</div>{/if}
+	{#if plain}
+		<!-- Advanced (Orca's composer): a branch name of your own instead of prefix + name. -->
+		<button type="button" class="flex items-center gap-1 text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)" aria-expanded={advanced} disabled={busy} onclick={() => (advanced = !advanced)}>
+			<Icon name={advanced ? 'chevronDown' : 'chevronRight'} size={11} />{t('adeWorktrees.form.advanced')}
+		</button>
+		{#if advanced}
+			<label class="flex items-center gap-2">
+				<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.branchName')}</span>
+				<input class={[INPUT, 'font-mono']} placeholder={t('adeWorktrees.form.branchNamePlaceholder')} aria-label={t('adeWorktrees.form.branchName')} aria-invalid={override === null} bind:value={branchName} disabled={busy} spellcheck="false" autocapitalize="off" />
+			</label>
+			{#if override === null}
+				<div class="text-[11px] text-(--vscode-errorForeground)" role="alert">{t('adeWorktrees.form.badBranchName', { branch: branchName.trim() })}</div>
+			{:else}
+				<div class="text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.branchNameHint')}</div>
+			{/if}
+			<label class="flex items-center gap-2">
+				<span class="shrink-0 text-(--vscode-descriptionForeground)">{t('adeWorktrees.form.parent')}</span>
+				<select class={[INPUT, 'py-0.5']} aria-label={t('adeWorktrees.form.parent')} title={t('adeWorktrees.form.parentHint')} bind:value={nestUnder} disabled={busy}>
+					<option value="">{t('adeWorktrees.form.parentNone')}</option>
+					{#each parents as p (p.slug)}<option value={p.slug}>{p.title}</option>{/each}
+				</select>
+			</label>
+		{/if}
+	{/if}
+	{#if override}
+		<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ {override.prefix}{override.leaf}</div>
+	{:else if slug}
+		<div class="truncate font-mono text-[11px] text-(--vscode-descriptionForeground)">→ kingu/{slug}</div>
+	{/if}
 	<div class="flex items-center gap-1.5">
 		<button type="submit" class={BUTTON} disabled={!ready || busy} title={t('adeWorktrees.form.submitTitle', { keys: mac ? '⌘Enter' : 'Ctrl+Enter' })}>{busy ? t('adeWorktrees.form.creating') : t('adeWorktrees.form.create')}</button>
 		<button type="button" class={BUTTON_SECONDARY} onclick={() => ((adeTasks.composing = false), (attempts.stackOn = null))}>{t('common.cancel')}</button>

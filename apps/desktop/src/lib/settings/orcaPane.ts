@@ -229,6 +229,7 @@ export const TERMINAL: OrcaPaneSpec = {
 				{ kind: 'list', id: 'terminal.integrated.shellArgs.osx', label: 'panes.terminal.shellArgs', hint: 'panes.terminal.shellArgsHint' }
 			]
 		},
+		{ title: 'panes.quickCommands.title', hint: 'panes.quickCommands.hint', rows: [{ kind: 'list', id: 'kingu.terminal.quickCommands', label: 'panes.quickCommands.title' }] },
 		{
 			title: 'panes.terminal.rendering',
 			hint: 'panes.terminal.renderingHint',
@@ -624,6 +625,7 @@ export const PROJECT: OrcaPaneSpec = {
 			]
 		},
 		{ title: 'panes.project.shared', hint: 'panes.project.sharedHint', rows: [{ kind: 'list', id: 'kingu.repo.symlinkPaths', label: 'panes.project.shared' }] },
+		{ title: 'panes.quickCommands.title', hint: 'panes.quickCommands.projectHint', rows: [{ kind: 'list', id: 'kingu.terminal.quickCommands', label: 'panes.quickCommands.title' }] },
 		{
 			title: 'panes.project.ai',
 			hint: 'panes.project.aiHint',

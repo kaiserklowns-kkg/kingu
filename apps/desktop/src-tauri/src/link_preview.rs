@@ -547,7 +547,7 @@ mod tests {
     c.put("b".into(), None);
     assert_eq!(c.get("a"), Some(Some(p.clone())));
     assert_eq!(c.get("b"), Some(None));
-    assert_eq!(c.map["a"].expires - c.map["b"].expires >= Duration::from_millis(PAGE_TTL_MS - FAILURE_TTL_MS - 1000), true);
+    assert!(c.map["a"].expires - c.map["b"].expires >= Duration::from_millis(PAGE_TTL_MS - FAILURE_TTL_MS - 1000));
     for i in 0..CACHE_MAX_ENTRIES + 5 {
       c.put(format!("k{i}"), None);
     }

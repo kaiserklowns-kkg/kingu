@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import {
-	WORKSPACE_ARCHIVE_SUPPORTED,
 	WORKSPACE_CLEANUP_POLICY_MAX_DAYS,
 	WORKSPACE_CLEANUP_POLICY_MIN_DAYS,
 	getDefaultWorkspaceCleanupRules,
@@ -21,7 +20,6 @@ describe('workspace cleanup policy', () => {
 		expect(all.unchanged.afterDays).toBe(1);
 		expect(all.inactive).toEqual({ enabled: false, afterDays: 30, action: 'archive' });
 		expect(all.keepWhen).toBe('any-local-files');
-		expect(WORKSPACE_ARCHIVE_SUPPORTED).toBe(false);
 	});
 
 	test('normalize repairs each field independently and clamps days', () => {
@@ -57,8 +55,7 @@ describe('workspace cleanup policy', () => {
 		const global = rules({ merged: { enabled: true } });
 		expect(resolveWorkspaceCleanupPolicy({ workspaceCleanupPolicy: global })).toEqual({
 			source: 'global',
-			rules: global,
-			inactiveActionSupported: false
+			rules: global
 		});
 		expect(resolveWorkspaceCleanupPolicy({ workspaceCleanupPolicy: global }, { workspaceCleanupPolicy: { mode: 'off' } }).source).toBe('project-off');
 		expect(

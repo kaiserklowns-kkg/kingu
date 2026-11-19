@@ -1133,6 +1133,24 @@ pub async fn gh_issue_comment(ws: Workspace, number: u64, body: String) -> Resul
   Ok(())
 }
 
+/// Closes or reopens an issue (the Issues page's issue drawer).
+#[tauri::command]
+pub async fn gh_issue_set_state(ws: Workspace, number: u64, open: bool) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
+  blocking(move || issues::set_state(&gh, &root, number, open)).await?;
+  log::info!("issue #{number} {}", if open { "reopened" } else { "closed" });
+  Ok(())
+}
+
+/// Adds or removes labels and assignees (the issue drawer).
+#[tauri::command]
+pub async fn gh_issue_edit(ws: Workspace, number: u64, edit: issues::IssueEdit) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
+  blocking(move || issues::edit(&gh, &root, number, &edit)).await
+}
+
 /// Opens the issue on GitHub in the default browser.
 #[tauri::command]
 pub async fn gh_issue_open(ws: Workspace, number: u64) -> Result<(), String> {

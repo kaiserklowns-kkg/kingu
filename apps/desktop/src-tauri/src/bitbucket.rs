@@ -196,6 +196,11 @@ pub fn connected() -> Result<Http, String> {
   client(&c, REQUEST_TIMEOUT_MS)
 }
 
+/// A client for `c` with a whole-request limit of `total` (a caller that read the credential once).
+pub fn client_with_timeout(c: &Credential, total: std::time::Duration) -> Result<Http, String> {
+  client(c, total.as_millis() as u64)
+}
+
 /// The same, with Orca's longer limit for creating a pull request.
 pub fn connected_for_create() -> Result<Http, String> {
   let (c, _) = credential().ok_or_else(|| tr!(BitbucketMsg::NotConnected))?;
@@ -241,6 +246,33 @@ pub fn branch_query(repo: &Repo, branch: &str) -> String {
     path.push_str(&format!("&state={s}"));
   }
   path
+}
+
+/// The newest merged PRs whose source branch is `branch` (Workspace Cleanup).
+pub fn merged_query(repo: &Repo, branch: &str) -> String {
+  let q = format!("source.branch.name = \"{}\" AND state = \"MERGED\"", bbql(branch));
+  format!("{}/pullrequests?pagelen=5&sort=-updated_on&q={}&state=MERGED", repo.path(), enc(&q))
+}
+
+/// The source commit of the first merged PR of `branch` opened from this repo itself; a fork's
+/// same-named branch is a different branch.
+pub fn pick_merged_head(list: &Value, repo: &Repo, branch: &str) -> Option<String> {
+  let full = format!("{}/{}", repo.workspace, repo.slug);
+  list["values"]
+    .as_array()?
+    .iter()
+    .filter(|pr| {
+      pr["state"] == "MERGED"
+        && pr["source"]["branch"]["name"] == branch
+        && pr["source"]["repository"]["full_name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(&full))
+    })
+    .find_map(|pr| pr["source"]["commit"]["hash"].as_str().map(str::trim).filter(|h| !h.is_empty()).map(str::to_owned))
+}
+
+/// The source commit `branch`'s newest merged PR had (Workspace Cleanup's fallback when the base
+/// moved on after the merge).
+pub fn merged_head(t: &dyn Transport, repo: &Repo, branch: &str) -> Result<Option<String>, String> {
+  Ok(pick_merged_head(&get(t, merged_query(repo, branch))?, repo, branch))
 }
 
 /// Orca `rg`: MERGED → merged, DECLINED / SUPERSEDED → closed, anything else open; in gh's words.
@@ -514,6 +546,46 @@ mod tests {
     assert_eq!(create(&t, &repo(), "x", "main", "T", "").unwrap_err(), tr!(BitbucketMsg::AlreadyExists));
     let t = Fake::new(&[(400, json!({"error": {"message": "bad"}}))]);
     assert_eq!(create(&t, &repo(), "x", "main", "T", "").unwrap_err(), tr!(BitbucketMsg::Validation));
+  }
+
+  fn merged(branch: &str, full_name: &str, hash: Value) -> Value {
+    json!({"id": 9, "state": "MERGED", "source": {"branch": {"name": branch}, "commit": {"hash": hash}, "repository": {"full_name": full_name}}})
+  }
+
+  #[test]
+  fn merged_query_asks_for_merged_prs_of_the_branch_newest_first() {
+    let q = merged_query(&Repo { workspace: "acme".into(), slug: "web app".into() }, "feat/\"x\"");
+    assert_eq!(
+      q,
+      "/repositories/acme/web%20app/pullrequests?pagelen=5&sort=-updated_on&q=source.branch.name%20%3D%20%22feat%2F%5C%22x%5C%22%22%20AND%20state%20%3D%20%22MERGED%22&state=MERGED"
+    );
+  }
+
+  #[test]
+  fn only_a_merged_pr_from_this_repo_with_a_hash_gives_a_head() {
+    let pick = |v: Value| pick_merged_head(&v, &repo(), "feat");
+    assert_eq!(pick(json!({"values": [merged("feat", "ACME/Web-App", json!(" abc123 "))]})).as_deref(), Some("abc123"));
+    let open = json!({"id": 1, "state": "OPEN", "source": {"branch": {"name": "feat"}, "commit": {"hash": "abc"}, "repository": {"full_name": "acme/web-app"}}});
+    assert_eq!(pick(json!({"values": [open]})), None);
+    assert_eq!(pick(json!({"values": [merged("feat", "mallory/web-app", json!("abc"))]})), None);
+    assert_eq!(pick(json!({"values": [merged("other", "acme/web-app", json!("abc"))]})), None);
+    assert_eq!(pick(json!({"values": [merged("feat", "acme/web-app", json!(""))]})), None);
+    assert_eq!(pick(json!({"values": [merged("feat", "acme/web-app", Value::Null)]})), None);
+    assert_eq!(pick(json!({"values": [merged("feat", "mallory/web-app", json!("x")), merged("feat", "acme/web-app", json!("def"))]})).as_deref(), Some("def"));
+    assert_eq!(pick(json!({"values": []})), None);
+    assert_eq!(pick(json!({"values": {}})), None);
+    assert_eq!(pick(json!([merged("feat", "acme/web-app", json!("abc"))])), None);
+  }
+
+  #[test]
+  fn merged_head_asks_once_and_errors_are_errors() {
+    let t = Fake::new(&[(200, json!({"values": [merged("kingu/x", "acme/web-app", json!("abc123"))]}))]);
+    assert_eq!(merged_head(&t, &repo(), "kingu/x").unwrap().as_deref(), Some("abc123"));
+    assert_eq!(t.requests().len(), 1);
+    assert_eq!(t.requests()[0].path, merged_query(&repo(), "kingu/x"));
+    assert_eq!(merged_head(&Fake::new(&[(200, json!({"values": []}))]), &repo(), "x").unwrap(), None);
+    assert!(merged_head(&Fake::new(&[(404, json!({}))]), &repo(), "x").is_err());
+    assert!(merged_head(&Fake::new(&[(401, json!({}))]), &repo(), "x").is_err());
   }
 
   #[test]

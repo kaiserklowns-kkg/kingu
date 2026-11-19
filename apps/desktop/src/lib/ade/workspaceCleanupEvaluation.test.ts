@@ -20,7 +20,7 @@ const policy = (over: Partial<WorkspaceCleanupRules> = {}, source: WorkspaceClea
 	const rules = { ...getDefaultWorkspaceCleanupRules(), ...over };
 	return source === 'project-off'
 		? resolveWorkspaceCleanupPolicy({ workspaceCleanupPolicy: rules }, { workspaceCleanupPolicy: { mode: 'off' } })
-		: { source, rules, inactiveActionSupported: rules.inactive.action !== 'archive' };
+		: { source, rules };
 };
 
 const input = (over: Partial<WorkspaceCleanupInput> = {}): WorkspaceCleanupInput => ({
@@ -127,17 +127,19 @@ describe('workspace cleanup evaluation', () => {
 		});
 	});
 
-	test('an archive rule keeps when archive is unsupported', () => {
+	test('an archive rule archives instead of deleting', () => {
 		const inactive = policy({ inactive: { enabled: true, afterDays: 1, action: 'archive' } });
-		expect(inactive.inactiveActionSupported).toBe(false);
 		expect(evaluateWorkspaceCleanup(input({ lastActivityAt: NOW - 2 * DAY }), inactive, NOW)).toEqual({
-			action: 'keep',
-			cause: 'archive-unavailable',
-			reason: 'inactive'
-		});
-		expect(evaluateWorkspaceCleanup(input({ lastActivityAt: NOW - 2 * DAY }), { ...inactive, inactiveActionSupported: true }, NOW)).toEqual({
 			action: 'archive',
 			reason: 'inactive'
+		});
+	});
+
+	test('an already archived workspace is kept so a later run does not archive it again', () => {
+		const inactive = policy({ inactive: { enabled: true, afterDays: 1, action: 'archive' } });
+		expect(evaluateWorkspaceCleanup(input({ reasons: ['archived'], lastActivityAt: NOW - 2 * DAY }), inactive, NOW)).toEqual({
+			action: 'keep',
+			cause: 'already-archived'
 		});
 	});
 

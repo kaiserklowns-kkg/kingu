@@ -1,3 +1,6 @@
+// Long tuple and closure types are local to one function or test here; a `type` alias per use would hide more than it names.
+#![allow(clippy::type_complexity)]
+
 mod accounts;
 mod agent;
 mod artifacts;
@@ -327,12 +330,11 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<Pa
 #[tauri::command]
 /// `background`: a poll nobody asked for (git_admission's background tier, behind clicks and visible reads).
 async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>, repo: Option<String>, background: Option<bool>) -> Result<Option<git::GitStatus>, String> {
-  if let Some(r) = ws.remote() {
-    if slug.is_none() {
+  if let Some(r) = ws.remote()
+    && slug.is_none() {
       let opts = options.unwrap_or_default();
       return blocking(move || remote_ws::status(&r, &opts)).await;
     }
-  }
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
@@ -518,6 +520,14 @@ async fn git_pull_ff_only(ws: Workspace, slug: Option<String>, repo: Option<Stri
 async fn git_rebase(ws: Workspace, slug: Option<String>, base: String, repo: Option<String>) -> Result<(), String> {
   let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
   blocking(move || git::rebase(&root, &base)).await
+}
+
+/// The last commit's message and the remote branches that already have it, before Commit (Amend)
+/// in the ADE's Source Control; `None` before the first commit.
+#[tauri::command]
+async fn git_amend_info(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<Option<git::AmendInfo>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
+  blocking(move || git::amend_info(&root)).await
 }
 
 /// The Commits panel of Source Control.
@@ -1612,6 +1622,7 @@ pub fn run() {
       git_user_configured,
       git_numstat,
       git_force_push,
+      git_amend_info,
       git_pull_ff_only,
       git_rebase,
       git_log,
@@ -1732,6 +1743,7 @@ pub fn run() {
       worktree_refresh_base,
       worktree_list,
       workspace_cleanup::workspace_cleanup_scan,
+      workspace_cleanup::workspace_cleanup_inspect,
       workspace_cleanup::workspace_cleanup_sizes,
       workspace_space::workspace_space_analyze,
       workspace_space::workspace_space_cancel,
@@ -1930,6 +1942,8 @@ pub fn run() {
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,
+      agent::gh_issue_set_state,
+      agent::gh_issue_edit,
       agent::gh_issue_open,
       artifacts::artifacts_list,
       artifacts::artifact_get,
