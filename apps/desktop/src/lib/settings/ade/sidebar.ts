@@ -172,6 +172,14 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		description: 'คอลัมน์ของบอร์ดงาน ค่าเริ่มต้นตาม Orca คือขั้นตอนงาน (Which columns the task board shows; Orca shows workflow statuses.)'
 	},
 	{
+		id: 'kingu.board.showIdle',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'บอร์ดแบบสถานะ agent แสดงคอลัมน์ Idle: งานที่เสร็จแล้วและคุณเห็นแล้ว (ไม่มีแจ้งเตือนที่ยังไม่อ่าน) ปิดไว้งานเหล่านั้นจะไม่อยู่บนบอร์ด (Orca: Show idle agents) (The agent-status board shows an Idle column: finished tasks you have already seen. Off, they leave the board.)'
+	},
+	{
 		id: 'kingu.board.statuses',
 		group: G,
 		type: 'array',

@@ -10,3 +10,13 @@ export function boardMatches(task: BoardSearchable, query: string): boolean {
 	const hay = [task.title, task.slug, task.branch ?? '', task.agent ?? ''].join('\n').toLowerCase();
 	return words.every((w) => hay.includes(w));
 }
+
+/**
+ * Orca's Idle column (shared/dashboard-snapshot.ts `dashboardCardBaseDisplayState`): a finished
+ * task stays in Done while it has unread notices, then settles into Idle once you have seen it.
+ */
+export function splitIdle<T extends { meta: { slug: string } }>(done: readonly T[], unread: ReadonlySet<string>): { done: T[]; idle: T[] } {
+	const out = { done: [] as T[], idle: [] as T[] };
+	for (const v of done) (unread.has(v.meta.slug) ? out.done : out.idle).push(v);
+	return out;
+}

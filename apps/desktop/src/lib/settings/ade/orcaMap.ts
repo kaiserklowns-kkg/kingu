@@ -226,6 +226,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['ui.agentsShowChildAgents', 'kingu.sidebar.showChildAgents', 'added', 'tasks dispatched with kingu task create (dispatched_by), nested under the dispatching card'],
 	['ui.workspaceStatuses', 'kingu.board.statuses', 'added', 'column names only; colors and icons are fixed'],
 	['ui.workspaceStatuses', 'kingu.board.view', 'added', 'the board shows these columns, or the agent-status ones'],
+	['experimentalAgentDashboardShowIdle', 'kingu.board.showIdle', 'added', 'the Idle column of the agent-status board'],
 	['ui.workspaceStatuses', 'kingu.board.autoStatus', 'added', 'Kingu also moves a card when its PR opens or merges'],
 	['ui.projectOrderBy', 'kingu.projects.orderBy', 'added', 'manual (drag a project header) or latest activity'],
 	['ui.syncTaskStatusFromWorkspaceBoard', null, 'needs-feature', 'issue status sync'],

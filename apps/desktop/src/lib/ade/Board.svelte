@@ -15,7 +15,9 @@
 	import { workflowColumns, workflowStatuses } from './workflow.ts';
 	import { nestTasks } from './attempts.ts';
 	import { t } from '#lib/i18n/index.ts';
-	import { boardMatches } from './boardSearch';
+	import { boardMatches, splitIdle } from './boardSearch';
+	import { agentInbox } from './agentInbox.svelte.ts';
+	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { PR_GROUPS, prGroupOf } from './sidebarView';
 	import { sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
@@ -53,10 +55,17 @@
 	});
 	const narrowed = $derived(!!query.trim() || !!prFilter);
 	const hit = (v: TaskView) => boardMatches({ title: v.meta.title, slug: v.meta.slug, agent: v.meta.agent, branch: adeTasks.branchOf(v.meta.slug) }, query) && (!prFilter || prGroupOf(sidebarTask(v)) === prFilter);
+	// Orca's Idle column: finished and seen. Shown only with kingu.board.showIdle (Orca hides it by default).
+	const showIdle = $derived(settings.get<boolean>('kingu.board.showIdle') === true);
+	const unread = $derived(new Set(agentInbox.items.filter((i) => !i.read && (i.root === null || i.root === workspace.root)).map((i) => i.slug)));
+	const finished = $derived(splitIdle(adeTasks.groups.done, unread));
 	type Lane = { id: string; label: string; hint?: string; tasks: TaskView[]; drop: boolean };
 	const lanes = $derived<Lane[]>(
 		(byAgent
-			? COLUMNS.map((c) => ({ id: c.id, label: c.label, hint: c.hint, tasks: adeTasks.groups[c.id], drop: false }))
+			? [
+					...COLUMNS.map((c) => ({ id: c.id, label: c.label, hint: c.hint, tasks: c.id === 'done' ? finished.done : adeTasks.groups[c.id], drop: false })),
+					...(showIdle ? [{ id: 'idle', label: t('adeWorkflow.board.idle'), hint: t('adeWorkflow.board.idleHint'), tasks: finished.idle, drop: false }] : [])
+				]
 			: workflowColumns(adeTasks.views, statuses).map((c) => ({ id: c.status.id, label: c.status.label, tasks: c.tasks, drop: true }))
 		).map((l) => (narrowed ? { ...l, tasks: l.tasks.filter(hit) } : l))
 	);
@@ -93,6 +102,11 @@
 		<h1 class="flex items-center gap-2 text-sm font-semibold"><Icon name="tasks" size={16} />{t('adeWorkflow.board.title')}</h1>
 		<span class="text-xs text-(--vscode-descriptionForeground)">{narrowed ? t('adeWorkflow.board.shown', { shown: shownCount, count: adeTasks.list.length }) : t('adeWorkflow.board.count', { count: adeTasks.list.length })}</span>
 		<span class="flex-1"></span>
+		{#if byAgent}
+			<label class="flex items-center gap-1 text-xs text-(--vscode-descriptionForeground)" title={t('adeWorkflow.board.idleHint')}>
+				<input type="checkbox" checked={showIdle} onchange={(e) => void settings.set('kingu.board.showIdle', e.currentTarget.checked, 'user')} />{t('adeWorkflow.board.showIdle')}
+			</label>
+		{/if}
 		<select class="h-6 rounded-md border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-1 text-xs text-(--vscode-input-foreground)" aria-label={t('adeWorkflow.board.prFilter')} bind:value={prFilter}>
 			<option value="">{t('adeWorkflow.board.prAll')}</option>
 			{#each PR_GROUPS as g (g.id)}<option value={g.id}>{g.label}</option>{/each}

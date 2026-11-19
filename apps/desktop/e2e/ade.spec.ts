@@ -246,6 +246,11 @@ test('the task board searches titles, branches and agents', async ({ page }) => 
 	await expect(page.getByText('0 of 2 tasks')).toBeVisible();
 	await pr.selectOption('none');
 	await expect(page.getByText('2 of 2 tasks')).toBeVisible();
+	// The agent-status columns: Idle (finished and seen) shows only when asked for.
+	await page.getByRole('button', { name: 'Agent status' }).click();
+	await expect(page.getByRole('region', { name: 'Idle' })).toHaveCount(0);
+	await page.getByRole('checkbox', { name: 'Show idle' }).check();
+	await expect(page.getByRole('region', { name: 'Idle' })).toBeVisible();
 	expect(errors).toEqual([]);
 });
 
