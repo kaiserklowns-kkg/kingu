@@ -34,6 +34,11 @@ Register an OAuth/OIDC client at your identity provider with the redirect URI
 printed above) in `.env` and run `up -d` again. People are matched by verified email, so add them on
 Members first.
 
+Several orgs, each with its own identity provider: list the extra ones in `KINGU_OIDC_PROVIDERS`
+(the API: issuer, client id and org) and `KINGU_WEB_OIDC_PROVIDERS` (the dashboard: id, button name,
+issuer, client id and secret). The login page shows one button per provider, and the issuer of the
+ID token decides the org.
+
 ## Without Docker
 
 - **TLS on the API itself:** `KINGU_TLS_CERT` and `KINGU_TLS_KEY` (PEM files). A renewed pair is

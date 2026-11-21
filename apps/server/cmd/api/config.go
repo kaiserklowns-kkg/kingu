@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -46,7 +47,48 @@ func serverConfig(getenv func(string) string) (api.Config, error) {
 		}
 		cfg.OIDC = o
 	}
+	// Several identity providers, one org each (the token's issuer picks it).
+	if raw := strings.TrimSpace(getenv("KINGU_OIDC_PROVIDERS")); raw != "" {
+		ps, err := parseProviders(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("KINGU_OIDC_PROVIDERS: %w", err)
+		}
+		cfg.OIDCProviders = ps
+	}
+	all := cfg.OIDCProviders
+	if cfg.OIDC != nil {
+		all = append([]api.OIDCConfig{*cfg.OIDC}, all...)
+	}
+	if err := api.ValidateProviders(all); err != nil {
+		return cfg, fmt.Errorf("OIDC config: %w", err)
+	}
 	return cfg, nil
+}
+
+// parseProviders reads KINGU_OIDC_PROVIDERS: a JSON array of
+// {"issuer","client_id","org","user_claim","auto_join_role","auto_join_domains"}.
+func parseProviders(raw string) ([]api.OIDCConfig, error) {
+	var in []struct {
+		Issuer          string   `json:"issuer"`
+		ClientID        string   `json:"client_id"`
+		Org             string   `json:"org"`
+		UserClaim       string   `json:"user_claim"`
+		AutoJoinRole    string   `json:"auto_join_role"`
+		AutoJoinDomains []string `json:"auto_join_domains"`
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		return nil, fmt.Errorf("must be a JSON array of providers: %w", err)
+	}
+	if len(in) > 50 {
+		return nil, errors.New("at most 50 providers")
+	}
+	out := make([]api.OIDCConfig, 0, len(in))
+	for _, p := range in {
+		out = append(out, api.OIDCConfig{Issuer: strings.TrimSpace(p.Issuer), Audience: strings.TrimSpace(p.ClientID), OrgID: strings.TrimSpace(p.Org), UserClaim: strings.TrimSpace(p.UserClaim), AutoJoinRole: strings.TrimSpace(p.AutoJoinRole), AutoJoinDomains: p.AutoJoinDomains})
+	}
+	return out, nil
 }
 
 // parseProxies reads comma-separated CIDRs or single addresses.

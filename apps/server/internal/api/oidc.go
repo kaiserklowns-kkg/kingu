@@ -133,6 +133,9 @@ type oidcAuthenticator struct {
 	cfg  OIDCConfig
 	org  string
 	pool *pgxpool.Pool
+	// multi: one of several providers, so a token of another issuer is not
+	// this one's to refuse.
+	multi bool
 
 	mu        sync.Mutex
 	keys      map[string]crypto.PublicKey
@@ -152,6 +155,43 @@ func newOIDCAuthenticator(pool *pgxpool.Pool, cfg OIDCConfig) *oidcAuthenticator
 	return &oidcAuthenticator{cfg: cfg, org: org, pool: pool, now: time.Now}
 }
 
+// issuerOf reads a JWT's `iss` without checking anything else: with several
+// identity providers each authenticator takes only its own issuer's tokens
+// (the one that does verifies everything).
+func issuerOf(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || len(token) > oidcMaxTokenLen {
+		return ""
+	}
+	pb, err := b64(parts[1])
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		Iss string `json:"iss"`
+	}
+	if json.Unmarshal(pb, &c) != nil {
+		return ""
+	}
+	return c.Iss
+}
+
+// ValidateProviders checks several providers together: each valid, and no
+// issuer twice (a token's issuer picks its org).
+func ValidateProviders(ps []OIDCConfig) error {
+	seen := map[string]bool{}
+	for _, p := range ps {
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", p.Issuer, err)
+		}
+		if seen[p.Issuer] {
+			return fmt.Errorf("OIDC issuer %s is configured twice", p.Issuer)
+		}
+		seen[p.Issuer] = true
+	}
+	return nil
+}
+
 // looksLikeJWT: three base64url segments; PATs never contain dots.
 func looksLikeJWT(t string) bool {
 	return !strings.HasPrefix(t, TokenPrefix) && strings.Count(t, ".") == 2
@@ -160,6 +200,10 @@ func looksLikeJWT(t string) bool {
 func (a *oidcAuthenticator) Authenticate(ctx context.Context, r *http.Request) (*Principal, error) {
 	tok, present := bearer(r)
 	if !present || !looksLikeJWT(tok) {
+		return nil, nil
+	}
+	// Another provider's token: the next authenticator takes it.
+	if a.multi && issuerOf(tok) != a.cfg.Issuer {
 		return nil, nil
 	}
 	claims, err := a.verify(ctx, tok)

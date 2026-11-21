@@ -65,6 +65,9 @@ type Config struct {
 	PruneInterval time.Duration
 	// OIDC, when set, accepts ID tokens from that provider (see oidc.go).
 	OIDC *OIDCConfig
+	// OIDCProviders are further identity providers, one org each, picked by the
+	// token's issuer (OIDC, when set, is one of them).
+	OIDCProviders []OIDCConfig
 	// RateLimitStore is "memory" (default: per replica) or "postgres" (shared
 	// by every replica through the rate_limits table).
 	RateLimitStore string
@@ -126,10 +129,18 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) *Server {
 		s.failLimiter = newPGLimiter(pool, logger, "fail", failRate, failBurst)
 	}
 	s.auth = []Authenticator{&tokenAuthenticator{pool: pool}}
+	providers := cfg.OIDCProviders
 	if cfg.OIDC != nil {
-		// First: it claims only bearer values shaped like a JWT.
-		s.auth = append([]Authenticator{newOIDCAuthenticator(pool, *cfg.OIDC)}, s.auth...)
+		providers = append([]OIDCConfig{*cfg.OIDC}, providers...)
 	}
+	// First: they claim only bearer values shaped like a JWT, each its own issuer's when there are several.
+	var oidc []Authenticator
+	for _, p := range providers {
+		a := newOIDCAuthenticator(pool, p)
+		a.multi = len(providers) > 1
+		oidc = append(oidc, a)
+	}
+	s.auth = append(oidc, s.auth...)
 	if cfg.Dev {
 		s.auth = append(s.auth, devHeaderAuthenticator{})
 	}

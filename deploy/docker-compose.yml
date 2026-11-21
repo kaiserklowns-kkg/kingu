@@ -52,6 +52,7 @@ services:
       KINGU_OIDC_ORG: ${KINGU_OIDC_ORG:-}
       KINGU_OIDC_AUTO_JOIN_ROLE: ${KINGU_OIDC_AUTO_JOIN_ROLE:-}
       KINGU_OIDC_AUTO_JOIN_DOMAINS: ${KINGU_OIDC_AUTO_JOIN_DOMAINS:-}
+      KINGU_OIDC_PROVIDERS: ${KINGU_OIDC_PROVIDERS:-}
     depends_on:
       migrate: { condition: service_completed_successfully }
     networks: [internal]
@@ -72,6 +73,7 @@ services:
       KINGU_OIDC_ISSUER: ${KINGU_OIDC_ISSUER:-}
       KINGU_OIDC_CLIENT_ID: ${KINGU_OIDC_CLIENT_ID:-}
       KINGU_OIDC_CLIENT_SECRET: ${KINGU_OIDC_CLIENT_SECRET:-}
+      KINGU_OIDC_PROVIDERS: ${KINGU_WEB_OIDC_PROVIDERS:-}
     depends_on: [api]
     networks:
       internal: { ipv4_address: 172.30.0.11 }

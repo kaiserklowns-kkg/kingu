@@ -222,3 +222,52 @@ func TestOIDCAutoJoin(t *testing.T) {
 		t.Fatalf("member role changed: %v", me.Body)
 	}
 }
+
+func TestOIDCSeveralProviders(t *testing.T) {
+	requireDB(t)
+	a, b := newIdP(t), newIdP(t)
+	ownerA, orgA := devToken(t, map[string]any{"org_name": "oidc-a", "user_id": "ann@a.test"})
+	ownerB, orgB := devToken(t, map[string]any{"org_name": "oidc-b", "user_id": "ben@b.test"})
+	base := newServer(t, api.Config{
+		OIDC:          &api.OIDCConfig{Issuer: a.srv.URL, Audience: "kingu-web", OrgID: orgA},
+		OIDCProviders: []api.OIDCConfig{{Issuer: b.srv.URL, Audience: "kingu-web", OrgID: orgB}},
+	})
+	get := func(tok string) resp {
+		r, _ := call{base: base, method: "GET", path: "/v1/me", token: tok}.do(t)
+		return r
+	}
+	// Each issuer's token lands in its own org.
+	if r := get(a.sign(t, "RS256", "r1", a.claims("ann@a.test"))); r.Status != http.StatusOK || r.Body["org_id"] != orgA {
+		t.Fatalf("issuer A: %d %v", r.Status, r.Body)
+	}
+	if r := get(b.sign(t, "ES256", "e1", b.claims("ben@b.test"))); r.Status != http.StatusOK || r.Body["org_id"] != orgB {
+		t.Fatalf("issuer B: %d %v", r.Status, r.Body)
+	}
+	// A member of one org is not one of the other's.
+	expect(t, get(b.sign(t, "RS256", "r1", b.claims("ann@a.test"))), http.StatusForbidden, "not_a_member")
+	// Claiming B's issuer with A's key, or an issuer nobody configured, is refused.
+	if r := get(a.sign(t, "RS256", "r1", with(a.claims("ben@b.test"), "iss", b.srv.URL))); r.Status != http.StatusUnauthorized {
+		t.Errorf("forged issuer: %d %v", r.Status, r.Body)
+	}
+	if r := get(a.sign(t, "RS256", "r1", with(a.claims("ann@a.test"), "iss", "https://evil.test"))); r.Status != http.StatusUnauthorized {
+		t.Errorf("unknown issuer: %d %v", r.Status, r.Body)
+	}
+	// PATs still work.
+	expect(t, get(ownerA), http.StatusOK, "")
+	expect(t, get(ownerB), http.StatusOK, "")
+}
+
+func TestOIDCValidateProviders(t *testing.T) {
+	org := "6f8ed8c4-c25c-4d76-8d03-26ca308af11c"
+	one := api.OIDCConfig{Issuer: "https://a.example.com", Audience: "c", OrgID: org}
+	two := api.OIDCConfig{Issuer: "https://b.example.com", Audience: "c", OrgID: org}
+	if err := api.ValidateProviders([]api.OIDCConfig{one, two}); err != nil {
+		t.Fatal(err)
+	}
+	if api.ValidateProviders([]api.OIDCConfig{one, one}) == nil {
+		t.Error("duplicate issuer accepted")
+	}
+	if api.ValidateProviders([]api.OIDCConfig{one, {Issuer: "https://c.example.com", OrgID: org}}) == nil {
+		t.Error("invalid provider accepted")
+	}
+}

@@ -96,6 +96,7 @@ binary with `embed.FS`.
 | `KINGU_OIDC_USER_CLAIM` | `email`   | `email` (must be `email_verified`; compared lowercased) or `sub` → `members.user_id` |
 | `KINGU_OIDC_AUTO_JOIN_ROLE` | (off) | `viewer` or `dev`: someone the IdP signs in who is not a member joins with this role at their first `POST /v1/auth/session` (audited as `member.add` with `via: oidc auto-join`); every other call with a non-member's ID token is still `403 not_a_member`. Never `lead` or `owner` |
 | `KINGU_OIDC_AUTO_JOIN_DOMAINS` | (any) | Comma-separated lowercase email domains (`acme.com,acme.co.th`) allowed to auto-join; needs a verified email |
+| `KINGU_OIDC_PROVIDERS` | unset | More providers, one org each: JSON array of `{"issuer","client_id","org","user_claim","auto_join_role","auto_join_domains"}` (same meanings as above). A token's `iss` picks its provider, so an issuer may appear only once (including `KINGU_OIDC_ISSUER`) |
 
 Rate limit (20 req/s, burst 40 per credential), SSE heartbeat (15s), concurrent
 streams per credential (4) and event pruning interval (10 min) are fields of
@@ -131,7 +132,8 @@ streams per credential (4) and event pruning interval (10 min) are fields of
   (and `azp` with several audiences), `exp`, `nbf` and `iat` with 60s leeway.
   Keys are cached for an hour; an unknown `kid` (key rotation) refetches at most
   every 30s, and known keys keep working while the provider is down. The
-  `email` (or `sub`) claim must already be a member of `KINGU_OIDC_ORG`:
+  `email` (or `sub`) claim must already be a member of `KINGU_OIDC_ORG` (with
+  `KINGU_OIDC_PROVIDERS`, of the org of the token's issuer; an unknown issuer is 401):
   people are added on the dashboard's Members page first, otherwise 403
   `not_a_member`. 503 `oidc_unavailable` when the JWKS cannot be fetched.
 - **`POST /v1/auth/session`** (with an ID token) mints a 12-hour Kingu token for
@@ -414,8 +416,6 @@ then `pg_ctl` on `PATH`. If none is found, they skip.
 
 ## TODO
 
-- OIDC for several orgs on one server (today: one issuer → one org).
-  (Auto-join with a default role is done: `KINGU_OIDC_AUTO_JOIN_ROLE`.)
 - Creating orgs over the API (today: `-create-org` on the CLI) and deleting them.
 - See `deploy/` for Docker images, compose, TLS and the two-role database
   setup.

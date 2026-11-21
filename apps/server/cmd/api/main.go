@@ -116,6 +116,9 @@ func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 	if cfg.OIDC != nil {
 		logger.Info("OIDC sign-in enabled", "issuer", cfg.OIDC.Issuer, "org", cfg.OIDC.OrgID)
 	}
+	for _, p := range cfg.OIDCProviders {
+		logger.Info("OIDC sign-in enabled", "issuer", p.Issuer, "org", p.OrgID)
+	}
 	var certs *certReloader
 	if c, k := os.Getenv("KINGU_TLS_CERT"), os.Getenv("KINGU_TLS_KEY"); c != "" || k != "" {
 		if certs, err = newCertReloader(c, k); err != nil {

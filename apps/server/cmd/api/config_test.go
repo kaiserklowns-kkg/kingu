@@ -116,3 +116,30 @@ func TestServerConfigAutoJoin(t *testing.T) {
 		t.Fatal("owner auto-join accepted")
 	}
 }
+
+func TestServerConfigProviders(t *testing.T) {
+	env := map[string]string{
+		"KINGU_OIDC_ISSUER":    "https://login.example.com",
+		"KINGU_OIDC_CLIENT_ID": "kingu-web",
+		"KINGU_OIDC_ORG":       "6f8ed8c4-c25c-4d76-8d03-26ca308af11c",
+		"KINGU_OIDC_PROVIDERS": `[{"issuer":"https://idp.other.com","client_id":"kingu","org":"0c7c1f0e-3d39-4d0a-9f1e-6b8e7a1c2d3e","auto_join_role":"viewer","auto_join_domains":["other.com"]}]`,
+	}
+	cfg, err := serverConfig(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.OIDCProviders) != 1 || cfg.OIDCProviders[0].Audience != "kingu" || cfg.OIDCProviders[0].AutoJoinRole != "viewer" {
+		t.Fatalf("providers = %+v", cfg.OIDCProviders)
+	}
+	for name, raw := range map[string]string{
+		"not json":      `issuer=x`,
+		"unknown field": `[{"issuer":"https://idp.other.com","client":"x"}]`,
+		"same issuer":   `[{"issuer":"https://login.example.com","client_id":"k","org":"0c7c1f0e-3d39-4d0a-9f1e-6b8e7a1c2d3e"}]`,
+		"invalid entry": `[{"issuer":"http://idp.other.com","client_id":"k","org":"0c7c1f0e-3d39-4d0a-9f1e-6b8e7a1c2d3e"}]`,
+	} {
+		env["KINGU_OIDC_PROVIDERS"] = raw
+		if _, err := serverConfig(func(k string) string { return env[k] }); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
