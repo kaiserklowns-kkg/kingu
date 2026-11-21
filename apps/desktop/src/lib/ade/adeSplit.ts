@@ -2,9 +2,9 @@
 // tabs-close-actions.ts, components/tab-group/*), in Kingu's Agents layout: a worktree's center
 // splits into regions, nested any way (a tree like the terminal's pane tree), and every region is a
 // tab group with its own tab strip. Each tab belongs to one group; each group shows one of its tabs.
-// Dropping a tab on a region's right or bottom edge moves it into a new group there, dropping it on
-// another group's strip or middle moves it into that group, and a group whose last tab leaves or
-// closes goes away. The worktree's active tab is in the active group. Tab order inside a group is
+// Dropping a tab on any edge of a region (left, right, top, bottom: Orca's tab-drop-zone.ts) moves it
+// into a new group there, dropping it on another group's strip or middle moves it into that group,
+// and a group whose last tab leaves or closes goes away. Closing a region closes its tabs. The worktree's active tab is in the active group. Tab order inside a group is
 // the worktree's strip order (adeLayout `order`) filtered to the group. Views move by style only,
 // never remounted. Also the tab layout kept across restarts (Orca restores every tab). Pure.
 
@@ -12,8 +12,9 @@ import { cleanProfile, type BrowserTab, type FileTab } from './adeTabs';
 import { activeAfterClose } from './adeTabs';
 import { hasLeaf, leaf, leaves, parsePaneNode, removePane, splitPane, type PaneNode, type Rect } from '#lib/terminal/paneLayout.ts';
 
-export type SplitDir = 'right' | 'down';
-/** Where a dragged tab lands on a region: a new group on its right or bottom edge, or into its group. */
+/** A side of a region (Orca's GroupSide: left, right, up, down). */
+export type SplitDir = 'left' | 'right' | 'up' | 'down';
+/** Where a dragged tab lands on a region: a new group on one of its edges, or into its group. */
 export type DropDir = SplitDir | 'center';
 /** A binary tree of regions (leaves: group ids, or in `shownTree` the tab each group shows). */
 export type TabTree = PaneNode;
@@ -87,19 +88,31 @@ function nextGroupId(tree: TabTree): string {
 	return `g${leaves(tree).reduce((m, id) => Math.max(m, Number(id.slice(1)) || 0), 0) + 1}`;
 }
 
+/** The group right next to `gid` on side `dir`, when it is a single group (Orca's findLayoutSiblingOnSplitSide). */
+function siblingOnSide(tree: TabTree, gid: string, dir: SplitDir): string | null {
+	if (tree.type === 'leaf') return null;
+	const across = tree.direction === 'vertical';
+	const { first, second } = tree;
+	if (first.type === 'leaf' && first.id === gid && second.type === 'leaf' && dir === (across ? 'right' : 'down')) return second.id;
+	if (second.type === 'leaf' && second.id === gid && first.type === 'leaf' && dir === (across ? 'left' : 'up')) return first.id;
+	return siblingOnSide(first, gid, dir) ?? siblingOnSide(second, gid, dir);
+}
+
 /**
- * Orca's drop on a region's edge: tab `id` moves into a new group on the right or bottom of group
- * `target` (null `g`: the one group). Its old group goes when it empties. The same `g` back is a
- * no-op (a group's only tab dropped on its own edge, Orca's isPaneColumnSplitDropNoOp); null: one group.
+ * Orca's drop on a region's edge: tab `id` moves into a new group on that side of group `target`
+ * (null `g`: the one group). Its old group goes when it empties. The same `g` back is a no-op
+ * (Orca's isPaneColumnSplitDropNoOp: a group's only tab dropped on its own edge, or on the edge of
+ * the group beside it that faces it, which would rebuild the same layout); null: one group.
  */
 export function splitGroup(g: TabGroups | null, ids: readonly string[], target: string, id: string, dir: SplitDir, recent: readonly string[] = []): TabGroups | null {
 	if (!splittable(id) || !ids.includes(id)) return g;
 	const base = normalize(g ?? one(), ids, recent);
 	if (!base || !hasLeaf(base.tree, target)) return g;
 	const source = base.of[id];
-	if (source === target && membersOf(base.of, ids, source).length < 2) return g;
+	const alone = membersOf(base.of, ids, source).length < 2;
+	if (alone && (source === target || siblingOnSide(base.tree, target, dir) === source)) return g;
 	const gid = nextGroupId(base.tree);
-	const tree = splitPane(base.tree, target, gid, dir === 'right' ? 'vertical' : 'horizontal');
+	const tree = splitPane(base.tree, target, gid, dir === 'left' || dir === 'right' ? 'vertical' : 'horizontal', dir === 'left' || dir === 'up');
 	return split(normalize({ tree, of: { ...base.of, [id]: gid }, shown: { ...base.shown, [gid]: id } }, ids, recent));
 }
 
@@ -110,7 +123,7 @@ export function moveToGroup(g: TabGroups | null, ids: readonly string[], id: str
 	return split(normalize({ ...base, of: { ...base.of, [id]: target }, shown: { ...base.shown, [target]: id } }, ids, recent));
 }
 
-/** The group next to `gid` (the first group of its sibling), where its tabs go when it closes. */
+/** The group next to `gid` (the first group of its sibling). */
 function neighbour(tree: TabTree, gid: string): string | null {
 	if (tree.type === 'leaf') return null;
 	if (tree.first.type === 'leaf' && tree.first.id === gid) return leaves(tree.second)[0];
@@ -118,10 +131,28 @@ function neighbour(tree: TabTree, gid: string): string | null {
 	return neighbour(hasLeaf(tree.first, gid) ? tree.first : tree.second, gid);
 }
 
-/** Closes region `gid`; its tabs stay open in the group next to it. Null: one group left. */
+/** A tab that closes with its region: all but the agent tab (it is the worktree itself and never closes). */
+export const closesWithRegion = (id: string) => id !== 'main';
+
+/**
+ * The tabs Close Region closes, in strip order (Orca's closeGroup closes every tab of the group,
+ * each through its own close, so running terminals and unsaved files still ask).
+ */
+export function regionCloses(g: TabGroups, ids: readonly string[], gid: string): string[] {
+	return membersOf(g.of, ids, gid).filter(closesWithRegion);
+}
+
+/**
+ * After Close Region closed its tabs (`ids`: the tabs still open): the region collapses (Orca's
+ * closeEmptyGroup). Tabs that never close (the agent tab) move to the group next to it; a tab whose
+ * close was cancelled keeps the region open, as in Orca. Null: one group left.
+ */
 export function closeGroup(g: TabGroups | null, ids: readonly string[], gid: string, recent: readonly string[] = []): TabGroups | null {
 	const base = g && normalize(g, ids, recent);
-	if (!base || !hasLeaf(base.tree, gid)) return g;
+	if (!base || !hasLeaf(g.tree, gid)) return g;
+	// Every tab closed: the emptied region is already gone.
+	if (!hasLeaf(base.tree, gid)) return split(base);
+	if (membersOf(base.of, ids, gid).some(closesWithRegion)) return g;
 	const to = neighbour(base.tree, gid);
 	const tree = removePane(base.tree, gid);
 	if (!to || !tree) return null;
@@ -171,25 +202,38 @@ export function stripStyle(r: Rect, height: number): string {
 }
 
 /**
- * The region under a point (fractions) and what a drop there means: its outer 30% on the right or
- * bottom splits it; with `center`, the rest moves the tab into its group.
+ * The region under a point (fractions of the center) and what a drop there means (Orca's
+ * resolvePaneColumnEdgeZone): an edge band splits it; with `center`, the rest of its body moves the
+ * tab into its group. `top` (a fraction of the center's height) is the region's tab strip, which
+ * takes its own drops (reorder), so it gives null.
  */
-export function dropTarget(rects: ReadonlyMap<string, Rect>, x: number, y: number, center = false): { id: string; dir: DropDir } | null {
+export function dropTarget(rects: ReadonlyMap<string, Rect>, x: number, y: number, center = false, top = 0): { id: string; dir: DropDir } | null {
 	for (const [id, r] of rects) {
 		if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
-		const dir = dropEdge(x - r.x, y - r.y, r.w, r.h);
-		return dir ? { id, dir } : center ? { id, dir: 'center' } : null;
+		const dir = dropEdge(x - r.x, y - r.y, r.w, r.h, top);
+		return dir ? { id, dir } : center && y >= r.y + top ? { id, dir: 'center' } : null;
 	}
 	return null;
 }
 
-/** Which split edge a drop at (x, y) inside a box of (w, h) means: the outer 30% on the right or bottom. */
-export function dropEdge(x: number, y: number, w: number, h: number): SplitDir | null {
+/** Orca's edge band: 20% of a region's width on the left and right, 20% of its body's height above and below. */
+const EDGE = 0.2;
+
+/**
+ * Which split edge a drop at (x, y) inside a region of (w, h) means (Orca's resolvePaneColumnEdgeZone):
+ * the outer 20% of its width on the left or right (the whole height, strip included), else the outer
+ * 20% of its body's height (below the `top` tab strip) at the top or bottom.
+ */
+export function dropEdge(x: number, y: number, w: number, h: number, top = 0): SplitDir | null {
 	if (w <= 0 || h <= 0) return null;
-	const right = x / w > 0.7;
-	const down = y / h > 0.7;
-	if (right && down) return x / w - 0.7 >= y / h - 0.7 ? 'right' : 'down';
-	return right ? 'right' : down ? 'down' : null;
+	if (x < w * EDGE) return 'left';
+	if (x > w * (1 - EDGE)) return 'right';
+	const body = h - top;
+	const by = y - top;
+	if (by < 0 || body <= 0) return null;
+	if (by < body * EDGE) return 'up';
+	if (by > body * (1 - EDGE)) return 'down';
+	return null;
 }
 
 /** What is saved per folder besides terminals (adeLayout `kingu.adeTabs`). */

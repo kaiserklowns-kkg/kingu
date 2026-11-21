@@ -20,7 +20,7 @@ pub struct Session {
   pub created: i64,
   pub updated: i64,
   pub path: String,
-  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi`, `devin` or `grok` (Orca's session history covers many CLIs).
+  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi`, `devin`, `grok`, `hermes`, `jcode`, `openclaw`, `pi`, `zcode` or `muse` (Orca's session history covers many CLIs).
   pub agent: &'static str,
 }
 
@@ -1380,7 +1380,9 @@ fn sql_text(s: &str) -> String {
 /// The newest `limit` top-level, unarchived sessions run in `root` or below it, with the message
 /// count and the latest text part (Orca's list + preview queries). Columns an older OpenCode lacks
 /// are left out, as Orca's schema probes do; a database without `session` gives no query.
-pub fn opencode_query(session_cols: &[String], message_cols: &[String], part_cols: &[String], root: &Path, limit: usize) -> Option<String> {
+/// OpenCode's store or ZCode's (`zcode`: the same schema, whose hidden
+/// transcript messages are left out, Orca `zcodeVisibleMessageFilter`).
+pub fn store_query(session_cols: &[String], message_cols: &[String], part_cols: &[String], root: &Path, limit: usize, zcode: bool) -> Option<String> {
   let has = |cols: &[String], c: &str| cols.iter().any(|x| x == c);
   if !["id", "time_created", "time_updated", "directory"].iter().all(|c| has(session_cols, c)) {
     return None;
@@ -1388,16 +1390,17 @@ pub fn opencode_query(session_cols: &[String], message_cols: &[String], part_col
   let col = |c: &str| if has(session_cols, c) { format!("s.{c}") } else { "NULL".into() };
   let messages = ["session_id", "data"].iter().all(|c| has(message_cols, c));
   let parts = messages && has(message_cols, "id") && ["message_id", "time_created", "data"].iter().all(|c| has(part_cols, c));
-  let count = if messages { "(SELECT COUNT(*) FROM message m WHERE m.session_id = s.id AND json_extract(m.data, '$.role') IN ('user','assistant'))" } else { "0" };
+  let visible = if zcode { " AND COALESCE(json_extract(m.data, '$.semantics.transcriptVisibility'), 'visible') != 'hidden'" } else { "" };
+  let count = if messages { format!("(SELECT COUNT(*) FROM message m WHERE m.session_id = s.id AND json_extract(m.data, '$.role') IN ('user','assistant'){visible})") } else { "0".into() };
   let last = if parts {
-    "(SELECT json_object('role', json_extract(m.data, '$.role'), 'text', json_extract(p.data, '$.text')) FROM message m JOIN part p ON p.message_id = m.id WHERE m.session_id = s.id AND json_extract(m.data, '$.role') IN ('user','assistant') AND json_extract(p.data, '$.type') = 'text' ORDER BY p.time_created DESC LIMIT 1)"
+    format!("(SELECT json_object('role', json_extract(m.data, '$.role'), 'text', json_extract(p.data, '$.text')) FROM message m JOIN part p ON p.message_id = m.id WHERE m.session_id = s.id AND json_extract(m.data, '$.role') IN ('user','assistant') AND json_extract(p.data, '$.type') = 'text'{visible} ORDER BY p.time_created DESC LIMIT 1)")
   } else {
-    "NULL"
+    "NULL".into()
   };
   let first = if parts {
-    "(SELECT json_extract(p.data, '$.text') FROM message m JOIN part p ON p.message_id = m.id WHERE m.session_id = s.id AND json_extract(m.data, '$.role') = 'user' AND json_extract(p.data, '$.type') = 'text' ORDER BY p.time_created ASC LIMIT 1)"
+    format!("(SELECT json_extract(p.data, '$.text') FROM message m JOIN part p ON p.message_id = m.id WHERE m.session_id = s.id AND json_extract(m.data, '$.role') = 'user' AND json_extract(p.data, '$.type') = 'text'{visible} ORDER BY p.time_created ASC LIMIT 1)")
   } else {
-    "NULL"
+    "NULL".into()
   };
   let top = if has(session_cols, "parent_id") { " AND s.parent_id IS NULL" } else { "" };
   let live = if has(session_cols, "time_archived") { " AND s.time_archived IS NULL" } else { "" };
@@ -1420,8 +1423,8 @@ fn opencode_default_title(t: &str) -> bool {
   t.starts_with("New session - ") || t.starts_with("Child session - ")
 }
 
-/// One row of [`opencode_query`] as a session (`path` is `<db>#<session id>`, Orca's candidate path).
-pub fn opencode_session(row: &serde_json::Map<String, Value>, db: &Path) -> Option<Session> {
+/// One row of [`store_query`] as a session of `agent` (`path` is `<db>#<session id>`, Orca's candidate path).
+pub fn store_session(row: &serde_json::Map<String, Value>, db: &Path, agent: &'static str) -> Option<Session> {
   let text = |k: &str| row.get(k).and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
   let num = |k: &str| row.get(k).and_then(Value::as_i64).unwrap_or(0);
   let id = text("id")?.to_owned();
@@ -1448,7 +1451,7 @@ pub fn opencode_session(row: &serde_json::Map<String, Value>, db: &Path) -> Opti
     updated: if updated > 0 { updated } else { created },
     path: format!("{}#{id}", db.display()),
     id,
-    agent: "opencode",
+    agent,
   })
 }
 
@@ -1463,12 +1466,26 @@ fn column_names(db: &Path, table: &str) -> Vec<String> {
 /// OpenCode sessions run in `root` or its worktrees, newest first; a database that cannot be read
 /// is skipped (logged), like Orca's scan issues.
 pub fn list_opencode(dbs: &[PathBuf], root: &Path, limit: usize) -> Vec<Session> {
+  list_store(dbs, root, limit, "opencode")
+}
+
+/// ZCode sessions of `root`: its CLI keeps OpenCode's schema in `~/.zcode/cli/db/db.sqlite`
+/// (Orca's `scanners/zcode`, kept apart from OpenCode's rows). Orca orders a transcript by ZCode's
+/// `sequence` column; Kingu takes the first and latest text by time.
+pub fn list_zcode(db: &Path, root: &Path, limit: usize) -> Vec<Session> {
+  if !db.is_file() {
+    return Vec::new();
+  }
+  list_store(&[db.to_path_buf()], root, limit, "zcode")
+}
+
+fn list_store(dbs: &[PathBuf], root: &Path, limit: usize, agent: &'static str) -> Vec<Session> {
   let mut out: Vec<Session> = Vec::new();
   for db in dbs {
-    let Some(sql) = opencode_query(&column_names(db, "session"), &column_names(db, "message"), &column_names(db, "part"), root, limit) else { continue };
+    let Some(sql) = store_query(&column_names(db, "session"), &column_names(db, "message"), &column_names(db, "part"), root, limit, agent == "zcode") else { continue };
     match crate::accounts::managed::sqlite_rows(db, &sql) {
-      Ok(rows) => out.extend(rows.iter().filter_map(|r| opencode_session(r, db))),
-      Err(e) => log::warn!("opencode sessions in {}: {e}", db.display()),
+      Ok(rows) => out.extend(rows.iter().filter_map(|r| store_session(r, db, agent))),
+      Err(e) => log::warn!("{agent} sessions in {}: {e}", db.display()),
     }
   }
   // The same session in two databases (a copied store): keep the newest.
@@ -1479,9 +1496,460 @@ pub fn list_opencode(dbs: &[PathBuf], root: &Path, limit: usize) -> Vec<Session>
   out
 }
 
+// ---- Hermes and jcode (Orca ai-vault scanners/hermes, scanners/jcode) ------------------------
+
+/// Orca `sessionIdFromFileName`: the trailing uuid of the file stem, else the whole stem.
+fn id_from_file_name(path: &Path) -> Option<String> {
+  let stem = path.file_stem()?.to_str()?;
+  let tail = stem.get(stem.len().saturating_sub(36)..).unwrap_or("");
+  let uuid = tail.len() == 36 && tail.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() });
+  Some(if uuid { tail } else { stem }.to_owned())
+}
+
+/// `session_*.json` files in `dir` and one folder level below (Orca's `filePredicate`; live
+/// journals and backups have other names). Symlinks are not followed.
+fn session_json_files(dir: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
+  let mut out = Vec::new();
+  let visit = |d: &Path, out: &mut Vec<(std::time::SystemTime, PathBuf)>, subdirs: &mut Vec<PathBuf>| {
+    for e in std::fs::read_dir(d).into_iter().flatten().flatten().take(4096) {
+      let Ok(t) = e.file_type() else { continue };
+      let name = e.file_name();
+      let name = name.to_string_lossy();
+      if t.is_dir() {
+        subdirs.push(e.path());
+      } else if t.is_file() && name.starts_with("session_") && name.ends_with(".json") {
+        out.push((modified(&e.path()), e.path()));
+      }
+    }
+  };
+  let mut subdirs = Vec::new();
+  visit(dir, &mut out, &mut subdirs);
+  for sub in subdirs.into_iter().take(2048) {
+    visit(&sub, &mut out, &mut Vec::new());
+  }
+  out
+}
+
+fn str_field(v: &Value, k: &str) -> Option<String> {
+  v.get(k).and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned)
+}
+
+/// One turn's text into the session's title (the first user turn) and preview (the latest).
+fn take_turn(s: &mut Session, title: &mut Option<String>, role: &str, text: Option<String>) {
+  let Some(t) = text.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) else { return };
+  if role == "user" && title.is_none() {
+    *title = Some(short(&t, 120));
+  }
+  let who = match role {
+    "user" => "You",
+    "assistant" => "Agent",
+    _ => return,
+  };
+  s.preview = Some(short(&format!("{who}: {t}"), 240));
+}
+
+/// One Hermes session (`session_*.json`, Orca `parseHermesSessionRecord`): `session_id`, `model`,
+/// `cwd`, `session_start` / `last_updated`, and its `user` / `assistant` messages (the first user
+/// turn is the title); `message_count` when it lists no messages.
+pub fn read_hermes(path: &Path) -> Option<Session> {
+  let v: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+  v.as_object()?;
+  let id = str_field(&v, "session_id").or_else(|| id_from_file_name(path)).filter(|i| safe_id(i))?;
+  let mut s = Session { id, title: String::new(), preview: None, cwd: str_field(&v, "cwd"), branch: None, model: str_field(&v, "model"), messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent: "hermes" };
+  widen(&mut s, v.get("session_start").and_then(when_of));
+  widen(&mut s, v.get("last_updated").and_then(when_of));
+  let mut title = None;
+  for m in v.get("messages").and_then(Value::as_array).into_iter().flatten() {
+    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+    if role != "user" && role != "assistant" {
+      continue;
+    }
+    s.messages += 1;
+    take_turn(&mut s, &mut title, role, m.get("content").and_then(text_of));
+  }
+  if s.messages == 0 {
+    s.messages = v.get("message_count").and_then(Value::as_u64).unwrap_or(0).min(u32::MAX as u64) as u32;
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some(s)
+}
+
+/// Hermes sessions of `root` (`$HERMES_HOME/sessions`, else `~/.hermes/sessions`).
+pub fn list_hermes(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
+  newest_of(root, session_json_files(sessions), limit, read_hermes)
+}
+
+/// Orca's `isInjectedContextMessage` for jcode: system and background-task turns, scheduled runs
+/// and system reminders are not conversation.
+fn jcode_injected(m: &Value) -> bool {
+  let display = m.get("display_role").and_then(Value::as_str);
+  if matches!(display, Some("system" | "background_task")) || m.get("role").and_then(Value::as_str) == Some("system") {
+    return true;
+  }
+  let text = m.get("content").and_then(text_of).unwrap_or_default();
+  text.starts_with("[Scheduled task]") || text.starts_with("<system-reminder>")
+}
+
+/// One jcode session (`session_*.json`, Orca `foldJcodeSessionContent`): `id` / `session_id`,
+/// `model`, `custom_title` / `title` (kept over the first prompt), `working_dir` /
+/// `working_directory`, `created_at` / `updated_at`, and every non-injected message.
+pub fn read_jcode(path: &Path) -> Option<Session> {
+  let v: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+  v.as_object()?;
+  let id = str_field(&v, "id").or_else(|| str_field(&v, "session_id")).or_else(|| id_from_file_name(path)).filter(|i| safe_id(i))?;
+  let cwd = str_field(&v, "working_dir").or_else(|| str_field(&v, "working_directory"));
+  let mut s = Session { id, title: String::new(), preview: None, cwd, branch: None, model: str_field(&v, "model"), messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent: "jcode" };
+  let mut title = str_field(&v, "custom_title").or_else(|| str_field(&v, "title")).map(|t| short(&t, 120)).filter(|t| !t.is_empty());
+  widen(&mut s, v.get("created_at").and_then(when_of));
+  widen(&mut s, v.get("updated_at").and_then(when_of));
+  for m in v.get("messages").and_then(Value::as_array).into_iter().flatten() {
+    if !m.is_object() || jcode_injected(m) {
+      continue;
+    }
+    widen(&mut s, m.get("timestamp").and_then(when_of));
+    s.messages += 1;
+    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+    take_turn(&mut s, &mut title, role, m.get("content").and_then(text_of));
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some(s)
+}
+
+/// jcode sessions of `root` (`$JCODE_HOME/sessions`, else `~/.jcode/sessions`).
+pub fn list_jcode(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
+  newest_of(root, session_json_files(sessions), limit, read_jcode)
+}
+
+// ---- OpenClaw and Pi (Orca ai-vault scanners/session-scanner-graph-parsers, scanners/openclaw) -
+
+/// Orca `isOmpWrittenRecord`: OMP shares Pi's folder (it inherits `PI_CODING_AGENT_DIR`) and
+/// writes records Pi never does.
+fn omp_written(r: &Value) -> bool {
+  let t = r.get("type").and_then(Value::as_str);
+  (t == Some("title") && r.get("v").and_then(Value::as_i64) == Some(1))
+    || r.get("runtime").is_some_and(Value::is_object)
+    || (t == Some("model_change") && r.get("modelId").is_none() && str_field(r, "model").is_some())
+}
+
+/// One message-graph transcript (`.jsonl` of `session` / `model_change` / `message` records,
+/// Orca `consumeMessageGraphRecordLine`): the `session` header gives the id and folder, the first
+/// user message the title. `agent` is `openclaw` or `pi`; a Pi-folder file OMP wrote is not Pi's.
+pub fn read_graph(path: &Path, agent: &'static str) -> Option<Session> {
+  let text = std::fs::read_to_string(path).ok()?;
+  let mut s = Session { id: id_from_file_name(path)?, title: String::new(), preview: None, cwd: None, branch: None, model: None, messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent };
+  let mut title = None;
+  for line in text.lines() {
+    let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
+    if !r.is_object() {
+      continue;
+    }
+    if agent == "pi" && omp_written(&r) {
+      return None;
+    }
+    widen(&mut s, r.get("timestamp").and_then(when_of));
+    match r.get("type").and_then(Value::as_str) {
+      Some("session") => {
+        if let Some(id) = str_field(&r, "id") {
+          s.id = id;
+        }
+        s.cwd = str_field(&r, "cwd").or(s.cwd.take());
+      }
+      Some("model_change") => s.model = str_field(&r, "modelId").or_else(|| str_field(&r, "model")).or(s.model.take()),
+      Some("message") => {
+        let Some(m) = r.get("message") else { continue };
+        let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" && role != "assistant" {
+          continue;
+        }
+        s.messages += 1;
+        if role == "assistant" {
+          s.model = str_field(m, "model").or(s.model.take());
+        }
+        take_turn(&mut s, &mut title, role, m.get("content").and_then(text_of));
+      }
+      _ => {}
+    }
+  }
+  if !safe_id(&s.id) {
+    return None;
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some(s)
+}
+
+/// `.jsonl` files in the `sessions` folder of each agent under `agents` (OpenClaw's
+/// `agents/<agent>/sessions/*.jsonl`; embedded tools' histories in other folders are left out).
+fn openclaw_files(agents: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
+  let mut out = Vec::new();
+  for a in std::fs::read_dir(agents).into_iter().flatten().flatten().take(2048) {
+    if !a.file_type().is_ok_and(|t| t.is_dir()) {
+      continue;
+    }
+    for e in std::fs::read_dir(a.path().join("sessions")).into_iter().flatten().flatten().take(4096) {
+      if e.file_type().is_ok_and(|t| t.is_file()) && e.path().extension().is_some_and(|x| x == "jsonl") {
+        out.push((modified(&e.path()), e.path()));
+      }
+    }
+  }
+  out
+}
+
+/// OpenClaw sessions of `root`: each state folder's `agents` (`$OPENCLAW_STATE_DIR` or
+/// `~/.openclaw`, and the legacy `~/.clawdbot`; Orca merges both).
+pub fn list_openclaw(root: &Path, state_dirs: &[PathBuf], limit: usize) -> Vec<Session> {
+  let files = state_dirs.iter().flat_map(|d| openclaw_files(&if d.file_name().is_some_and(|n| n == "agents") { d.clone() } else { d.join("agents") })).collect();
+  newest_of(root, files, limit, |p| read_graph(p, "openclaw"))
+}
+
+/// Pi sessions of `root` (`$PI_CODING_AGENT_DIR`, else `~/.pi/agent/sessions`; one folder per
+/// working folder, transcripts directly inside).
+pub fn list_pi(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
+  let mut files = Vec::new();
+  for d in std::fs::read_dir(sessions).into_iter().flatten().flatten().take(2048) {
+    if !d.file_type().is_ok_and(|t| t.is_dir()) {
+      continue;
+    }
+    for e in std::fs::read_dir(d.path()).into_iter().flatten().flatten().take(4096) {
+      if e.file_type().is_ok_and(|t| t.is_file()) && e.path().extension().is_some_and(|x| x == "jsonl") {
+        files.push((modified(&e.path()), e.path()));
+      }
+    }
+  }
+  newest_of(root, files, limit, |p| read_graph(p, "pi"))
+}
+
+// ---- Muse (Orca ai-vault scanners/muse) --------------------------------------------------------
+
+/// Muse's `recorded_at`: microseconds (≥ 1e14) as ms, else the usual number or ISO forms.
+fn muse_time(v: &Value) -> Option<i64> {
+  match v.as_f64() {
+    Some(x) if x >= 1e14 => Some((x / 1000.0) as i64),
+    _ => when_of(v),
+  }
+}
+
+/// Orca `unwrapMuseLogRecords`: a batch line's `children[].record_json`, else the line itself.
+fn muse_records(line: &Value) -> Vec<Value> {
+  match line.get("children").and_then(Value::as_array) {
+    None => vec![line.clone()],
+    Some(children) => children
+      .iter()
+      .filter_map(|c| {
+        let raw = c.get("record_json")?;
+        let v = match raw {
+          Value::String(s) => serde_json::from_str(s).ok()?,
+          v => v.clone(),
+        };
+        v.is_object().then_some(v)
+      })
+      .collect(),
+  }
+}
+
+fn first_text_block(v: Option<&Value>) -> Option<String> {
+  v?.as_array()?.iter().find_map(|b| str_field(b, "text"))
+}
+
+/// One Muse session (`<day shard>/<uuid>/session.jsonl`, Orca `foldMuseRecord`): folder from the
+/// session metadata (else route facts), branch, model, user intents and committed assistant
+/// messages; a run's start prompt counts only when it doesn't repeat the intent just accepted.
+pub fn read_muse(path: &Path) -> Option<Session> {
+  let id = path.parent()?.file_name()?.to_str()?.to_owned();
+  if !safe_id(&id) {
+    return None;
+  }
+  let text = std::fs::read_to_string(path).ok()?;
+  let mut s = Session { id, title: String::new(), preview: None, cwd: None, branch: None, model: None, messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent: "muse" };
+  let mut title = None;
+  let mut last_user: (Option<String>, Option<i64>) = (None, None);
+  for line in text.lines().filter(|l| !l.trim().is_empty()) {
+    let Ok(env) = serde_json::from_str::<Value>(line) else { continue };
+    if !env.is_object() {
+      continue;
+    }
+    for r in muse_records(&env) {
+      let at = r.get("recorded_at").and_then(muse_time);
+      widen(&mut s, at);
+      let Some(p) = r.get("payload").filter(|p| p.is_object()) else { continue };
+      let rec = p.get("record").cloned().unwrap_or(Value::Null);
+      let mut user = |s: &mut Session, text: Option<String>, dedupe: bool| {
+        let Some(t) = text else { return };
+        if dedupe && last_user.0.as_deref() == Some(t.as_str()) && matches!((last_user.1, at), (Some(a), Some(b)) if (a - b).abs() < 60_000) {
+          return;
+        }
+        last_user = (Some(t.clone()), at);
+        s.messages += 1;
+        take_turn(s, &mut title, "user", Some(t));
+      };
+      match r.get("payload_type").and_then(Value::as_str) {
+        Some("runtime.session.metadata") => s.cwd = s.cwd.take().or_else(|| str_field(&rec, "workspace_root")),
+        Some("runtime.session.route_facts") => s.cwd = s.cwd.take().or_else(|| str_field(&rec, "cwd")),
+        Some("session.workspace_branch.observed") => s.branch = s.branch.take().or_else(|| rec.get("reference").and_then(|r| str_field(r, "name"))),
+        Some("run.model.configured") => s.model = s.model.take().or_else(|| str_field(&rec, "model_id")),
+        Some("runtime.user_intent.accepted") => {
+          let t = first_text_block(p.get("refill_blocks")).or_else(|| p.get("model_messages")?.as_array()?.iter().find_map(|m| first_text_block(m.get("content"))));
+          user(&mut s, t, false);
+        }
+        Some("runtime.session") => {
+          let Some(ev) = p.get("event") else { continue };
+          match ev.get("kind").and_then(Value::as_str) {
+            Some("started") => user(&mut s, str_field(ev, "prompt"), true),
+            Some("assistant_message_committed") => {
+              if let Some(t) = str_field(ev, "text") {
+                s.messages += 1;
+                take_turn(&mut s, &mut title, "assistant", Some(t));
+              }
+            }
+            Some("model_completed") => s.model = s.model.take().or_else(|| str_field(ev, "model")),
+            _ => {}
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some(s)
+}
+
+/// Muse sessions of `root` (`$XDG_DATA_HOME/muse/sessions`, else `~/.local/share/muse/sessions`):
+/// every `session.jsonl` up to five folders down (date shards, then the session id).
+pub fn list_muse(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
+  let mut files = Vec::new();
+  let mut dirs = vec![(sessions.to_path_buf(), 0usize)];
+  let mut seen = 0usize;
+  while let Some((d, depth)) = dirs.pop() {
+    for e in std::fs::read_dir(&d).into_iter().flatten().flatten().take(4096) {
+      seen += 1;
+      if seen > 50_000 {
+        break;
+      }
+      let Ok(t) = e.file_type() else { continue };
+      if t.is_dir() && depth < 5 {
+        dirs.push((e.path(), depth + 1));
+      } else if t.is_file() && e.file_name() == "session.jsonl" {
+        files.push((modified(&e.path()), e.path()));
+      }
+    }
+  }
+  newest_of(root, files, limit, read_muse)
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn reads_muse_session_logs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let id = "0199a000-0000-7000-8000-00000000abcd";
+    let dir = tmp.path().join("sessions/2026/11/21").join(id);
+    std::fs::create_dir_all(&dir).unwrap();
+    let rec = |t: &str, at: f64, payload: Value| serde_json::json!({"record_type": "event", "payload_type": t, "recorded_at": at, "payload": payload});
+    let at = 1_795_000_000_000_000.0; // microseconds
+    let batch = serde_json::json!({"children": [
+      {"record_json": rec("runtime.session.metadata", at, serde_json::json!({"record": {"workspace_root": root.display().to_string()}})).to_string()},
+      {"record_json": rec("session.workspace_branch.observed", at, serde_json::json!({"record": {"reference": {"name": "feat/x"}}}))},
+    ]});
+    let lines = [
+      batch,
+      rec("run.model.configured", at + 1.0, serde_json::json!({"record": {"model_id": "muse-1"}})),
+      rec("runtime.user_intent.accepted", at + 2_000_000.0, serde_json::json!({"refill_blocks": [{"text": "write the docs"}]})),
+      // The run's start repeats the intent: not a second turn.
+      rec("runtime.session", at + 3_000_000.0, serde_json::json!({"event": {"kind": "started", "prompt": "write the docs"}})),
+      rec("runtime.session", at + 4_000_000.0, serde_json::json!({"event": {"kind": "assistant_message_committed", "text": "Docs written."}})),
+    ];
+    std::fs::write(dir.join("session.jsonl"), lines.iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+    std::fs::write(dir.join("session.log.jsonl"), "{}").unwrap();
+    let m = list_muse(&root, &tmp.path().join("sessions"), 10);
+    assert_eq!(m.len(), 1);
+    let s = &m[0];
+    assert_eq!((s.id.as_str(), s.title.as_str(), s.messages, s.branch.as_deref(), s.model.as_deref(), s.agent), (id, "write the docs", 2, Some("feat/x"), Some("muse-1"), "muse"));
+    assert_eq!(s.preview.as_deref(), Some("Agent: Docs written."));
+    assert_eq!((s.created, s.updated), (1_795_000_000_000, 1_795_000_004_000));
+  }
+
+  #[test]
+  fn reads_openclaw_and_pi_transcripts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let cwd = root.display().to_string();
+    let lines = |v: &[Value]| v.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+    let state = tmp.path().join(".openclaw");
+    std::fs::create_dir_all(state.join("agents/main/sessions")).unwrap();
+    std::fs::create_dir_all(state.join("agents/main/tools")).unwrap();
+    std::fs::write(state.join("agents/main/sessions/abc-1.jsonl"), lines(&[
+      serde_json::json!({"type": "session", "id": "oc-1", "cwd": cwd, "timestamp": "2026-11-21T01:00:00Z"}),
+      serde_json::json!({"type": "message", "timestamp": "2026-11-21T01:00:05Z", "message": {"role": "user", "content": [{"type": "text", "text": "deploy it"}]}}),
+      serde_json::json!({"type": "message", "message": {"role": "assistant", "model": "claw-1", "content": "deployed"}}),
+    ])).unwrap();
+    std::fs::write(state.join("agents/main/tools/t.jsonl"), lines(&[serde_json::json!({"type": "session", "id": "tool", "cwd": cwd})])).unwrap();
+    let o = list_openclaw(&root, &[state.clone(), tmp.path().join(".clawdbot")], 10);
+    assert_eq!(o.len(), 1);
+    assert_eq!((o[0].id.as_str(), o[0].title.as_str(), o[0].messages, o[0].model.as_deref(), o[0].agent), ("oc-1", "deploy it", 2, Some("claw-1"), "openclaw"));
+
+    let pi = tmp.path().join("pi");
+    std::fs::create_dir_all(pi.join("--repo--")).unwrap();
+    std::fs::write(pi.join("--repo--/2026-05-01_pi.jsonl"), lines(&[
+      serde_json::json!({"type": "session", "id": "0199a000-0000-7000-8000-000000000001", "cwd": cwd}),
+      serde_json::json!({"type": "model_change", "modelId": "claude-sonnet-4-5"}),
+      serde_json::json!({"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "Pi prompt"}]}}),
+    ])).unwrap();
+    // OMP writes into Pi's folder too: not a Pi session.
+    std::fs::write(pi.join("--repo--/2026-05-01_omp.jsonl"), lines(&[
+      serde_json::json!({"type": "title", "v": 1, "title": "OMP chat"}),
+      serde_json::json!({"type": "session", "id": "omp-1", "cwd": cwd}),
+    ])).unwrap();
+    let p = list_pi(&root, &pi, 10);
+    assert_eq!(p.len(), 1);
+    assert_eq!((p[0].id.as_str(), p[0].title.as_str(), p[0].model.as_deref(), p[0].agent), ("0199a000-0000-7000-8000-000000000001", "Pi prompt", Some("claude-sonnet-4-5"), "pi"));
+  }
+
+  #[test]
+  fn reads_hermes_and_jcode_sessions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("proj");
+    std::fs::create_dir_all(&root).unwrap();
+    let cwd = root.join("sub").display().to_string();
+    let hermes = tmp.path().join("hermes");
+    std::fs::create_dir_all(&hermes).unwrap();
+    std::fs::write(hermes.join("session_20261121_ab12.json"), serde_json::json!({
+      "session_id": "20261121_ab12", "model": "hermes-4", "cwd": cwd, "session_start": "2026-11-21T01:00:00Z", "last_updated": "2026-11-21T02:00:00Z",
+      "messages": [{"role": "system", "content": "be nice"}, {"role": "user", "content": "fix the login"}, {"role": "assistant", "content": [{"type": "text", "text": "done"}]}]
+    }).to_string()).unwrap();
+    std::fs::write(hermes.join("session_other.json"), serde_json::json!({"session_id": "o", "cwd": "/elsewhere", "message_count": 3}).to_string()).unwrap();
+    std::fs::write(hermes.join("journal.json"), "{}").unwrap();
+    let h = list_hermes(&root, &hermes, 10);
+    assert_eq!(h.len(), 1);
+    assert_eq!((h[0].id.as_str(), h[0].title.as_str(), h[0].messages, h[0].agent), ("20261121_ab12", "fix the login", 2, "hermes"));
+    assert_eq!(h[0].preview.as_deref(), Some("Agent: done"));
+    assert!(h[0].updated > h[0].created && h[0].created > 0);
+    let only_count = read_hermes(&hermes.join("session_other.json")).unwrap();
+    assert_eq!(only_count.messages, 3);
+
+    let jcode = tmp.path().join("jcode");
+    std::fs::create_dir_all(jcode.join("nested")).unwrap();
+    let id = "3f2b1c4d-1111-4222-8333-944455556666";
+    std::fs::write(jcode.join("nested").join(format!("session_{id}.json")), serde_json::json!({
+      "working_dir": root.display().to_string(), "title": "Refactor auth", "created_at": "2026-11-20T10:00:00Z",
+      "messages": [
+        {"role": "user", "content": "<system-reminder>ctx</system-reminder>"},
+        {"role": "user", "display_role": "background_task", "content": "bg"},
+        {"role": "user", "content": "[Scheduled task] nightly"},
+        {"role": "user", "content": "please refactor", "timestamp": "2026-11-20T11:00:00Z"},
+        {"role": "tool", "content": "ok"},
+        {"role": "assistant", "content": "refactored"}
+      ]
+    }).to_string()).unwrap();
+    let j = list_jcode(&root, &jcode, 10);
+    assert_eq!(j.len(), 1);
+    assert_eq!((j[0].id.as_str(), j[0].title.as_str(), j[0].messages, j[0].agent), (id, "Refactor auth", 3, "jcode"));
+    assert_eq!(j[0].preview.as_deref(), Some("Agent: refactored"));
+    assert_eq!(id_from_file_name(Path::new("/x/session_abc.json")).as_deref(), Some("session_abc"));
+  }
 
   #[test]
   fn encodes_like_claude_code() {
@@ -1575,8 +2043,8 @@ mod tests {
   #[test]
   fn opencode_query_follows_the_schema() {
     let cols = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert!(opencode_query(&cols(&["id", "time_created"]), &[], &[], Path::new("/r"), 5).is_none());
-    let bare = opencode_query(&cols(&["id", "time_created", "time_updated", "directory"]), &[], &[], Path::new("/r/it's"), 5).unwrap();
+    assert!(store_query(&cols(&["id", "time_created"]), &[], &[], Path::new("/r"), 5, false).is_none());
+    let bare = store_query(&cols(&["id", "time_created", "time_updated", "directory"]), &[], &[], Path::new("/r/it's"), 5, false).unwrap();
     assert!(bare.contains("NULL AS title") && bare.contains("0 AS message_count") && !bare.contains("parent_id"));
     assert!(bare.contains("'/r/it''s/'"), "quotes are escaped: {bare}");
   }
@@ -1616,6 +2084,33 @@ mod tests {
     // OpenCode's default title gives way to the first prompt.
     assert_eq!(list[1].title, "Add search");
     assert_eq!(list_opencode(&[db], Path::new("/repo"), 1).len(), 1);
+  }
+
+  #[test]
+  fn reads_zcode_sessions_without_hidden_messages() {
+    let sqlite = Path::new(crate::accounts::managed::SQLITE);
+    if !sqlite.exists() {
+      return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("db.sqlite");
+    let sql = r#"
+      CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, title TEXT, model TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT, sequence INTEGER);
+      CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT);
+      INSERT INTO session VALUES ('z1', NULL, '/repo', '', NULL, 1000, 3000);
+      INSERT INTO message VALUES ('m0', 'z1', 900, '{"role":"user","semantics":{"transcriptVisibility":"hidden"}}', 1);
+      INSERT INTO message VALUES ('m1', 'z1', 1000, '{"role":"user"}', 2);
+      INSERT INTO message VALUES ('m2', 'z1', 2000, '{"role":"assistant"}', 3);
+      INSERT INTO part VALUES ('p0', 'm0', 'z1', 900, '{"type":"text","text":"injected context"}');
+      INSERT INTO part VALUES ('p1', 'm1', 'z1', 1000, '{"type":"text","text":"Ship the release"}');
+      INSERT INTO part VALUES ('p2', 'm2', 'z1', 2000, '{"type":"text","text":"Shipped."}');
+    "#;
+    assert!(std::process::Command::new(sqlite).arg(&db).arg(sql).status().unwrap().success());
+    let list = list_zcode(&db, Path::new("/repo"), 10);
+    assert_eq!(list.len(), 1);
+    assert_eq!((list[0].title.as_str(), list[0].messages, list[0].preview.as_deref(), list[0].agent), ("Ship the release", 2, Some("Agent: Shipped."), "zcode"));
+    assert!(list_zcode(&dir.path().join("missing.sqlite"), Path::new("/repo"), 10).is_empty());
   }
 
   #[test]

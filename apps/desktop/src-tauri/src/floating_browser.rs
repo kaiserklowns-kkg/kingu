@@ -121,8 +121,10 @@ pub fn picked(url: &Url) -> Option<serde_json::Value> {
 const SOURCE_MAX: usize = 512;
 
 /// Orca's Design Mode picker (docs browser/design-mode.mdx): outlines the element under the
-/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box, its text and,
-/// in a React dev build, its source location; Escape stops. Turning it off removes it.
+/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box, its text, the
+/// page's CSS width (`vw`, to scale the box onto the view for the screenshot) and, in a React dev
+/// build, its source location; Escape stops. Turning it off removes it (before the pick is sent, so
+/// the outline is not in the screenshot).
 const PICK_SCRIPT: &str = r#"(() => {
   const w = window;
   if (w.__kinguPick) w.__kinguPick.stop();
@@ -185,7 +187,7 @@ const PICK_SCRIPT: &str = r#"(() => {
     for (const k of KEYS) { const v = cs.getPropertyValue(k); if (v) styles[k] = v; }
     const r = el.getBoundingClientRect();
     const html = el.outerHTML.length > 3000 ? el.outerHTML.slice(0, 3000) + '…' : el.outerHTML;
-    const data = { url: location.href, selector: sel(el), html, styles, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, text: (el.innerText || '').slice(0, 300) };
+    const data = { url: location.href, selector: sel(el), html, styles, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, text: (el.innerText || '').slice(0, 300), vw: innerWidth };
     const src = source(el);
     if (src) data.source = src;
     stop();
@@ -351,9 +353,134 @@ pub fn floating_browser_history(app: AppHandle, label: String, back: bool) -> Re
   webview(&app, &label)?.eval(if back { "history.back()" } else { "history.forward()" }).map_err(|e| e.to_string())
 }
 
+/// Reload, or Orca's Hard Reload (`browser.hardReload`, ⇧⌘R; Electron's `reloadIgnoringCache`):
+/// WKWebView's `reloadFromOrigin` on macOS, which revalidates every resource with the server.
+/// Elsewhere a hard reload is a plain reload (wry exposes no cache-skipping reload there).
 #[tauri::command]
-pub fn floating_browser_reload(app: AppHandle, label: String) -> Result<(), String> {
-  webview(&app, &label)?.reload().map_err(|e| e.to_string())
+pub fn floating_browser_reload(app: AppHandle, label: String, hard: Option<bool>) -> Result<(), String> {
+  reload(&webview(&app, &label)?, hard.unwrap_or(false))
+}
+
+fn reload<R: Runtime>(wv: &Webview<R>, hard: bool) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  if hard {
+    return wv
+      .with_webview(|pv| unsafe {
+        use objc2::{msg_send, runtime::AnyObject};
+        let _: *mut AnyObject = msg_send![pv.inner() as *mut AnyObject, reloadFromOrigin];
+      })
+      .map_err(|e| e.to_string());
+  }
+  #[cfg(not(target_os = "macos"))]
+  let _ = hard;
+  wv.reload().map_err(|e| e.to_string())
+}
+
+/// The reload button's right-click menu (Orca's `BrowserReloadControl`): Reload and Hard Reload.
+/// A native menu, so it shows over the page's native view. Its items name the tab they act on.
+const RELOAD_ITEM: &str = "kingu.browser.reload\u{1f}";
+const HARD_RELOAD_ITEM: &str = "kingu.browser.hardReload\u{1f}";
+
+/// A reload menu item's (hard, tab label).
+pub fn reload_item(id: &str) -> Option<(bool, &str)> {
+  id.strip_prefix(HARD_RELOAD_ITEM).map(|l| (true, l)).or_else(|| id.strip_prefix(RELOAD_ITEM).map(|l| (false, l))).filter(|(_, l)| !l.is_empty())
+}
+
+/// Shows the reload menu at (x, y) (logical px in the calling window); the labels come localized.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
+pub fn floating_browser_reload_menu(app: AppHandle, window: tauri::Window, label: String, x: f64, y: f64, reload: String, hard_reload: String) -> Result<(), String> {
+  use tauri::menu::{Menu, MenuItem};
+  webview(&app, &label)?;
+  let soft = MenuItem::with_id(&app, format!("{RELOAD_ITEM}{label}"), reload, true, None::<&str>).map_err(|e| e.to_string())?;
+  let hard = MenuItem::with_id(&app, format!("{HARD_RELOAD_ITEM}{label}"), hard_reload, true, None::<&str>).map_err(|e| e.to_string())?;
+  let menu = Menu::with_items(&app, &[&soft, &hard]).map_err(|e| e.to_string())?;
+  window.popup_menu_at(&menu, LogicalPosition::new(x, y)).map_err(|e| e.to_string())
+}
+
+/// Clicks on the reload menu's items (other menu items are left to menu.rs).
+pub fn install<R: Runtime>(app: &AppHandle<R>) {
+  app.on_menu_event(|app, event| {
+    if let Some((hard, label)) = reload_item(&event.id().0)
+      && let Some(wv) = app.get_webview(label)
+      && let Err(e) = reload(&wv, hard)
+    {
+      log::warn!("browser reload: {e}");
+    }
+  });
+}
+
+/// Orca's `GRAB_BUDGET.screenshotMaxBytes`: a larger element screenshot is left out.
+const SCREENSHOT_MAX: usize = 2 * 1024 * 1024;
+
+/// The picked element's box (CSS px of a page `vw` CSS px wide) in the view's own points (the view
+/// is `view_w` × `view_h`), clipped to the view: (x, y, width, height). None when nothing of it shows.
+pub fn snapshot_rect(x: f64, y: f64, w: f64, h: f64, vw: Option<f64>, view_w: f64, view_h: f64) -> Option<(f64, f64, f64, f64)> {
+  if ![x, y, w, h, view_w, view_h].iter().all(|n| n.is_finite()) || w <= 0.0 || h <= 0.0 {
+    return None;
+  }
+  // Like Orca's crop: the scale is the view's width over the page's (page zoom, magnification).
+  let scale = vw.filter(|v| v.is_finite() && *v > 0.0).map_or(1.0, |v| view_w / v);
+  let (x0, y0) = ((x * scale).max(0.0), (y * scale).max(0.0));
+  let (x1, y1) = (((x + w) * scale).min(view_w), ((y + h) * scale).min(view_h));
+  (x1 - x0 >= 1.0 && y1 - y0 >= 1.0).then_some((x0, y0, x1 - x0, y1 - y0))
+}
+
+/// Orca's Design Mode screenshot (`captureSelectionScreenshot`): the picked element's box cropped
+/// from the page, saved as a PNG with the pasted images (attachments.rs: private, swept after 30
+/// days) so the agent can be handed its path. None when it could not be taken (macOS only; Orca
+/// treats a missing screenshot as non-fatal too).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
+pub async fn floating_browser_snapshot(app: AppHandle, label: String, x: f64, y: f64, width: f64, height: f64, viewport: Option<f64>) -> Result<Option<String>, String> {
+  let wv = webview(&app, &label)?;
+  let scale = wv.window().scale_factor().map_err(|e| e.to_string())?;
+  let size = wv.size().map_err(|e| e.to_string())?.to_logical::<f64>(scale);
+  let Some(rect) = snapshot_rect(x, y, width, height, viewport, size.width, size.height) else { return Ok(None) };
+  let Some(png) = snapshot_png(&wv, rect).await? else { return Ok(None) };
+  if png.len() > SCREENSHOT_MAX {
+    return Ok(None);
+  }
+  let dir = crate::attachments::paste_dir(&app)?;
+  let file = tauri::async_runtime::spawn_blocking(move || crate::attachments::save_image(&dir, &png)).await.map_err(|e| e.to_string())??;
+  Ok(file.to_str().map(str::to_owned))
+}
+
+/// WKWebView's `takeSnapshotWithConfiguration:completionHandler:` with the rect (view points): the
+/// page draws itself, so no Screen Recording permission is needed.
+#[cfg(target_os = "macos")]
+async fn snapshot_png<R: Runtime>(wv: &Webview<R>, rect: (f64, f64, f64, f64)) -> Result<Option<Vec<u8>>, String> {
+  let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+  wv.with_webview(move |pv| {
+    use block2::RcBlock;
+    use objc2::{msg_send, rc::Retained, runtime::{AnyClass, AnyObject}};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let wk = pv.inner() as *mut AnyObject;
+    let Some(class) = AnyClass::get(c"WKSnapshotConfiguration") else {
+      let _ = tx.send(None);
+      return;
+    };
+    let config: Option<Retained<AnyObject>> = unsafe { msg_send![class, new] };
+    let Some(config) = config else {
+      let _ = tx.send(None);
+      return;
+    };
+    let r = NSRect::new(NSPoint::new(rect.0, rect.1), NSSize::new(rect.2, rect.3));
+    let done = RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+      let _ = tx.send(unsafe { crate::screenshot::png_bytes(image) });
+    });
+    unsafe {
+      let _: () = msg_send![&*config, setRect: r];
+      let _: () = msg_send![wk, takeSnapshotWithConfiguration: &*config, completionHandler: &*done];
+    }
+  })
+  .map_err(|e| e.to_string())?;
+  tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5)).ok().flatten()).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn snapshot_png<R: Runtime>(_wv: &Webview<R>, _rect: (f64, f64, f64, f64)) -> Result<Option<Vec<u8>>, String> {
+  Ok(None)
 }
 
 /// Orca's browser zoom (⌘= / ⌘- / ⌘0): the page's own scale, 25%–500%.
@@ -468,6 +595,28 @@ mod tests {
     std::fs::write(&first, "x").unwrap();
     assert_eq!(download_path(dir.path(), std::path::Path::new("/tmp/report.pdf"), &url), dir.path().join("report (2).pdf"));
     assert_eq!(download_path(dir.path(), std::path::Path::new(".bashrc"), &url), dir.path().join("_.bashrc"));
+  }
+
+  #[test]
+  fn reload_menu_items_name_their_tab() {
+    assert_eq!(reload_item(&format!("{RELOAD_ITEM}ade-browser-1")), Some((false, "ade-browser-1")));
+    assert_eq!(reload_item(&format!("{HARD_RELOAD_ITEM}ade-browser-1")), Some((true, "ade-browser-1")));
+    assert_eq!(reload_item(RELOAD_ITEM), None);
+    assert_eq!(reload_item("workbench.action.reloadWindow"), None);
+  }
+
+  #[test]
+  fn snapshot_rect_scales_and_clips_to_the_view() {
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(800.0), 800.0, 600.0), Some((10.0, 20.0, 100.0, 50.0)));
+    // Page zoom 200%: 400 CSS px across an 800 pt view.
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(400.0), 800.0, 600.0), Some((20.0, 40.0, 200.0, 100.0)));
+    // Partly scrolled out: only the visible part.
+    assert_eq!(snapshot_rect(-50.0, 580.0, 100.0, 100.0, Some(800.0), 800.0, 600.0), Some((0.0, 580.0, 50.0, 20.0)));
+    assert_eq!(snapshot_rect(10.0, 700.0, 100.0, 50.0, Some(800.0), 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(10.0, 20.0, 0.0, 50.0, None, 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(f64::NAN, 20.0, 10.0, 50.0, None, 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(0.0), 800.0, 600.0), Some((10.0, 20.0, 100.0, 50.0)));
+    assert!(pick_script(true).contains("vw: innerWidth"));
   }
 
   #[test]

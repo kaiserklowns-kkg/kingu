@@ -26,6 +26,7 @@
 	import { PR_GROUPS, prGroupOf } from './sidebarView';
 	import { sidebarTask } from './sidebarState.svelte';
 	import { prStatuses } from './prStatus.svelte';
+	import { projectPrs } from './projectPrs.svelte';
 	import { boardPopout } from './boardPopout.svelte.ts';
 	import { onMount } from 'svelte';
 
@@ -63,6 +64,8 @@
 			askedPr.add(slug);
 			void prStatuses.refresh(slug, { threads: false });
 		}
+		// Other projects' tasks: read with their project's root.
+		if (byAgent) for (const e of projects.all) projectPrs.ask(e.root, e.view.meta.slug);
 	});
 	// Orca's Project filter (agent columns only): none chosen = every project.
 	let projectFilter = $state<string[]>([]);
@@ -89,8 +92,8 @@
 		const searchable = { title: v.meta.title, slug: v.meta.slug, agent: v.meta.agent, branch: own ? adeTasks.branchOf(v.meta.slug) : projects.worktrees(root).find((w) => w.slug === v.meta.slug)?.branch, project: projectName(root) };
 		return (
 			boardMatches(searchable, query) &&
-			// PR status is known for the open folder's tasks only.
-			(!prFilter || (own && prGroupOf(sidebarTask(v)) === prFilter)) &&
+			// Another project's task: its PR as projectPrs read it (none until the answer comes).
+			(!prFilter || prGroupOf(own ? sidebarTask(v) : { prState: projectPrs.get(root, v.meta.slug)?.state ?? null, prDraft: projectPrs.get(root, v.meta.slug)?.draft }) === prFilter) &&
 			(!byAgent || inProjects(projectFilter, root))
 		);
 	};

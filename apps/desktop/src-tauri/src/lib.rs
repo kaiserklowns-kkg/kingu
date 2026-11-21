@@ -604,6 +604,8 @@ async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>)
     let mut dbs = sessions::opencode_dbs(&home, std::env::var("XDG_DATA_HOME").ok().as_deref(), std::env::var("OPENCODE_DB").ok().as_deref());
     dbs.extend(account_dirs.iter().flat_map(|d| sessions::opencode_dbs_in(d)).filter(|d| !dbs.contains(d)).collect::<Vec<_>>());
     all.extend(sessions::list_opencode(&dbs, &root, limit));
+    // ZCode's CLI: OpenCode's schema in ~/.zcode/cli/db/db.sqlite, hidden messages left out (Orca's scanners/zcode).
+    all.extend(sessions::list_zcode(&home.join(".zcode").join("cli").join("db").join("db.sqlite"), &root, limit));
     // Copilot CLI (`$COPILOT_HOME`, else ~/.copilot; Orca's COPILOT_SESSIONS_DIR).
     let copilot_home = std::env::var_os("COPILOT_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".copilot"));
     all.extend(sessions::list_copilot(&root, &copilot_home.join("session-state"), limit));
@@ -624,6 +626,15 @@ async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>)
     // Grok CLI (`$GROK_HOME` when absolute, else ~/.grok; sessions/<encoded folder>/<id>; Orca's scanners/grok).
     let grok_home = std::env::var("GROK_HOME").ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".grok"));
     all.extend(sessions::list_grok(&root, &dirs, &grok_home.join("sessions"), limit));
+    // Hermes (`$HERMES_HOME`, else ~/.hermes) and jcode (`$JCODE_HOME`, else ~/.jcode): `sessions/session_*.json` (Orca's scanners/hermes, jcode).
+    let env_dir = |k: &str| std::env::var(k).ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute());
+    all.extend(sessions::list_hermes(&root, &env_dir("HERMES_HOME").unwrap_or_else(|| home.join(".hermes")).join("sessions"), limit));
+    all.extend(sessions::list_jcode(&root, &env_dir("JCODE_HOME").unwrap_or_else(|| home.join(".jcode")).join("sessions"), limit));
+    // OpenClaw (`$OPENCLAW_STATE_DIR` or ~/.openclaw, and the legacy ~/.clawdbot: agents/<agent>/sessions) and Pi (`$PI_CODING_AGENT_DIR`, else ~/.pi/agent/sessions); Orca's message-graph scanners.
+    all.extend(sessions::list_openclaw(&root, &[env_dir("OPENCLAW_STATE_DIR").unwrap_or_else(|| home.join(".openclaw")), home.join(".clawdbot")], limit));
+    all.extend(sessions::list_pi(&root, &env_dir("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi").join("agent").join("sessions")), limit));
+    // Muse (`$XDG_DATA_HOME/muse/sessions`, else ~/.local/share/muse/sessions; date shards of <uuid>/session.jsonl; Orca's scanners/muse).
+    all.extend(sessions::list_muse(&root, &env_dir("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share")).join("muse").join("sessions"), limit));
     all.sort_by_key(|s| std::cmp::Reverse(s.updated));
     all.truncate(limit);
     Ok(all)
@@ -1549,6 +1560,7 @@ pub fn run() {
         let _ = queue_events.emit("git-queue", e);
       });
       menu::install(app.handle());
+      floating_browser::install(app.handle());
       // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
       if let Ok(stash) = undo_stash(app.handle()) {
         std::thread::spawn(move || {
@@ -1692,6 +1704,8 @@ pub fn run() {
       floating_browser::floating_browser_navigate,
       floating_browser::floating_browser_history,
       floating_browser::floating_browser_reload,
+      floating_browser::floating_browser_reload_menu,
+      floating_browser::floating_browser_snapshot,
       floating_browser::floating_browser_show,
       floating_browser::floating_browser_open_external,
       floating_browser::floating_browser_close,

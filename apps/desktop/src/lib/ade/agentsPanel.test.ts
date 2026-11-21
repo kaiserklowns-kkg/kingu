@@ -16,6 +16,12 @@ describe('session history resume commands', () => {
 		expect(resumeArgv('kimi', 'session_1')).toEqual(['kimi', '--session', 'session_1']);
 		expect(resumeArgv('cline', 'cl-1')).toEqual(['cline', '--id', 'cl-1']);
 		expect(resumeArgv('devin', 'dv')).toEqual(['devin', '--resume', 'dv']);
+		expect(resumeArgv('hermes', '20261121_ab12')).toEqual(['hermes', '--resume', '20261121_ab12']);
+		expect(resumeArgv('jcode', 'j-1')).toEqual(['jcode', '--resume', 'j-1']);
+		expect(resumeArgv('openclaw', 'oc-1')).toEqual(['openclaw', '--resume', 'oc-1']);
+		expect(resumeArgv('zcode', 'z1')).toEqual(['zcode', '--resume', 'z1']);
+		expect(resumeArgv('muse', 'm-1')).toEqual(['muse', 'resume', 'm-1']);
+		expect(resumeArgv('pi', 'p-1')).toEqual(['pi', '--session', 'p-1']);
 		expect(resumeArgv('grok', '019e37f4-5135-7b63-a4ab-6d13aa6bf528')).toEqual(['grok', '--resume', '019e37f4-5135-7b63-a4ab-6d13aa6bf528']);
 	});
 });

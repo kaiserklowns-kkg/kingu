@@ -97,7 +97,10 @@ export function installAdeCommands(): () => void {
 				{ action: 'devtools', title: 'Browser: Toggle Developer Tools', key: 'alt+cmd+i' },
 				{ action: 'back', title: 'Browser: Go Back', mac: 'cmd+[' },
 				{ action: 'forward', title: 'Browser: Go Forward', mac: 'cmd+]' },
-				{ action: 'address', title: 'Browser: Focus Address Bar', key: 'cmd+l', weight: 1 }
+				{ action: 'address', title: 'Browser: Focus Address Bar', key: 'cmd+l', weight: 1 },
+				// Orca's browser.hardReload (Mod+Shift+R). It takes ⇧⌘R in the Agents layout only, where the
+				// IDE's Search Again (a Search Editor) and Rerun Task (a task terminal) do not act.
+				{ action: 'hardReload', title: 'Browser: Hard Reload', key: 'cmd+shift+r' }
 			] as const
 		).map(({ action, title, ...keys }) =>
 			commands.register({

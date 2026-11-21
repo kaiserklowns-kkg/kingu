@@ -1011,9 +1011,16 @@ fn gh() -> Result<std::path::PathBuf, String> {
 
 /// The worktree's pull request, parsed and as gh reports it (`None` when there is none yet); an
 /// empty `slug` is the open folder itself. The one PR read every view of a worktree shares.
+/// `root`: a task of another added project (the board's PR filter over every project).
 #[tauri::command]
-pub async fn worktree_pr(ws: Workspace, slug: String) -> Result<Option<review::WorktreePr>, String> {
-  let dir = pr_dir(&ws, &slug)?;
+pub async fn worktree_pr(ws: Workspace, projects: State<'_, crate::projects::Projects>, slug: String, root: Option<String>) -> Result<Option<review::WorktreePr>, String> {
+  let dir = match root {
+    Some(r) => {
+      let root = crate::projects::root_arg(&ws, &projects, Some(r))?.ok_or("no folder")?;
+      if slug.is_empty() { root } else { review::task_dir(&root, &slug)? }
+    }
+    None => pr_dir(&ws, &slug)?,
+  };
   let slug = (!slug.is_empty()).then_some(slug);
   blocking(move || match mr::forge(&dir) {
     mr::Forge::Gitlab(p) => {

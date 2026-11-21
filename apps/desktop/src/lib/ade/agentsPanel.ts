@@ -29,6 +29,12 @@ export function resumeArgv(agent: string, id: string): string[] {
 	if (agent === 'devin') return ['devin', '--resume', id];
 	// Orca groups grok with `--resume <id>` (ai-vault-resume-command.ts; base command `grok`).
 	if (agent === 'grok') return ['grok', '--resume', id];
+	// Hermes and jcode too (`hermes` / `jcode --resume <id>`).
+	if (agent === 'hermes' || agent === 'jcode' || agent === 'openclaw' || agent === 'zcode') return [agent, '--resume', id];
+	// Pi: `pi --session <id>` (Orca groups it with opencode).
+	if (agent === 'pi') return ['pi', '--session', id];
+	// Muse: `muse resume <id>` (workspace-scoped, like kimi).
+	if (agent === 'muse') return ['muse', 'resume', id];
 	if (agent === 'codex') return ['codex', 'resume', id];
 	if (agent === 'gemini') return ['gemini', '--resume', id];
 	return ['claude', '--resume', id];

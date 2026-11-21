@@ -104,7 +104,7 @@
 	{visible}
 	onTitle={(title) => adeLayout.renameBrowser(worktree, id, title)}
 	onNavigate={(url) => adeLayout.setBrowserUrl(worktree, id, url)}
-	onPick={(el) => void draftPrompt(worktree, pickedPrompt(el), t('ade.design.what', { selector: el.selector }))}
+	onPick={(el, shot) => void draftPrompt(worktree, pickedPrompt(el, shot), t('ade.design.what', { selector: el.selector }))}
 	{profile}
 	onProfile={pickProfile}
 	onImportCookies={importCookies}

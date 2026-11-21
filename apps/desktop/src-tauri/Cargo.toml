@@ -80,7 +80,7 @@ mac-notification-sys = "=0.6.15"
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSLocale", "NSArray", "NSDate", "NSDictionary", "NSHTTPCookie", "NSProcessInfo", "NSUUID"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSLocale", "NSArray", "NSDate", "NSDictionary", "NSGeometry", "NSHTTPCookie", "NSProcessInfo", "NSUUID", "objc2-core-foundation"] }
 # Browser cookie import writes into a profile's WKWebsiteDataStore (the version wry already uses).
 objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
 

@@ -12,6 +12,7 @@ import {
 	parseSavedTabs,
 	parseTabGroups,
 	placeTab,
+	regionCloses,
 	rectStyle,
 	renameTab,
 	shownTree,
@@ -99,13 +100,48 @@ describe('tab groups (Orca: every region has its own tab strip)', () => {
 		expect(renameTab(r, 'nope', 'x')).toBe(r);
 	});
 
-	test('closing a region keeps its tabs in the group next to it', () => {
+	test('dropping on the left or top edge puts the new group first', () => {
+		const l = splitGroup(null, ids, 'g1', 't1', 'left')!;
+		expect(shownTree(l)).toEqual({ type: 'split', direction: 'vertical', first: leaf('t1'), second: leaf('main') });
+		const u = splitGroup(l, ids, 'g1', 'b3', 'up')!;
+		expect(leaves(u.tree)).toEqual(['g2', 'g3', 'g1']);
+		expect(paneRects(u.tree).get('g3')).toEqual({ x: 0.5, y: 0, w: 0.5, h: 0.5 });
+		expect(groupTabs(u, ids, 'g3')).toEqual(['b3']);
+	});
+
+	test("Orca's no-op: a group's only tab dropped on the facing edge of the group beside it", () => {
+		const g = splitGroup(null, ids, 'g1', 't1', 'right')!;
+		// t1 is alone in g2, right of g1: g1's right edge would rebuild the same layout.
+		expect(splitGroup(g, ids, 'g1', 't1', 'right')).toBe(g);
+		// Its other edges do move it.
+		expect(leaves(splitGroup(g, ids, 'g1', 't1', 'left')!.tree)).toEqual(['g3', 'g1']);
+		// A group with more tabs splits on the facing edge too.
+		const m = moveToGroup(g, ids, 'b3', 'g2')!;
+		expect(leaves(splitGroup(m, ids, 'g1', 't1', 'right')!.tree)).toEqual(['g1', 'g3', 'g2']);
+		const v = splitGroup(null, ids, 'g1', 't2', 'down')!;
+		expect(splitGroup(v, ids, 'g1', 't2', 'down')).toBe(v);
+		const vu = splitGroup(null, ids, 'g1', 't2', 'up')!;
+		expect(splitGroup(vu, ids, 'g1', 't2', 'up')).toBe(vu);
+	});
+
+	test('closing a region closes its tabs (all but the agent tab); the region then collapses', () => {
 		const g = splitGroup(splitGroup(null, ids, 'g1', 't1', 'right'), ids, 'g2', 'b3', 'down')!;
-		const c = closeGroup(g, ids, 'g3')!;
+		const two = moveToGroup(g, ids, 'f:a.ts', 'g3')!;
+		expect(regionCloses(two, ids, 'g3')).toEqual(['b3', 'f:a.ts']);
+		expect(regionCloses(two, ids, 'g1')).toEqual(['t2']);
+		// Both closed: g3 is gone.
+		const left = ['main', 't1', 't2'];
+		const c = closeGroup(two, left, 'g3')!;
 		expect(leaves(c.tree)).toEqual(['g1', 'g2']);
-		expect(groupTabs(c, ids, 'g2')).toEqual(['t1', 'b3']);
-		expect(c.shown.g2).toBe('t1');
-		expect(closeGroup(c, ids, 'g1')).toBeNull();
+		// One close cancelled (the file asked and was kept): the region stays.
+		expect(closeGroup(two, [...left, 'f:a.ts'], 'g3')).toBe(two);
+		// The agent tab never closes: it moves to the region next to it.
+		const a = closeGroup(c, ['main', 't1'], 'g1');
+		expect(a).toBeNull();
+		const three = splitGroup(c, ids, 'g2', 'b3', 'down')!;
+		const moved = closeGroup(three, ['main', 't1', 'b3'], 'g1')!;
+		expect(leaves(moved.tree)).toEqual(['g2', 'g3']);
+		expect(groupTabs(moved, ['main', 't1', 'b3'], 'g2')).toEqual(['main', 't1']);
 		expect(closeGroup(c, ids, 'g8')).toBe(c);
 	});
 
@@ -114,11 +150,27 @@ describe('tab groups (Orca: every region has its own tab strip)', () => {
 		expect(rectStyle({ x: 0.5, y: 0, w: 0.5, h: 1 }, 35)).toBe('left:calc(50.000% + 2px);top:calc(0.000% + 35px);width:calc(50.000% - 2px);height:calc(100.000% - 35px)');
 		expect(stripStyle({ x: 0, y: 0.5, w: 1, h: 0.5 }, 35)).toBe('left:calc(0.000% + 0px);top:calc(50.000% + 2px);width:calc(100.000% - 0px);height:35px');
 		const rects = paneRects(shownTree(splitGroup(null, ids, 'g1', 't1', 'right')!));
+		// Orca's zones: 20% of the width on either side, then 20% of the body's height above and below.
 		expect(dropTarget(rects, 0.45, 0.5)).toEqual({ id: 'main', dir: 'right' });
+		expect(dropTarget(rects, 0.05, 0.5)).toEqual({ id: 'main', dir: 'left' });
+		expect(dropTarget(rects, 0.55, 0.5)).toEqual({ id: 't1', dir: 'left' });
 		expect(dropTarget(rects, 0.75, 0.95)).toEqual({ id: 't1', dir: 'down' });
-		expect(dropTarget(rects, 0.2, 0.2)).toBeNull();
-		expect(dropTarget(rects, 0.2, 0.2, true)).toEqual({ id: 'main', dir: 'center' });
+		expect(dropTarget(rects, 0.25, 0.05)).toEqual({ id: 'main', dir: 'up' });
+		expect(dropTarget(rects, 0.25, 0.5)).toBeNull();
+		expect(dropTarget(rects, 0.25, 0.5, true)).toEqual({ id: 'main', dir: 'center' });
+		// With a tab strip (top 0.1): its middle is the strip's own drop; "up" is measured in the body below it.
+		expect(dropTarget(rects, 0.25, 0.05, true, 0.1)).toBeNull();
+		expect(dropTarget(rects, 0.25, 0.15, true, 0.1)).toEqual({ id: 'main', dir: 'up' });
+		expect(dropTarget(rects, 0.25, 0.3, true, 0.1)).toEqual({ id: 'main', dir: 'center' });
+		// The side bands run the whole height, strip included.
+		expect(dropTarget(rects, 0.02, 0.05, true, 0.1)).toEqual({ id: 'main', dir: 'left' });
 		expect(dropEdge(50, 50, 100, 100)).toBeNull();
+		expect(dropEdge(19, 50, 100, 100)).toBe('left');
+		expect(dropEdge(81, 50, 100, 100)).toBe('right');
+		expect(dropEdge(50, 19, 100, 100)).toBe('up');
+		expect(dropEdge(50, 81, 100, 100)).toBe('down');
+		expect(dropEdge(50, 0, 100, 100, 0)).toBe('up');
+		expect(dropEdge(50, 0, 100, 0)).toBeNull();
 	});
 });
 

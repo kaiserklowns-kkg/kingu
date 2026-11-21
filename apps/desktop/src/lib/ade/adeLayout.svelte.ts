@@ -44,9 +44,10 @@ import {
 	type TerminalTab
 } from './adeTabs.ts';
 import { switcherOrder } from './sidebarView.ts';
-import { activeAfterGroupClose, closeGroup, groupOf, groupTabs, liveGroups, moveToGroup, parseSavedTabs, placeTab, renameTab, shownTree, splitGroup, withShown, type SplitDir, type TabGroups, type TabTree } from './adeSplit.ts';
+import { activeAfterGroupClose, closeGroup, groupOf, groupTabs, liveGroups, moveToGroup, parseSavedTabs, placeTab, regionCloses, renameTab, shownTree, splitGroup, withShown, type SplitDir, type TabGroups, type TabTree } from './adeSplit.ts';
 import { browserTitle } from '#lib/workbench/floating.ts';
 import { t } from '#lib/i18n/index.ts';
+import { ask } from '#lib/workbench/messageBox.ts';
 
 export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
@@ -520,10 +521,15 @@ class AdeLayout {
 
 	/** Closes a terminal or file tab. */
 	close(key: string, id: string) {
+		void this.#closeTab(key, id);
+	}
+
+	/** Closes a terminal, browser or file tab, asking first like a single close does; done once it is closed or kept. */
+	async #closeTab(key: string, id: string) {
 		const file = keyOfTabId(id);
-		if (file !== null) void this.closeFile(key, file);
+		if (file !== null) await this.closeFile(key, file);
 		else if (this.browserTab(key, id)) this.closeBrowser(key, id);
-		else void this.closeTerminal(key, id);
+		else await this.closeTerminal(key, id);
 	}
 
 	#ids(key: string): string[] {
@@ -579,7 +585,7 @@ class AdeLayout {
 		this.#setGroups(key, live && withShown(live, id));
 	}
 
-	/** Orca's drop on a region's edge: tab `id` moves into a new group on the right or bottom of the group of `target` (the active tab by default). */
+	/** Orca's drop on a region's edge: tab `id` moves into a new group on side `dir` of the group of `target` (the active tab by default). */
 	splitTab(key: string, id: string, dir: SplitDir, target = this.activeTab(key)) {
 		const ids = this.#ids(key);
 		if (!ids.includes(id)) return;
@@ -600,10 +606,22 @@ class AdeLayout {
 		if (before !== id) this.moveTab(key, id, before);
 	}
 
-	/** Closes region `group`; its tabs stay open in the group next to it. */
-	closeRegion(key: string, group: string) {
+	/**
+	 * Close Region (Orca's Close split pane, useTabGroupCloseScopeCommands `closeGroup`): closes every
+	 * tab of the region one by one, each through its own close (a running terminal or unsaved file
+	 * asks; a pinned tab asks first, Orca's PinnedTabCloseDialog), then the region collapses. The
+	 * agent tab never closes, so it moves to the region next to it; a cancelled close keeps the region.
+	 */
+	async closeRegion(key: string, group: string) {
 		const g = this.groupsOf(key);
-		if (g) this.#setGroups(key, closeGroup(g, this.#ids(key), group, this.mru[key]));
+		if (!g) return;
+		for (const id of regionCloses(g, this.#ids(key), group)) {
+			if (!this.#ids(key).includes(id)) continue;
+			if (this.isPinned(key, id) && !(await ask(t('ade.split.closePinned', { label: this.#label(key, id) }), { title: t('ade.split.closePinnedTitle'), kind: 'warning', okLabel: t('common.close') }))) continue;
+			await this.#closeTab(key, id);
+		}
+		const now = this.groupsOf(key);
+		if (now) this.#setGroups(key, closeGroup(now, this.#ids(key), group, this.mru[key]));
 	}
 
 	unsplit(key: string) {

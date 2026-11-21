@@ -34,8 +34,8 @@
 		onTitle?: (title: string) => void;
 		/** The page finished loading `url` (the ADE saves it, so the tab reopens there). */
 		onNavigate?: (url: string) => void;
-		/** Design Mode picked an element (Orca: its HTML, styles and selector go to the agent); absent: no Design Mode button. */
-		onPick?: (element: PickedElement) => void;
+		/** Design Mode picked an element (Orca: its HTML, styles, selector and screenshot go to the agent); absent: no Design Mode button. `screenshot`: the saved PNG of it, null when none could be taken. */
+		onPick?: (element: PickedElement, screenshot: string | null) => void;
 		/** Orca's browser profile: its own cookies and storage (set when the tab's view opens). */
 		profile?: string;
 		/** Orca's toolbar profile picker; absent: no picker (the floating browser). */
@@ -136,8 +136,16 @@
 	function step(back: boolean) {
 		void invoke('floating_browser_history', { label, back }).catch(() => {});
 	}
-	function reload() {
-		void invoke('floating_browser_reload', { label }).catch(() => {});
+	/** `hard`: Orca's Hard Reload (WKWebView reloadFromOrigin on macOS, a plain reload elsewhere). */
+	function reload(hard = false) {
+		void invoke('floating_browser_reload', { label, hard }).catch(() => {});
+	}
+	// Orca's BrowserReloadControl: a right-click on Reload offers Reload and Hard Reload (a native
+	// menu, so it shows over the page's native view).
+	function reloadMenu(e: MouseEvent) {
+		e.preventDefault();
+		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		void invoke('floating_browser_reload_menu', { label, x: r.left, y: r.bottom + 2, reload: t('ade.browser.reload'), hardReload: t('ade.browser.hardReload') }).catch((err) => status.error(String(err)));
 	}
 	// Orca's browser tools: zoom (⌘= ⌘- ⌘0), find in page (⌘F), DevTools (⌥⌘I). Commands reach
 	// the shown surface through a window event (BROWSER_ACTION) naming its label.
@@ -179,6 +187,7 @@
 			else if (d.action === 'devtools') devtools();
 			else if (d.action === 'address') bar?.focus();
 			else if (d.action === 'reload') reload();
+			else if (d.action === 'hardReload') reload(true);
 			else if (d.action === 'back') step(true);
 			else if (d.action === 'forward') step(false);
 		};
@@ -197,7 +206,13 @@
 		const offPick = listen<{ label: string; element: PickedElement }>('browser-pick', (e) => {
 			if (e.payload.label !== label) return;
 			picking = false;
-			onPick?.(e.payload.element);
+			// Orca's captureSelectionScreenshot: the element's box cropped from the page (the picker took
+			// its outline away first). A missing screenshot is not fatal: the details go without it.
+			const el = e.payload.element;
+			const r = el.rect ?? { x: 0, y: 0, w: 0, h: 0 };
+			void invoke<string | null>('floating_browser_snapshot', { label, x: r.x, y: r.y, width: r.w, height: r.h, viewport: typeof el.vw === 'number' ? el.vw : null })
+				.catch(() => null)
+				.then((shot) => onPick?.(el, shot ?? null));
 		});
 		const offDownload = listen<{ label: string; url: string; path: string | null; state: 'started' | 'done' | 'failed' }>('browser-download', (e) => {
 			const d = e.payload;
@@ -235,7 +250,7 @@
 	<div class="flex h-10 shrink-0 items-center gap-1 px-2" data-floating-terminal-no-drag>
 		<button class={BTN} aria-label="Back" title="Back" onclick={() => step(true)}><Icon name="arrowLeft" size={14} /></button>
 		<button class={BTN} aria-label="Forward" title="Forward" onclick={() => step(false)}><Icon name="arrowRight" size={14} /></button>
-		<button class={BTN} aria-label="Reload" title="Reload" onclick={reload}><Icon name="refresh" size={14} /></button>
+		<button class={BTN} aria-label={t('ade.browser.reload')} title={t('ade.browser.reloadTitle')} onclick={() => reload()} oncontextmenu={reloadMenu}><Icon name="refresh" size={14} /></button>
 		{#if onProfile}
 			<button class="h-6 max-w-28 shrink-0 truncate rounded px-1.5 text-[11px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" title={`Browser profile: ${profile || 'Default'} (its own cookies and storage)`} aria-label={`Browser profile: ${profile || 'Default'}`} onclick={onProfile}>{profile || 'Default'}</button>
 		{/if}

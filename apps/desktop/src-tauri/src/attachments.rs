@@ -146,12 +146,17 @@ pub async fn chat_attachment_preview(path: String) -> Result<String, String> {
   tauri::async_runtime::spawn_blocking(move || preview_data_url(&path)).await.map_err(|e| e.to_string())?
 }
 
+/// Kingu's folder for pasted images (and Design Mode's element screenshots).
+pub fn paste_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+  Ok(app.path().app_cache_dir().map_err(|e| e.to_string())?.join(DIR))
+}
+
 /// A pasted image (the request body is its raw bytes): saved, its path returned.
 #[tauri::command]
 pub async fn paste_image_save(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> Result<String, String> {
   let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("expected the image bytes".into()) };
   let bytes = bytes.clone();
-  let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join(DIR);
+  let dir = paste_dir(&app)?;
   let file = tauri::async_runtime::spawn_blocking(move || save_image(&dir, &bytes)).await.map_err(|e| e.to_string())??;
   file.to_str().map(str::to_owned).ok_or_else(|| "path is not UTF-8".into())
 }

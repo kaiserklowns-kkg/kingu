@@ -132,12 +132,22 @@
 		if ((e.target as HTMLElement | null)?.closest?.('[data-ade-strip]')) return void (dropAt = null);
 		const r = center.getBoundingClientRect();
 		const all = rects ?? new Map([[activeTab, { x: 0, y: 0, w: 1, h: 1 }]]);
-		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, !!groups);
+		// Orca's zones: the left and right 20% of a region, else the top and bottom 20% of its body (below its strip).
+		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, !!groups, rects && r.height > 0 ? STRIP / r.height : 0);
 		// The middle of the tab's own region changes nothing.
 		const own = hit?.dir === 'center' && groups && groupOf(groups, hit.id) === groupOf(groups, id);
 		dropAt = hit && !own ? { ...hit, rect: all.get(hit.id)! } : null;
 		if (dropAt) e.preventDefault();
 	}
+	/** The half of the region a drop fills (the whole region for a move into its group). */
+	function dropPreview(dir: DropDir, r: Rect): string {
+		if (dir === 'left') return rectStyle({ ...r, w: r.w / 2 });
+		if (dir === 'right') return rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 });
+		if (dir === 'up') return rectStyle({ ...r, h: r.h / 2 });
+		if (dir === 'down') return rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 });
+		return rectStyle(r);
+	}
+	const DROP_LABEL = { left: 'ade.split.dropLeft', right: 'ade.split.dropRight', up: 'ade.split.dropUp', down: 'ade.split.dropDown', center: 'ade.split.dropHere' } as const;
 	function onCenterDrop(e: DragEvent) {
 		const id = adeLayout.draggingTab;
 		if (id && dropAt) {
@@ -581,9 +591,9 @@
 			{@const r = dropAt.rect}
 			<div
 				class="pointer-events-none absolute z-20 rounded border-2 border-(--vscode-focusBorder) bg-(--vscode-focusBorder)/15"
-				style={dropAt.dir === 'right' ? rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 }) : dropAt.dir === 'down' ? rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 }) : rectStyle(r)}
+				style={dropPreview(dropAt.dir, r)}
 			>
-				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{dropAt.dir === 'right' ? t('ade.split.dropRight') : dropAt.dir === 'down' ? t('ade.split.dropDown') : t('ade.split.dropHere')}</span>
+				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{t(DROP_LABEL[dropAt.dir])}</span>
 			</div>
 		{/if}
 		</div>
