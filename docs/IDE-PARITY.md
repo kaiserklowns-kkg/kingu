@@ -7,7 +7,7 @@
   1. Every command id in `default-keybindings.md` was checked against the ids Kingu registers (`commands.register` across `apps/desktop/src/lib`).
   2. Keys and `when` clauses were read from the VS Code contribution named in each row.
   3. `keymapAudit.test.ts` checks that no key runs two commands in one layout.
-- **Status:** ✅ present · ◐ partial · ✗ missing · 🆕 added in the first parity round · 🆕² added in the second (P0 gaps of §9) · 🆕³ added in the third (§9 leftovers and §8.1–8.6).
+- **Status:** ✅ present · ◐ partial · ✗ missing · 🆕 added in the first parity round · 🆕² added in the second (P0 gaps of §9) · 🆕³ added in the third (§9 leftovers and §8.1–8.6) · 🆕⁴ added in the fourth (the last §9 and §15 gaps).
 - **Priority:** P0-a = daily use, do next. P0-b = used often, do soon. P0-c = rare.
 
 ## 1. Open folder and workspace
@@ -30,7 +30,7 @@
 | `explorer.openToSide`: ⌃↩ on macOS, Ctrl+Enter elsewhere | `fileCommands.ts:84` | 🆕 `ExplorerView.svelte` | P0-b |
 | Home / End / PageUp / PageDown in the tree (⇧ extends the selection) | `base/browser/ui/list/listWidget.ts` | 🆕 `ExplorerView.svelte` | P0-b |
 | File nesting, compact folders, `files.exclude` | `explorer.fileNesting.*`, `explorer.compactFolders` | ✅ `fileNesting.ts`, `explorerModel.ts` | – |
-| Undo / redo of file operations (⌘Z / ⇧⌘Z, Ctrl+Y off macOS, with focus in the Explorer): New File / Folder, rename, move (paste after cut, drag), copy (paste, ⌥-drag, drop from Finder), delete to the Trash; `explorer.enableUndo`, `explorer.confirmUndo` ("Would you like to undo '…'?": always for New, for copies unless `light`, the rest only `verbose`) | `files.contribution.ts:681` (`UndoCommand` for the explorer), `fileActions.ts` `applyBulkEdit` undo labels, `bulkFileEdits.ts` | 🆕² `explorer.svelte.ts` `undoRedo` on `ade/fileUndo.ts`; a delete is undone from the copy Rust keeps (`fs_delete` token, `fs_restore`). Not undoable: a permanent delete (`files.enableTrash` off) or a file too large to copy, and the old file a move replaced | P0-b |
+| Undo / redo of file operations (⌘Z / ⇧⌘Z, Ctrl+Y off macOS, with focus in the Explorer): New File / Folder, rename, move (paste after cut, drag), copy (paste, ⌥-drag, drop from Finder), delete (to the Trash or, with `files.enableTrash` off, for good); `explorer.enableUndo`, `explorer.confirmUndo` ("Would you like to undo '…'?": always for New, for copies unless `light`, the rest only `verbose`) | `files.contribution.ts:681` (`UndoCommand` for the explorer), `fileActions.ts` `applyBulkEdit` undo labels, `bulkFileEdits.ts` | 🆕² `explorer.svelte.ts` `undoRedo` on `ade/fileUndo.ts`; a delete is undone from the copy Rust keeps (`fs_delete` token, `fs_restore`), a permanent delete too (🆕⁴ `fileops::delete_for_good_with_undo`; VS Code's `DeleteOperation` keeps a deleted file's contents for undo either way). Not undoable, as in VS Code: an entry too large to copy, and the old file a move replaced (`RenameOperation` only moves back) | P0-b |
 | Type to navigate (letters within 800 ms jump to the next row starting with them) / Find in the tree (⌥⌘F or F3: Filter and Fuzzy Match toggles, `workbench.list.defaultFindMode`, `workbench.list.defaultFindMatchType`, ↑↓ through highlighted rows only, Esc closes) | `listWidget.ts` TypeNavigationController, `abstractTree.ts` FindController, `listCommands.ts:861` `list.find` | 🆕² `ExplorerView.svelte`, `explorerModel.ts` `typeNavigate`. 🆕³ Find also searches collapsed folders (VS Code's ExplorerFindProvider: every workspace file from `fs_list_files`; the folders on the way to the first 100 matches open, and close again with the find); `workbench.list.typeNavigationMode: trigger` with `list.triggerTypeNavigation` | P0-b |
 | Open Editors view | `contrib/files/browser/views/openEditorsView.ts` | ✅ `openEditors.ts` | – |
 
@@ -117,7 +117,7 @@ Monaco's own actions keep VS Code's ids and default keys and are listed in the p
 | Go to Symbol in Editor ⇧⌘O / in Workspace ⌘T, Definition F12, Peek ⌥F12, References ⇧F12, Implementation ⌘F12, Call Hierarchy ⌥⇧H | `editor/contrib/gotoSymbol`, quick access `@` / `#` | ✅ Monaco + LSP providers, `QuickInput.svelte` | – |
 | Rename F2 (`editor.rename.enablePreview`), Quick Fix ⌘., Refactor ⌃⇧R, Source Action, Organize Imports ⇧⌥O, Format Document ⇧⌥F / Selection ⌘K ⌘F | `editor/contrib/rename`, `codeAction`, `format` | ✅ Monaco + `lib/lsp/languageFeatures.ts`, `refactorPreview.svelte.ts` | – |
 | Format on save / paste / type, `editor.codeActionsOnSave`, trim trailing whitespace, final newline | `workbench/contrib/codeEditor/browser/saveParticipants.ts` | ✅ `textFileSave.ts` | – |
-| Save without Formatting ⌘K S (`workbench.action.files.saveWithoutFormatting`, Ctrl+K Ctrl+Shift+S on Windows in VS Code; Kingu uses ⌘K S everywhere) | `fileCommands.ts:510` | 🆕³ `editorNavCommands.svelte.ts`, `editorModels.ts` `skipSaveParticipants` | P1-b |
+| Save without Formatting ⌘K S (`workbench.action.files.saveWithoutFormatting`; Ctrl+K S on Linux, Ctrl+K Ctrl+Shift+S on Windows) | `fileCommands.ts:510` | 🆕³ `editorNavCommands.svelte.ts`, `editorModels.ts` `skipSaveParticipants`; 🆕⁴ the Windows key through a command's `win` key (VS Code's `win:`, `keys.ts` `keyOf`) | P1-b |
 | Go to Last Edit Location ⌘K ⌘Q | `editorActions.ts:1605` | 🆕³ `navigation.svelte.ts` `recordEdit` / `toLastEdit`, `EditorHost.svelte` | P1-b |
 | `editor.formatOnSaveMode`: `file`, `modifications` (only the lines changed against git's index version, with the range formatter), `modificationsIfAvailable` (the whole file without source control) | `saveParticipants.ts` | 🆕³ `textFileSave.ts` `changedLineRanges` / `formatRanges` | P1-c |
 | Sticky scroll (`editor.stickyScroll.*`, Toggle Sticky Scroll), minimap (`editor.minimap.*`, Toggle Minimap), word wrap ⌥Z, render whitespace | `editor/contrib/stickyScroll`, `minimap` | ✅ | – |
@@ -164,8 +164,7 @@ Monaco's own actions keep VS Code's ids and default keys and are listed in the p
 
 The five gaps from the first round (🆕²) and their leftovers (🆕³) are done. What is left:
 
-1. **Explorer undo** cannot bring back a permanently deleted file or the file a move replaced.
-2. **Save without Formatting** uses ⌘K S on Windows too (VS Code: Ctrl+K Ctrl+Shift+S there).
+None in the P0 areas (🆕⁴ closed the last two: undo of a permanent delete, and the Windows key of Save without Formatting).
 
 ---
 
@@ -188,7 +187,7 @@ The five gaps from the first round (🆕²) and their leftovers (🆕³) are don
 | Output in a panel terminal with VS Code's naming and reuse (`presentation`: reveal, focus, panel shared / dedicated / new, group, clear, echo), "Terminal will be reused by tasks" message | `terminalTaskSystem.ts` | ✅ `tasks/tasks.svelte.ts`, `taskOutput.ts` | – |
 | Detected tasks: npm scripts, cargo, go | `extensions/npm`, rust-analyzer, vscode-go task providers | ✅ `tasks/detect.ts` | – |
 | `runOptions.runOn: folderOpen` with trust, `instanceLimit` / `instancePolicy` | `runAutomaticTasks.ts` | ✅ | – |
-| `task ` quick-open prefix | `tasksQuickAccess.ts` | ✗ (see §7, owned by the P0 quick-open work) | P1-b |
+| `task ` quick-open prefix | `tasksQuickAccess.ts` | 🆕² (see §7) | P1-b |
 | User tasks: Open User Tasks (`workbench.action.tasks.openUserTasks`), a tasks.json in the profile folder offered in every folder (source "User") | `task.contribution.ts` | 🆕 `tasks/userTasks.ts`, Rust settings scope `tasks` (`settings.rs`) | P1-c |
 | Run Task by name: `workbench.action.tasks.runTask` with keybindings.json `args` (a label, `{ "task": … }` or a task identifier); an unknown name warns and opens the picker | `abstractTaskService.ts` `runTaskCommand` | 🆕 `tasks/taskCommands.svelte.ts`, `userTasks.ts` `taskArg` | P1-c |
 
@@ -214,10 +213,10 @@ The five gaps from the first round (🆕²) and their leftovers (🆕³) are don
 | Debug Console ⇧⌘Y (toggles: shows and focuses the input, hides the panel when already in front; Keep Chat Edits keeps ⇧⌘Y while it applies) | `debug.contribution.ts:448` | 🆕 `debug.svelte.ts` | P1-a |
 | Clear Console ⌘K (macOS, focus in the Debug Console) | `repl.ts` `clearReplAction` | 🆕 `debug.svelte.ts`, `DebugConsole.svelte` | P1-b |
 | Debug toolbar, status bar item, JavaScript Debug Terminal, Node auto attach | `debugToolBar.ts`, js-debug | ✅ `DebugToolbar.svelte`, `autoAttach.ts` | – |
-| `debug ` quick-open prefix | `debugQuickAccess.ts` | ✗ (see §7) | P1-b |
+| `debug ` quick-open prefix | `debugQuickAccess.ts` | 🆕² (see §7) | P1-b |
 | Debug Console filter (`text, !exclude`; ⌘F with focus in the console, Escape clears) | `repl.ts` `repl.action.filter` | 🆕 `DebugConsole.svelte`, `debugViewKeys.ts` `replFilter` | P1-c |
-| Debug Console find (⌥⌘F), Next / Previous Debug Console (⇧⌘] / ⇧⌘[ with focus in it) | `repl.ts`, `debugCommands.ts` | ✗ | P1-c |
-| Keyboard actions in the debug views: rows take focus; ↑ / ↓ / Home / End move; Breakpoints: Space toggles, ↵ opens, ⌘↵ opens to the side, F2 edits, ⌘⌫ (Delete) removes; Variables: F2 (↵ on macOS) sets the value, ⌘C copies, → / ← expand / collapse; Watch: F2 (↵ on macOS) edits the expression, ⌘⌫ removes, ⌘C copies the value | `breakpointsView.ts`, `variablesView.ts`, `watchExpressionsView.ts` | 🆕 `debug/debugViewKeys.ts`, `DebugView.svelte`, `debug.svelte.ts` `editWatch` (⌥⌘C Copy Expression is not bound: Copy Path of Active File owns ⌥⌘C outside editors) | P1-c |
+| Debug Console: Focus Find ⌥⌘F (`repl.action.find`: matches highlighted, ↵ / ⇧↵ next / previous, n of m, Escape back to the input), Focus Next / Previous Debug Console ⇧⌘] / ⇧⌘[ (Ctrl+PageDown / PageUp elsewhere, with focus in the console, wrapping), Select Debug Console with several sessions | `repl.ts`, `debugCommands.ts` `changeDebugConsoleFocus` | 🆕⁴ `DebugConsole.svelte`, `debug/replFind.ts`, `debug.svelte.ts` `focusConsole` | P1-c |
+| Keyboard actions in the debug views: rows take focus; ↑ / ↓ / Home / End move; Breakpoints: Space toggles, ↵ opens, ⌘↵ opens to the side, F2 edits, ⌘⌫ (Delete) removes; Variables: F2 (↵ on macOS) sets the value, ⌘C copies, → / ← expand / collapse; Watch: F2 (↵ on macOS) edits the expression, ⌘⌫ removes, ⌘C copies the value | `breakpointsView.ts`, `variablesView.ts`, `watchExpressionsView.ts` | 🆕 `debug/debugViewKeys.ts`, `DebugView.svelte`, `debug.svelte.ts` `editWatch` (Copy as Expression has no key, as in VS Code: `debug.copyEvaluatePath` is a command and a context menu item only) | P1-c |
 
 ## 13. Settings and keyboard shortcuts
 
@@ -229,7 +228,7 @@ The five gaps from the first round (🆕²) and their leftovers (🆕³) are don
 | Open User / Workspace Settings (JSON), Open Keyboard Shortcuts (JSON), language-specific settings | `preferences.contribution.ts` | ✅ `settings/contributions.ts` | – |
 | Keyboard Shortcuts editor: every command with key, when and source; search by text, `@source:`, `@command:`, recorded keys (⌥⌘K); add / change / remove / reset; edit `when`; same-key list; writes keybindings.json, which is watched and applied at once | `keybindingsEditor.ts` | ✅ `settings/pages/ShortcutsPage.svelte`, `workbench/keybindingsEditor.ts`, `keybindings.svelte.ts` | – |
 | Open Keyboard Shortcuts ⌘K ⌘S | `preferences.contribution.ts` | 🆕 key in `Workbench.svelte` (the command had no key) | P1-a |
-| Default Settings (JSON) and Default Keyboard Shortcuts (JSON), read-only, generated from the registries (every setting with its description and default by group; this platform's default keys with layout notes, then the commands without a key) | `openRawDefaultSettings`, `openDefaultKeybindingsFile` | 🆕 `settings/defaultsJson.ts`, `resources.ts`, `contributions.ts`; read-only in `EditorHost.svelte` | P1-c |
+| Default Settings (JSON) and Default Keyboard Shortcuts (JSON), read-only, generated from the registries (every setting with its description and default by group; this platform's default keys with layout notes, then the commands without a key) | `openRawDefaultSettings`, `openDefaultKeybindingsFile` | 🆕 `settings/defaultsJson.ts`, `resources.ts`, `contributions.ts`; read-only in `EditorHost.svelte`; 🆕⁴ tabs named as VS Code's (`defaultSettings.jsonc`, "Default Keybindings") in `editorLabel.ts` | P1-c |
 | Settings Sync | `userDataSync` | ✗ (out of scope: needs the server) | P2 |
 
 ## 14. How the P1 rows were checked
@@ -241,7 +240,4 @@ The five gaps from the first round (🆕²) and their leftovers (🆕³) are don
 
 ## 15. Biggest remaining P1 gaps
 
-1. **Quick open:** the `task ` and `debug ` prefixes (shared with §9, owned by the P0 work).
-2. **Debug Console:** find (⌥⌘F) and switching between consoles of several sessions (⇧⌘] / ⇧⌘[).
-3. **Debug views:** Copy Expression on ⌥⌘C (needs Copy Path of Active File to step aside while a debug view has focus).
-4. **Default JSON tabs:** the tabs are named `settings.json` / `keybindings.json` like the user files; VS Code titles them "Default Settings" / "Default Keybindings".
+None left from the earlier list (🆕⁴): the `task ` / `debug ` prefixes were already done in §7 (🆕²); the Debug Console has find and console switching; Copy as Expression has no key in VS Code either (`variablesView.ts` registers `debug.copyEvaluatePath` without a keybinding), so nothing should take ⌥⌘C from Copy Path of Active File; the default JSON tabs carry VS Code's names. Out of scope on purpose: Settings Sync and the extension marketplace.

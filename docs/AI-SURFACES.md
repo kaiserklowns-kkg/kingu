@@ -117,6 +117,12 @@ External
 | Status | events | hooks/title/liveness | events |
 | Owner | `chats` | `cliSessions` | `agents` (read-only) |
 
+Side chat ข้าม harness (2026-11-21, ตาม nested sessions ของ VS Code 1.145 "Mix and match agent harnesses in one session"): drawer ของ side chat มีตัวเลือก agent
+- agent เดียวกับ chat หลักที่ fork ได้ (`features.rewind`): fork แบบเดิม side chat รู้บทสนทนาทั้งหมด
+- agent อื่น (หรือ runtime ที่ fork ไม่ได้): เปิด chat ใหม่ด้วย runtime นั้น (`chats.create({ sideOf })`) ใช้ model เริ่มต้นของ runtime นั้นและ permission แบบ Manual ของตัวเอง ได้แค่ข้อความที่ quote ไว้เป็นบริบท เพราะ agent อื่น resume session ของ chat หลักไม่ได้
+- header บอกชื่อ harness เมื่อต่างจาก chat หลัก (VS Code: แท็บของ chat ที่ใช้ harness ต่างจาก session จะบอกชื่อ harness) ส่วน "Keep as Chat" จะย้ายไปอยู่ในประวัติพร้อม runtime ของมัน
+- ต่างจาก VS Code: Kingu ยังไม่มีแท็บ nested session ถาวรใน session เดียว side chat ยังเป็น drawer ที่ถูกทิ้งเมื่อปิด เว้นแต่จะกด Keep
+
 ## 7. Policy และสิทธิ์
 
 ใช้ร่วมกัน:
@@ -129,6 +135,16 @@ External
 ต่างกันโดยตั้งใจ:
 - CLI ใช้ flag ของแต่ละโปรแกรม (`yolo`, `--dangerously-skip-permissions`)
 - chat ใช้ SDK permission mode และ permission prompt
+
+ระดับ permission ของ chat (ตาม `permissionPickerActionItem.ts` ของ VS Code 1.147): Manual (`default`), Edit automatically (`acceptEdits`), **Assisted permissions** (`assisted`, 2026-11-21) และ Allow all (`bypassPermissions`) สองระดับหลังเป็นระดับ elevated: ต้องยืนยันก่อน 1 ครั้งต่อ app session และไม่บันทึกลง `chats.json` (`chats.svelte.ts` `allowAll` / `assisted`)
+
+Assisted permissions (`apps/agent-host/src/assisted.ts`): ตัวตรวจของ VS Code อยู่ใน Copilot runtime ที่ปิด source จึงออกแบบเอง
+1. คำสั่ง shell ที่ threat pattern ของ Kingu (`guards/patterns.ts`) จับได้ ไม่ว่า confidence เท่าไร ต้องถามคนเสมอ และไม่ส่งให้ตัวตรวจ
+2. ที่เหลือให้ Claude รุ่นเล็ก (`haiku`) ตัดสินผ่าน SDK โดยไม่มี tool, ไม่อ่าน settings และไม่บันทึก session ตอบ `approve` หรือ `requireApproval` พร้อมเหตุผล
+3. หมดเวลา (20 วินาที), error หรือคำตอบที่ไม่ใช่ `approve` ชัดเจน ให้ถามคน ตัวตรวจไม่เคย deny แทนคน
+- ทำงานเฉพาะ Claude runtime runtime อื่นถามคนแบบ `default` และ picker ปิดตัวเลือกนี้ไว้
+- ผ่าน event `assisted_review`: เมื่ออนุมัติ tool row จะแสดงเหตุผล เมื่อไม่อนุมัติ permission card จะแสดงเหตุผล (ถ้า safety ask มีเหตุผลอยู่แล้ว ใช้ของ safety ask)
+- ยังไม่ได้ทดสอบกับโมเดลจริง ทดสอบแค่ด้วย query ปลอม
 
 ## 8. Catalog และ LaunchSpec
 

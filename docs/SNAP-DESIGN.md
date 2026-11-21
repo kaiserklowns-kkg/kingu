@@ -253,16 +253,18 @@ snap.toml ──► Rust: snap.rs ──────────────► 
 - [x] `${setting:…}` ใน command/env ของ MCP
 - [x] โหลด Snap ใหม่อัตโนมัติเมื่อ `snap.toml` เปลี่ยน
 - [x] Skills (`SKILL.md`) ให้ agent ทั้งแบบ timeline และ `claude` CLI
-- [ ] MCP และ skill ให้ `codex` และ CLI อื่น (ยังไม่ได้ตรวจ flag จริงเพราะเครื่องพัฒนาไม่มี `codex`)
+- [x] MCP ให้ `codex` และ CLI อื่น; skill ให้ Claude, OpenCode และ Copilot แต่**ยังไม่ให้ skill กับ codex, gemini, amp และ cursor-agent** เพราะ CLI เหล่านั้นอ่าน skill จากโฟลเดอร์ config ของผู้ใช้เท่านั้น (เหตุผลราย CLI ใน `apps/desktop/src/lib/ade/agentProfiles.ts` หัวข้อ "MCP and skill formats of the other CLIs")
 - ข้อจำกัดที่รู้: task ที่ trust แล้วอาจเรียก script ใน repo ที่เปลี่ยนได้โดย `snap.toml` ไม่เปลี่ยน (hash ครอบคลุม manifest และ skill เท่านั้น)
-- Language (LSP + grammar), ธีม และย้าย rust-analyzer กับธีมที่ฝังอยู่ไปเป็น built-in snap
-- `.kingu/snaps.lock` และคลัง Snap ของทีมบน team server
-- บังคับสิทธิ์ที่ประกาศ และฉีด secret จาก Keychain
-- เรียก tool ของ MCP จาก IDE
+- [x] Language (LSP + grammar), ธีม และ built-in snap (`src/lib/snaps/builtinSnaps.json`, `contributions.ts`)
+- [x] `.kingu/snaps.lock` และคลัง Snap ของทีมบน team server (`snapLock`, `GET/PUT /v1/snaps`)
+- [x] บังคับสิทธิ์ที่ประกาศ และฉีด secret จาก Keychain (`snapModel.ts`, `src-tauri/src/snap_secrets.rs`)
+- [x] เรียก tool ของ MCP จาก IDE (`src/lib/agent/mcpChat.svelte.ts` ผ่าน `mcp_query`)
 
 ### ระยะที่ 3
 
-- Views: หน้าจอของ Snap ใน iframe ที่ถูกกั้น
+- [x] Views: หน้าจอของ Snap ใน iframe ที่ถูกกั้น (`SnapViewFrame.svelte`, `src-tauri/src/snap_view.rs`, `viewBridge.ts`)
+
+ตรวจสถานะเทียบกับโค้ดล่าสุดเมื่อ 2026-11-21 (APP-AUDIT ระบุว่าส่วนนี้ล้าสมัย)
 
 ---
 
