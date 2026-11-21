@@ -123,6 +123,11 @@ Side chat ข้าม harness (2026-11-21, ตาม nested sessions ของ 
 - header บอกชื่อ harness เมื่อต่างจาก chat หลัก (VS Code: แท็บของ chat ที่ใช้ harness ต่างจาก session จะบอกชื่อ harness) ส่วน "Keep as Chat" จะย้ายไปอยู่ในประวัติพร้อม runtime ของมัน
 - ต่างจาก VS Code: Kingu ยังไม่มีแท็บ nested session ถาวรใน session เดียว side chat ยังเป็น drawer ที่ถูกทิ้งเมื่อปิด เว้นแต่จะกด Keep
 
+Draft ต่อ chat (2026-11-21, ตาม saved drafts ของ VS Code 1.147): ข้อความที่พิมพ์ค้างไว้อยู่กับ chat ของมัน (และ new chat ของแต่ละโฟลเดอร์) ไม่ติดไป chat อื่นเมื่อสลับ และยังอยู่หลังรีสตาร์ต
+- เก็บใน localStorage ของเครื่องนี้เท่านั้น (`chatDrafts.ts`) ลบเมื่อส่งหรือลบข้อความจนว่าง เก็บไม่เกิน 30 วันและไม่เกิน 50 chat ล่าสุด
+- ข้อความตอนแก้ข้อความเก่า (edit / queued edit) ไม่นับเป็น draft
+- ต่างจาก VS Code: เก็บแค่ข้อความ ไม่เก็บไฟล์แนบหรือ model ที่เลือกไว้ใน draft
+
 ## 7. Policy และสิทธิ์
 
 ใช้ร่วมกัน:

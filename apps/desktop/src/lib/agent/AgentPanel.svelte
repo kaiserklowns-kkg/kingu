@@ -17,7 +17,7 @@
 	// Add Context (⌥⌘P, the composer's @ button, or `#` / `@` inline): files, folders, the selection,
 	// problems, git changes, terminal output, a clipboard image, a past chat, instructions
 	// (chatContextSources.svelte.ts). Export / Import Chat: a chat as a JSON file.
-	import { onMount, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { addAttachments, type Attachment } from './attachments.ts';
@@ -99,6 +99,7 @@
 	import { chatTips, registerTipCommands, tipSignals } from './chatTips.svelte.ts';
 	import { generateRequest, hasAgentInstructions, orderedTips, showTips, type TipAction, type TipContext } from './chatTips.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { loadDraft, saveDraft } from './chatDrafts.ts';
 	import './chatView.css';
 
 	let {
@@ -398,6 +399,36 @@
 		if (!selectedId) return;
 		const id = selectedId;
 		untrack(() => void chats.open(id));
+	});
+
+	// VS Code's saved drafts: each chat (and the new chat of each folder) keeps its unsent text, across
+	// switching chats and restarts. `draftKey` changes together with `input`, so a save never lands on the wrong chat.
+	const keyOf = (id: string | null, fresh: boolean) => (id ? `chat:${id}` : fresh ? `new:${workspace.root ?? ''}` : null);
+	let draftKey: string | null = null;
+	$effect(() => {
+		const next = keyOf(selectedId, composingNew);
+		untrack(() => {
+			if (next === draftKey) return;
+			// An edit of an earlier message is not a draft.
+			const switching = draftKey !== null;
+			if (draftKey && !editing && !editingQueued) saveDraft(draftKey, input);
+			draftKey = next;
+			const draft = next ? loadDraft(next) : '';
+			// The first chat shown keeps text something already put in the input (a prompt handed to the panel).
+			if (next && (switching || draft)) input = draft;
+		});
+	});
+	let draftTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const key = draftKey;
+		const text = input;
+		if (!key || editing || editingQueued) return;
+		clearTimeout(draftTimer);
+		draftTimer = setTimeout(() => saveDraft(key, text), 400);
+		return () => clearTimeout(draftTimer);
+	});
+	onDestroy(() => {
+		if (draftKey && !editing && !editingQueued) saveDraft(draftKey, input);
 	});
 
 	function resetInput() {
