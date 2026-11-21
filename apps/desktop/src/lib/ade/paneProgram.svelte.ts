@@ -7,7 +7,7 @@ import { tabPanes } from './adeTabs';
 import { paneAgents } from './paneAgents.svelte';
 import { cliSessions } from './cliSessions.svelte';
 import { isQuestion, type TaskView } from './model';
-import { agentRingProgress, programIndicator, reduceProgram, type ProgramEvent, type ProgramFacet, type ProgramIndicator } from './programStatus';
+import { agentRingProgress, programIndicator, reduceChildren, reduceProgram, withChildren, type ProgramChild, type ProgramEvent, type ProgramFacet, type ProgramIndicator } from './programStatus';
 
 /** Staleness is 30 minutes, so a coarse clock is enough. */
 const TICK_MS = 60_000;
@@ -15,6 +15,8 @@ const TICK_MS = 60_000;
 class PaneProgram {
 	/** Per PTY key of an ADE terminal pane. */
 	facets = $state<Record<string, ProgramFacet>>({});
+	/** Live sub-tasks per PTY key (OSC 7501 ids beneath the root). */
+	children = $state<Record<string, readonly ProgramChild[]>>({});
 	now = $state(Date.now());
 	#timer: ReturnType<typeof setInterval> | undefined;
 
@@ -24,6 +26,12 @@ class PaneProgram {
 
 	/** A pane's terminal read a report, started a new prompt, was reset, or the user typed in it. */
 	apply(key: string, event: ProgramEvent) {
+		const kids = this.children[key] ?? [];
+		const nextKids = reduceChildren(kids, event);
+		if (nextKids !== kids) {
+			if (nextKids.length) this.children[key] = nextKids;
+			else delete this.children[key];
+		}
 		const prev = this.facets[key];
 		const next = reduceProgram(prev, event, Date.now());
 		if (next === prev) return;
@@ -46,9 +54,11 @@ class PaneProgram {
 		for (const pane of tabPanes(tab)) {
 			const key = adeLayout.ptyKey(slug, pane);
 			const f = this.facets[key];
-			const i = programIndicator(f, now, this.#atPrompt(key));
-			if (!f || !i) continue;
-			if (!best || RANK[i.status] < RANK[best.i.status] || (RANK[i.status] === RANK[best.i.status] && f.observedAt > best.at)) best = { i, at: f.observedAt };
+			const atPrompt = this.#atPrompt(key);
+			const i = withChildren(programIndicator(f, now, atPrompt), f, atPrompt ? [] : (this.children[key] ?? []), now);
+			if (!i) continue;
+			const at = f?.observedAt ?? 0;
+			if (!best || RANK[i.status] < RANK[best.i.status] || (RANK[i.status] === RANK[best.i.status] && at > best.at)) best = { i, at };
 		}
 		return best?.i;
 	}
@@ -74,6 +84,7 @@ class PaneProgram {
 		// Panes that were closed take their record along.
 		const open = new Set([...adeLayout.ptyKeys(), ...Object.keys(cliSessions.sessions).map((slug) => cliSessions.ptyKey(slug, cliSessions.sessions[slug].startedAt))]);
 		for (const key of Object.keys(this.facets)) if (!open.has(key)) delete this.facets[key];
+		for (const key of Object.keys(this.children)) if (!open.has(key)) delete this.children[key];
 	}
 
 	dispose() {

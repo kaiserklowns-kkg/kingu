@@ -213,6 +213,7 @@ export const ade = {
 
 	'ade.program.working': 'กำลังทำงาน',
 	'ade.program.blocked': 'รอคุณ',
+	'ade.program.subtasks': 'งานย่อยกำลังทำ {count} งาน:',
 	'ade.program.permission': 'รอคุณอนุมัติ',
 	'ade.program.question': 'รอคำตอบจากคุณ',
 	'ade.program.auth': 'ต้องเข้าสู่ระบบ',

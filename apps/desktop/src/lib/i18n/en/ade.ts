@@ -225,6 +225,7 @@ export const ade = {
 	// programStatus.ts: what a program in a terminal reports about itself (OSC 7501), on its tab
 	'ade.program.working': 'Working',
 	'ade.program.blocked': 'Needs you',
+	'ade.program.subtasks': '{count|# sub-task|# sub-tasks} running:',
 	'ade.program.permission': 'Needs approval',
 	'ade.program.question': 'Needs an answer',
 	'ade.program.auth': 'Sign-in required',

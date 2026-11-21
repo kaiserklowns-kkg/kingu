@@ -8,7 +8,10 @@ import {
 	PROGRAM_STALE_AFTER_MS,
 	programIndicator,
 	programLabel,
+	reduceChildren,
 	reduceProgram,
+	withChildren,
+	type ProgramChild,
 	ringArc,
 	withPercent,
 	type ProgramEvent,
@@ -189,5 +192,35 @@ describe('isPassiveInput', () => {
 		expect(isPassiveInput('\r')).toBe(false);
 		expect(isPassiveInput('\x1b[A')).toBe(false);
 		expect(isPassiveInput('')).toBe(false);
+	});
+});
+
+describe('sub-tasks (ids beneath the root)', () => {
+	const ev = (body: string): ProgramEvent => ({ type: 'report', report: report(body)! });
+	const kids = (events: ProgramEvent[]) => events.reduce<readonly ProgramChild[]>((k, e) => reduceChildren(k, e), []);
+
+	test('a child report replaces that child; done ends it; clearing an id clears beneath it', () => {
+		const k = kids([ev(`id=a:state=working:title=${b64('Explore repo')}:app=claude`), ev('id=a/b:state=blocked:kind=permission'), ev('id=c:state=working')]);
+		expect(k.map((c) => c.id)).toEqual(['a', 'a/b', 'c']);
+		expect(k[0]).toEqual({ id: 'a', state: 'working', label: 'Explore repo', app: 'claude' });
+		expect(kids([ev('id=c:state=working'), ev('id=c:state=done')])).toEqual([]);
+		expect(reduceChildren(k, ev('id=a:state=clear')).map((c) => c.id)).toEqual(['c']);
+		expect(reduceChildren(k, ev('state=clear'))).toEqual([]);
+		expect(reduceChildren(k, { type: 'end' })).toEqual([]);
+		expect(reduceChildren(k, { type: 'input' })).toBe(k);
+		// The root's own reports leave the children alone.
+		expect(reduceChildren(k, ev('state=done'))).toBe(k);
+	});
+
+	test('live children keep a finished program working (Orca held turn), not OpenCode', () => {
+		const done: ProgramFacet = { state: 'done', observedAt: 1000 };
+		const live: ProgramChild[] = [{ id: 'a', state: 'working', label: 'Explore' }, { id: 'b', state: 'idle' }];
+		const i = withChildren(programIndicator(done, 1000), done, live, 1000);
+		expect(i).toEqual({ status: 'working', children: [live[0]] });
+		expect(programLabel(i!)).toContain('Explore');
+		expect(withChildren(null, undefined, [{ id: 'x', state: 'blocked', kind: 'question' }], 1000)?.status).toBe('permission');
+		expect(withChildren(programIndicator(done, 1000), done, [{ id: 'b', state: 'idle' }], 1000)?.status).toBe('done');
+		const oc: ProgramFacet = { ...done, app: 'opencode' };
+		expect(withChildren(programIndicator(oc, 1000), oc, live, 1000)?.status).toBe('done');
 	});
 });

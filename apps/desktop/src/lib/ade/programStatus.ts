@@ -170,6 +170,8 @@ export type ProgramFacet = {
 	/** 0-100, only on `working`/`blocked`. Absent means indeterminate. */
 	progress?: number;
 	message?: string;
+	/** The program's `app` name, when it gave one. */
+	app?: string;
 	/** When the latest report was read (Unix ms). */
 	observedAt: number;
 };
@@ -190,7 +192,7 @@ const REFRESH_MS = 5000;
 /**
  * The pane's record after `event`. Each report replaces the record whole; a root `clear` or a reset
  * removes it; a new prompt removes all but a finished result; typing dismisses that result.
- * Reports for ids beneath the root (a program's sub-tasks) are not shown on a tab and change nothing.
+ * Reports for ids beneath the root (a program's sub-tasks) leave it alone (`reduceChildren`).
  */
 export function reduceProgram(prev: ProgramFacet | undefined, event: ProgramEvent, now: number): ProgramFacet | undefined {
 	switch (event.type) {
@@ -209,10 +211,60 @@ export function reduceProgram(prev: ProgramFacet | undefined, event: ProgramEven
 			if (r.kind !== undefined) next.kind = r.kind;
 			if (r.progress !== undefined) next.progress = r.progress;
 			if (message !== undefined) next.message = message;
-			const same = prev && prev.state === next.state && prev.kind === next.kind && prev.progress === next.progress && prev.message === next.message;
+			if (r.app !== undefined) next.app = r.app;
+			const same = prev && prev.state === next.state && prev.kind === next.kind && prev.progress === next.progress && prev.message === next.message && prev.app === next.app;
 			return same && now - prev.observedAt < REFRESH_MS ? prev : next;
 		}
 	}
+}
+
+/** A program's live sub-task (a report for an id beneath the root, Orca's subagent row). */
+export type ProgramChild = { id: string; state: 'working' | 'blocked' | 'idle'; kind?: ProgramKind; label?: string; app?: string };
+
+/** Orca's record cap is 256 for every id; a tab only needs the live children, newest kept. */
+const MAX_CHILDREN = 64;
+
+/**
+ * A pane's live sub-tasks after `event` (Orca records.ts + `subagentState`): a child report
+ * replaces that child (done / error end it: a finished child is not a live row); clearing an id
+ * clears it and everything beneath it; a root `clear`, a reset or a new prompt ends them all.
+ */
+export function reduceChildren(prev: readonly ProgramChild[], event: ProgramEvent): readonly ProgramChild[] {
+	switch (event.type) {
+		case 'reset':
+		case 'end':
+			return prev.length ? [] : prev;
+		case 'input':
+			return prev;
+		case 'report': {
+			const r = event.report;
+			if (r.id === null) return r.state === 'clear' && prev.length ? [] : prev;
+			const id = r.id;
+			const beneath = (c: ProgramChild) => c.id === id || c.id.startsWith(`${id}/`);
+			if (r.state === 'clear') return prev.some(beneath) ? prev.filter((c) => !beneath(c)) : prev;
+			const rest = prev.filter((c) => c.id !== id);
+			if (r.state === 'done' || r.state === 'error') return rest.length === prev.length ? prev : rest;
+			const label = displayText(r.title) ?? displayText(r.msg);
+			const child: ProgramChild = { id, state: r.state };
+			if (r.kind !== undefined) child.kind = r.kind;
+			if (label !== undefined) child.label = label;
+			if (r.app !== undefined) child.app = r.app;
+			return [...rest, child].slice(-MAX_CHILDREN);
+		}
+	}
+}
+
+/**
+ * Orca's held turn (`foldMainAgentWithRowChildWork`): a program whose own record is done, idle or
+ * gone while sub-tasks still work or wait is still working (async subagents outlive the turn).
+ * OpenCode keys its records by peer sessions, not children, so its sub-records are ignored.
+ */
+export function withChildren(i: ProgramIndicator | null, f: ProgramFacet | undefined, children: readonly ProgramChild[], now: number): ProgramIndicator | null {
+	if (f?.app === 'opencode') return i;
+	const live = children.filter((c) => c.state !== 'idle');
+	if (!live.length || (i && i.status !== 'done')) return i && live.length ? { ...i, children: live } : i;
+	if (f && now - f.observedAt > PROGRAM_STALE_AFTER_MS) return i;
+	return { status: live.some((c) => c.state === 'blocked') ? 'permission' : 'working', children: live };
 }
 
 /** Orca's AGENT_STATUS_STALE_AFTER_MS: a live report nothing refreshed for this long is not trusted. */
@@ -229,6 +281,8 @@ export type ProgramIndicator = {
 	progress?: number;
 	kind?: ProgramKind;
 	message?: string;
+	/** Sub-tasks still working or waiting (Orca's subagent rows). */
+	children?: readonly ProgramChild[];
 };
 
 /**
@@ -278,5 +332,8 @@ export function programLabel(i: ProgramIndicator): string {
 	const base =
 		i.status === 'working' ? t('ade.program.working') : i.status === 'done' ? t('ade.program.done') : i.status === 'failed' ? t('ade.program.failed') : t(i.kind ? BLOCKED_KEY[i.kind] : 'ade.program.blocked');
 	const label = withPercent(base, i.progress);
-	return i.message ? `${label}: ${i.message}` : label;
+	const head = i.message ? `${label}: ${i.message}` : label;
+	if (!i.children?.length) return head;
+	const lines = i.children.slice(-5).map((c) => `• ${c.label ?? c.app ?? c.id}${c.state === 'blocked' ? ` (${t(c.kind ? BLOCKED_KEY[c.kind] : 'ade.program.blocked')})` : ''}`);
+	return [head, t('ade.program.subtasks', { count: i.children.length }), ...lines].join('\n');
 }
