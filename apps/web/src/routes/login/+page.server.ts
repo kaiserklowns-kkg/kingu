@@ -1,20 +1,26 @@
 import { fail, redirect, type Actions } from '@sveltejs/kit';
 import { api, ApiError, isToken, setToken, type Me } from '#lib/server/api.ts';
+import { ssoEnabled } from '#lib/server/oidc.ts';
+import { SSO_ERRORS } from '#lib/oidc.ts';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = ({ locals }) => {
+export const load: PageServerLoad = ({ locals, url }) => {
 	if (locals.token) redirect(303, '/');
+	const code = url.searchParams.get('error') ?? '';
+	return { sso: ssoEnabled(), ssoError: SSO_ERRORS[code] ?? (code ? SSO_ERRORS.unavailable : null) };
 };
 
 export const actions: Actions = {
-	default: async ({ request, cookies, url }) => {
+	default: async ({ request, cookies, url, getClientAddress }) => {
 		const form = await request.formData();
 		const token = String(form.get('token') ?? '').trim();
 		if (!isToken(token)) {
 			return fail(400, { error: 'Token ต้องขึ้นต้นด้วย kgu_ และยาว 47 ตัวอักษร' });
 		}
 		try {
-			await api<Me>(token, '/v1/me');
+			// The team server limits failed sign-ins per client IP; without this every
+			// dashboard user would share this server's address.
+			await api<Me>(token, '/v1/me', { headers: { 'X-Forwarded-For': getClientAddress() } });
 		} catch (e) {
 			if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
 				return fail(401, { error: 'Token ไม่ถูกต้อง หมดอายุ หรือถูกเพิกถอน' });

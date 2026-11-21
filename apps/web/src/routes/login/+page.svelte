@@ -2,7 +2,7 @@
 	import { enhance } from '$app/forms';
 	import type { PageProps } from './$types';
 
-	let { form }: PageProps = $props();
+	let { data, form }: PageProps = $props();
 	let busy = $state(false);
 </script>
 
@@ -11,6 +11,17 @@
 <main class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-10">
 	<h1 class="mb-1 text-xl font-semibold text-(--vscode-tab-activeForeground)">Kingu ทีม</h1>
 	<p class="mb-6 text-(--vscode-descriptionForeground)">ดูงานของทีมแบบเรียลไทม์ (เฉพาะ metadata ไม่มีโค้ด)</p>
+
+	{#if data.ssoError}<p role="alert" class="mb-3 text-(--vscode-errorForeground)">{data.ssoError}</p>{/if}
+	{#if data.sso}
+		<a
+			href="/login/sso"
+			data-sveltekit-reload
+			class="mb-3 flex h-9 items-center justify-center rounded-sm bg-(--vscode-button-background) px-4 font-medium text-(--vscode-button-foreground) no-underline hover:brightness-110"
+			>เข้าสู่ระบบด้วย SSO</a
+		>
+		<p class="mb-3 text-center text-xs text-(--vscode-descriptionForeground)">หรือใช้ personal access token</p>
+	{/if}
 
 	<form
 		method="POST"

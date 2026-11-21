@@ -26,7 +26,7 @@ export type Task = {
 /** One SSE message body from GET /v1/events. */
 export type TeamEvent = {
 	id: number;
-	kind: 'task.created' | 'task.updated' | 'run.created' | 'run.updated';
+	kind: 'task.created' | 'task.updated' | 'task.deleted' | 'run.created' | 'run.updated';
 	project_id: string | null;
 	task_id: string | null;
 	at: string;
@@ -119,6 +119,12 @@ export function taskFromEvent(data: Record<string, unknown>): Task | null {
  */
 export function applyEvent(board: Board, ev: TeamEvent): Board {
 	if (!Number.isFinite(ev.id) || ev.id <= board.lastEventId) return board;
+	if (ev.kind === 'task.deleted') {
+		const id = typeof ev.data?.id === 'string' ? ev.data.id : ev.task_id;
+		if (!id || !board.tasks[id]) return { ...board, lastEventId: ev.id };
+		const { [id]: _gone, ...tasks } = board.tasks;
+		return { tasks, lastEventId: ev.id };
+	}
 	if (ev.kind !== 'task.created' && ev.kind !== 'task.updated') return { ...board, lastEventId: ev.id };
 	const next = taskFromEvent(ev.data);
 	if (!next) return { ...board, lastEventId: ev.id };

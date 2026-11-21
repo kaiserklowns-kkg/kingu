@@ -30,6 +30,16 @@ const ev = (id: number, kind: TeamEvent['kind'], data: Partial<Task> | Record<st
 });
 
 describe('applyEvent', () => {
+	test('task.deleted removes the card, once', () => {
+		let b = applyEvent(initBoard([]), ev(1, 'task.created', task()));
+		b = applyEvent(b, ev(2, 'task.deleted', { id: task().id, title: 'x' }));
+		expect(Object.keys(b.tasks)).toEqual([]);
+		expect(b.lastEventId).toBe(2);
+		const same = applyEvent(b, ev(2, 'task.deleted', { id: task().id }));
+		expect(same).toBe(b);
+		expect(applyEvent(b, ev(3, 'task.deleted', { id: 'unknown' })).tasks).toBe(b.tasks);
+	});
+
 	test('adds a created task and moves it between columns on update', () => {
 		let b = initBoard([]);
 		b = applyEvent(b, ev(1, 'task.created', task()));

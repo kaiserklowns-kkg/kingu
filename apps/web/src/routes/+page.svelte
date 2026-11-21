@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import { applyEvent, columns, COLUMNS, describeChange, initBoard, mergeSnapshot, STATUS_LABELS, timeAgo, type Task, type TeamEvent } from '#lib/board.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
 	let board = $state(initBoard(untrack(() => data.tasks)));
-	let project = $state('');
+	// /projects links here with ?project=<id> to open the board filtered.
+	let project = $state(untrack(() => page.url.searchParams.get('project') ?? ''));
 	let live = $state<'connecting' | 'live' | 'retrying'>('connecting');
 	let announcement = $state('');
 	let now = $state(Date.now());
@@ -37,10 +39,12 @@
 			if (next === before) return;
 			const id = typeof ev.data?.id === 'string' ? ev.data.id : '';
 			if (next.tasks !== before.tasks && next.tasks[id]) announcement = describeChange(before.tasks[id], next.tasks[id]);
+			else if (ev.kind === 'task.deleted' && before.tasks[id]) announcement = `ลบงาน: ${before.tasks[id].title}`;
 			board = next;
 		};
 		es.addEventListener('task.created', onTask);
 		es.addEventListener('task.updated', onTask);
+		es.addEventListener('task.deleted', onTask);
 		es.addEventListener('reset', () => void invalidateAll());
 		es.onopen = () => {
 			// Covers anything that changed between the page load and the stream starting.
@@ -96,7 +100,7 @@
 						<li>
 							<article class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background) p-3" aria-labelledby={`task-${t.id}`}>
 								<div class="flex items-start gap-2">
-									<h3 id={`task-${t.id}`} class="min-w-0 flex-1 font-medium break-words text-(--vscode-tab-activeForeground)">{t.title}</h3>
+									<h3 id={`task-${t.id}`} class="min-w-0 flex-1 font-medium break-words"><a href={`/tasks/${t.id}`} class="text-(--vscode-tab-activeForeground) no-underline hover:underline">{t.title}</a></h3>
 									<span
 										class={[
 											'shrink-0 rounded-sm px-1.5 text-xs',
