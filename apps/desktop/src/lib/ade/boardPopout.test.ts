@@ -1,5 +1,5 @@
-import { expect, test } from 'bun:test';
-import { cssVariables, popoutLanes, type PopoutEntry } from './boardPopout.ts';
+import { describe, expect, test } from 'bun:test';
+import { cssVariables, popoutLanes, PREVIEW_SCROLLBACK_ROWS, previewLines, stripControls, type PopoutEntry } from './boardPopout.ts';
 import { effectiveStatus, newTask, type TaskMeta } from './model.ts';
 
 const COLS = [
@@ -36,4 +36,30 @@ test('a stacked task nests under its parent only within its own project', () => 
 test('only custom properties are copied from the theme', () => {
 	const style = Object.assign(['--vscode-foreground', 'color', '--kg-x'], { getPropertyValue: (n: string) => `v${n}` });
 	expect(cssVariables(style)).toEqual({ '--vscode-foreground': 'v--vscode-foreground', '--kg-x': 'v--kg-x' });
+});
+
+describe('previewLines', () => {
+	test('keeps the screen and 24 rows of scrollback, ending at the last row with text', () => {
+		const rows = [...Array.from({ length: 40 }, (_, i) => `row ${i}`), '', '   ', ''];
+		const out = previewLines(rows, 10);
+		expect(out).toHaveLength(10 + PREVIEW_SCROLLBACK_ROWS);
+		expect(out.at(-1)).toBe('row 39');
+		expect(out[0]).toBe('row 6');
+	});
+
+	test('keeps blank rows between text, trims row ends and clamps the screen size', () => {
+		expect(previewLines(['a  ', '', 'b'], 24)).toEqual(['a', '', 'b']);
+		expect(previewLines([], 24)).toEqual([]);
+		expect(previewLines(['', ' '], 24)).toEqual([]);
+		const many = Array.from({ length: 500 }, (_, i) => String(i));
+		expect(previewLines(many, 9999)).toHaveLength(200 + PREVIEW_SCROLLBACK_ROWS);
+		expect(previewLines(many, 0)).toHaveLength(2 + PREVIEW_SCROLLBACK_ROWS);
+		expect(previewLines(['x'.repeat(900)], 24)[0]).toHaveLength(500);
+	});
+
+	test('drops escape sequences and control characters but keeps tabs', () => {
+		expect(stripControls('\u001b[31mred\u001b[0m\tok\u0007\r')).toBe('red\tok');
+		expect(stripControls('\u001b]0;title\u0007after')).toBe('after');
+		expect(previewLines(['\u001b[1mbold\u001b[22m'], 24)).toEqual(['bold']);
+	});
 });

@@ -685,6 +685,13 @@
 				}
 				return out;
 			},
+			tail: (scrollback) => {
+				const buf = t.buffer.active;
+				const rows: string[] = [];
+				const end = Math.min(buf.length, buf.baseY + t.rows);
+				for (let i = Math.max(0, buf.baseY - scrollback); i < end; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+				return { rows, screenRows: t.rows };
+			},
 			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(tr('legacySettings.terminal.writeFailed', { error: String(e) }))),
 			integration: si,
 			shell: shellName,

@@ -31,6 +31,14 @@ export type PopoutCard = {
 
 export type PopoutLane = { id: string; label: string; hint: string; cards: PopoutCard[] };
 
+/**
+ * The terminal preview of the card the pop-out opened (Orca's AgentTerminalDialog, which shows
+ * the agent's terminal: its screen and `PREVIEW_SCROLLBACK_ROWS` rows above it). `lines` is null
+ * when that card has no agent terminal this window shows (Orca's "No preview available").
+ * Terminal output can hold secrets: it is only kept in memory and sent between Kingu's windows.
+ */
+export type PopoutPreview = { key: string; lines: string[] | null };
+
 export type PopoutSnapshot = {
 	lanes: PopoutLane[];
 	/** The feeding window's open folder, then the other added projects (the Project filter). */
@@ -42,7 +50,34 @@ export type PopoutSnapshot = {
 	locale: Locale;
 	/** The theme's CSS variables on <html>, and whether it is dark. */
 	theme: { vars: Record<string, string>; dark: boolean };
+	/** Only while the pop-out shows a card's terminal preview. */
+	preview?: PopoutPreview | null;
 };
+
+/** Orca's AgentTerminalPreview: PREVIEW_SCROLLBACK_ROWS, and the PTY grid it clamps to (2–500 × 2–200). */
+export const PREVIEW_SCROLLBACK_ROWS = 24;
+const PREVIEW_MAX_SCREEN_ROWS = 200;
+const PREVIEW_MAX_COLS = 500;
+
+/**
+ * The rows a preview sends: the terminal's last rows (its screen and the scrollback above it, as
+ * xterm laid them out, so already without escape sequences), with the empty rows under the
+ * cursor dropped (Orca bottom-aligns the frame at its cursor end), at most `screenRows` (2–200)
+ * plus PREVIEW_SCROLLBACK_ROWS rows of at most 500 characters, without control characters.
+ */
+export function previewLines(rows: readonly string[], screenRows: number): string[] {
+	let end = rows.length;
+	while (end > 0 && !rows[end - 1].trim()) end--;
+	const keep = Math.min(Math.max(Math.floor(screenRows) || 0, 2), PREVIEW_MAX_SCREEN_ROWS) + PREVIEW_SCROLLBACK_ROWS;
+	return rows.slice(Math.max(0, end - keep), end).map((row) => stripControls(row).slice(0, PREVIEW_MAX_COLS).trimEnd());
+}
+
+/** Escape sequences and control characters (but tabs) a row may still carry. */
+export function stripControls(text: string): string {
+	return text
+		.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[@-Z\\-_])/g, '')
+		.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g, '');
+}
 
 export type PopoutEntry = { root: string; view: TaskView; branch?: string | null };
 

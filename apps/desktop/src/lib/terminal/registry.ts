@@ -18,6 +18,8 @@ export type TerminalHandle = {
 	print?(text: string): void;
 	/** The buffer's lines, oldest first (the chat's Terminal context). */
 	lines?(): string[];
+	/** The screen's rows and `scrollback` rows above it, as laid out (the board pop-out's preview), and the screen height. */
+	tail?(scrollback: number): { rows: string[]; screenRows: number };
 	/** Shell integration: its commands, cwd, navigation (shellIntegrationAddon.ts). */
 	integration?: ShellIntegration;
 	/** The shell it runs (its history is kept per shell type). */

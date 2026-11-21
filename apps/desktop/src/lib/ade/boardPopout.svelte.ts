@@ -2,8 +2,12 @@
 // snapshots, ipc/dashboard-popout.ts). Pop Out (Board.svelte) asks Rust (windows.rs) for the one
 // pop-out window and makes this window the one that feeds it; while it does, every change of the
 // agent board (any project's task, status, unread notice, theme or language) is sent as a
-// snapshot (boardPopout.ts). A card clicked in the pop-out comes back here: this window is
-// already in front (Rust) and opens the task, switching project first when it is another one.
+// snapshot (boardPopout.ts). Open task in the pop-out comes back here: this window is already
+// in front (Rust) and opens the task, switching project first when it is another one.
+// A card clicked in the pop-out opens its terminal preview there (Orca's AgentTerminalDialog):
+// while it is open, the snapshots carry the last rows of that task's agent terminal, read from
+// the xterm this window shows it in (so already without escape sequences), refreshed as it
+// prints. They stay in memory and only travel to the pop-out (never logged).
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -12,8 +16,11 @@ import { locale, t } from '#lib/i18n/index.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { listenWindow, windowLabel } from '#lib/workbench/windowEvents.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
+import { tapOutput, terminalHandle } from '#lib/terminal/registry.ts';
 import { agentInbox } from './agentInbox.svelte.ts';
-import { cssVariables, popoutLanes, type PopoutSnapshot } from './boardPopout';
+import { cssVariables, popoutLanes, PREVIEW_SCROLLBACK_ROWS, previewLines, type PopoutPreview, type PopoutSnapshot } from './boardPopout';
+import { cliSessions } from './cliSessions.svelte';
+import { paneAgents } from './paneAgents.svelte';
 import { COLUMNS } from './model';
 import { projects } from './projects.svelte';
 import { projectName } from './projects';
@@ -21,12 +28,18 @@ import { adeTasks } from './tasks.svelte';
 
 /** Board changes come in bursts (a poll updates every project at once): one send per burst. */
 const PUBLISH_DELAY_MS = 150;
+/** A previewed terminal that keeps printing re-sends its rows at most this often. */
+const PREVIEW_REFRESH_MS = 250;
+
+type PreviewTarget = { root: string; slug: string };
 
 class BoardPopoutFeed {
 	/** The window feeding the open pop-out (Rust's `board-popout:owner`), null while it is closed. */
 	owner = $state<string | null>(null);
 	/** Whether this window feeds it. */
 	mine = $derived(this.owner !== null && this.owner === windowLabel());
+	/** The card whose terminal preview the pop-out shows (Rust relays it with `board-popout:requested`). */
+	previewing = $state<PreviewTarget | null>(null);
 
 	#listening: Promise<void> | null = null;
 	#stop: (() => void) | null = null;
@@ -52,7 +65,9 @@ class BoardPopoutFeed {
 	#listen(): Promise<void> {
 		this.#listening ??= Promise.all([
 			listen<string | null>('board-popout:owner', (e) => this.#setOwner(e.payload)),
-			listenWindow('board-popout:requested', () => {
+			listenWindow<PreviewTarget | null>('board-popout:requested', (e) => {
+				const p = e.payload;
+				if (p?.root !== this.previewing?.root || p?.slug !== this.previewing?.slug) this.previewing = p ? { root: p.root, slug: p.slug } : null;
 				this.#sent = '';
 				this.#publish();
 			}),
@@ -68,6 +83,7 @@ class BoardPopoutFeed {
 			this.#stop();
 			this.#stop = null;
 			this.#build = null;
+			this.previewing = null;
 		}
 	}
 
@@ -78,10 +94,29 @@ class BoardPopoutFeed {
 			let themeTick = $state(0);
 			const observer = new MutationObserver(() => themeTick++);
 			observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'data-theme-type'] });
+			// The previewed terminal printed: its rows are read again, at most every PREVIEW_REFRESH_MS.
+			let previewTick = $state(0);
+			$effect(() => {
+				const p = this.previewing;
+				const key = p && previewKey(p);
+				if (!key) return;
+				let pending: ReturnType<typeof setTimeout> | undefined;
+				const off = tapOutput(key, () => {
+					pending ??= setTimeout(() => {
+						pending = undefined;
+						previewTick++;
+					}, PREVIEW_REFRESH_MS);
+				});
+				return () => {
+					off();
+					clearTimeout(pending);
+				};
+			});
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			$effect(() => {
 				void themeTick;
-				const snapshot = snapshotNow();
+				void previewTick;
+				const snapshot = snapshotNow(this.previewing);
 				this.#build = () => snapshot;
 				clearTimeout(timer);
 				timer = setTimeout(() => this.#publish(), PUBLISH_DELAY_MS);
@@ -103,8 +138,21 @@ class BoardPopoutFeed {
 	}
 }
 
+/** The terminal of task `slug` in this window: its agent CLI, else the first agent running in one of its panes. */
+function previewKey(p: PreviewTarget): string | null {
+	if (!p.slug || p.root !== (workspace.root ?? '')) return null;
+	return cliSessions.key(p.slug) ?? paneAgents.rows(p.slug)[0]?.id ?? null;
+}
+
+/** The previewed card's last terminal rows; null when this window shows no terminal of it. */
+function previewNow(p: PreviewTarget): PopoutPreview {
+	const key = previewKey(p);
+	const tail = key ? terminalHandle(key)?.tail?.(PREVIEW_SCROLLBACK_ROWS) : undefined;
+	return { key: `${p.root}\u0000${p.slug}`, lines: tail ? previewLines(tail.rows, tail.screenRows) : null };
+}
+
 /** The agent board of every project, as the pop-out draws it (reads the reactive stores). */
-function snapshotNow(): PopoutSnapshot {
+function snapshotNow(previewing: PreviewTarget | null): PopoutSnapshot {
 	const here = workspace.root ?? '';
 	const entries = [
 		...adeTasks.views.map((view) => ({ root: here, view, branch: adeTasks.branchOf(view.meta.slug) || null })),
@@ -119,7 +167,8 @@ function snapshotNow(): PopoutSnapshot {
 		width: settings.get<number>('kingu.board.columnWidth'),
 		opacity: Math.round(settings.get<number>('kingu.board.opacity') * 100),
 		locale: locale(),
-		theme: { vars: cssVariables(root.style), dark: root.dataset.themeType === 'dark' }
+		theme: { vars: cssVariables(root.style), dark: root.dataset.themeType === 'dark' },
+		preview: previewing ? previewNow(previewing) : null
 	};
 }
 

@@ -43,6 +43,11 @@ export const adeWorkflow = {
 	'adeWorkflow.popout.title': 'Agent Board',
 	'adeWorkflow.popout.waiting': 'Waiting for the board of the window that opened this one…',
 	'adeWorkflow.popout.openTask': '{title}: opens it in the Kingu window',
+	'adeWorkflow.popout.previewTask': '{title}: shows its agent terminal',
+	'adeWorkflow.popout.preview': 'Terminal preview',
+	'adeWorkflow.popout.previewUnavailable': 'No preview available — open the task to view this agent.',
+	'adeWorkflow.popout.openInWindow': 'Open task',
+	'adeWorkflow.popout.close': 'Close',
 	// AdeSidebar.svelte: Group by
 	'adeWorkflow.groupBy': 'Workflow',
 	// worktreeActions.ts / worktreeMenu.svelte.ts

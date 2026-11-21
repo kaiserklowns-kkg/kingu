@@ -42,6 +42,11 @@ export const adeWorkflow = {
 	'adeWorkflow.popout.title': 'บอร์ด Agent',
 	'adeWorkflow.popout.waiting': 'กำลังรอบอร์ดจากหน้าต่างที่เปิดหน้าต่างนี้…',
 	'adeWorkflow.popout.openTask': '{title}: เปิดงานนี้ในหน้าต่าง Kingu',
+	'adeWorkflow.popout.previewTask': '{title}: แสดงเทอร์มินัลของ agent ในงานนี้',
+	'adeWorkflow.popout.preview': 'ตัวอย่างเทอร์มินัล',
+	'adeWorkflow.popout.previewUnavailable': 'ไม่มีตัวอย่างให้ดู — เปิดงานนี้เพื่อดู agent',
+	'adeWorkflow.popout.openInWindow': 'เปิดงาน',
+	'adeWorkflow.popout.close': 'ปิด',
 	// AdeSidebar.svelte
 	'adeWorkflow.groupBy': 'ขั้นตอน',
 	// worktreeActions.ts / worktreeMenu.svelte.ts

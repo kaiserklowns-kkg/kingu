@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resumeArgv } from './agentsPanel';
+import { ompProfile, resumeArgv } from './agentsPanel';
 
 describe('session history resume commands', () => {
 	test('each CLI resumes its own way', () => {
@@ -22,6 +22,20 @@ describe('session history resume commands', () => {
 		expect(resumeArgv('zcode', 'z1')).toEqual(['zcode', '--resume', 'z1']);
 		expect(resumeArgv('muse', 'm-1')).toEqual(['muse', 'resume', 'm-1']);
 		expect(resumeArgv('pi', 'p-1')).toEqual(['pi', '--session', 'p-1']);
+		expect(resumeArgv('opencode2', 'ses_2')).toEqual(['opencode2', '--standalone', '--session', 'ses_2']);
+		expect(resumeArgv('rovo', 'r-1')).toEqual(['acli', 'rovodev', 'run', '--restore', 'r-1']);
+		expect(resumeArgv('antigravity', 'a-1')).toEqual(['agy', '--conversation', 'a-1']);
+		expect(resumeArgv('omp', 'o-1', '/u/.omp/agent/sessions/b/x.jsonl')).toEqual(['omp', '--resume', 'o-1']);
+		expect(resumeArgv('omp', 'o-1', '/u/.omp/profiles/work/agent/sessions/b/x.jsonl')).toEqual(['omp', '--profile', 'work', '--resume', 'o-1']);
 		expect(resumeArgv('grok', '019e37f4-5135-7b63-a4ab-6d13aa6bf528')).toEqual(['grok', '--resume', '019e37f4-5135-7b63-a4ab-6d13aa6bf528']);
+	});
+});
+
+describe('OMP profile of a transcript', () => {
+	test('reads the store folder and rejects names OMP would', () => {
+		expect(ompProfile('/x/share/omp/profiles/side/sessions/b/t.jsonl')).toBe('side');
+		expect(ompProfile('/u/.omp/profiles/Bad/agent/sessions/t.jsonl')).toBeNull();
+		expect(ompProfile('/u/.omp/profiles/default/agent/sessions/t.jsonl')).toBeNull();
+		expect(ompProfile(null)).toBeNull();
 	});
 });

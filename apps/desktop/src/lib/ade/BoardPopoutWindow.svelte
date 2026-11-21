@@ -2,8 +2,10 @@
 	// The task board's pop-out window (route /board-popout; Orca's DashboardPopoutRoot +
 	// AgentKanbanBoard): the agent columns of every project, mirrored from the window that opened
 	// it (boardPopout.svelte.ts publishes, windows.rs relays). It has no workspace, watchers or
-	// terminals: it draws the latest snapshot, with its own search and Project filter, and a card
-	// click brings that window to the front to open the task there.
+	// terminals: it draws the latest snapshot, with its own search and Project filter. A card click
+	// opens its terminal preview (Orca's AgentTerminalDialog: the agent's terminal, header with its
+	// state, "Open worktree"), whose rows the feeding window adds to its snapshots while it is
+	// open; Open task there brings that window to the front to open the task.
 	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
@@ -29,6 +31,16 @@
 	let projectFilter = $state<string[]>([]);
 	let projectMenu = $state(false);
 	let searchBox: HTMLInputElement | undefined = $state();
+	/** The card whose terminal preview is open (its key). */
+	let previewKey = $state<string | null>(null);
+	let previewBox: HTMLDivElement | undefined = $state();
+	/** Whether the preview follows its last row (it does until scrolled up). */
+	let previewPinned = true;
+	let previewAsked = 0;
+	function askPreview(c: PopoutCard | null) {
+		previewAsked = Date.now();
+		invoke('board_popout_preview', { card: c && { root: c.root, slug: c.slug } }).catch((e) => clientLog('error', `board_popout_preview: ${e}`));
+	}
 
 	/** The theme variables last written, so another theme's own colors do not outlive it. */
 	let written = new Set<string>();
@@ -44,7 +56,10 @@
 		root.style.colorScheme = next.theme.dark ? 'dark' : 'light';
 		root.dataset.themeType = next.theme.dark ? 'dark' : 'light';
 		root.lang = next.locale;
+		// A feeding window that reloaded (or took over) without hearing which card is open: ask again, at most once a second.
+		if (previewKey && next.preview?.key !== previewKey && Date.now() - previewAsked > 1000) askPreview(allCardsOf(next).find((c) => c.key === previewKey) ?? null);
 	}
+	const allCardsOf = (s: PopoutSnapshot) => s.lanes.flatMap((l) => l.cards);
 
 	onMount(() => {
 		// Before the first snapshot: whatever the page itself has on <html>.
@@ -73,7 +88,7 @@
 	});
 
 	const here = $derived(snapshot?.here ?? '');
-	const allCards = $derived(snapshot?.lanes.flatMap((l) => l.cards) ?? []);
+	const allCards = $derived(snapshot ? allCardsOf(snapshot) : []);
 	const projectChoices = $derived(projectOptions(snapshot?.projects ?? [], allCards));
 	// A project that left the feeding window's side bar leaves the filter too.
 	$effect(() => {
@@ -87,8 +102,35 @@
 
 	const reveal = (c: PopoutCard) => invoke('board_popout_reveal', { root: c.root, slug: c.slug }).catch((e) => clientLog('error', `board_popout_reveal: ${e}`));
 
+	// Orca keeps the dialog open while its card moves between columns; it closes when the card is gone.
+	const previewCard = $derived(previewKey ? (allCards.find((c) => c.key === previewKey) ?? null) : null);
+	const preview = $derived(previewKey && snapshot?.preview?.key === previewKey ? snapshot.preview : null);
+	$effect(() => {
+		if (previewKey && snapshot && !previewCard) closePreview();
+	});
+	function openPreview(c: PopoutCard) {
+		previewKey = c.key;
+		previewPinned = true;
+		askPreview(c);
+	}
+	function closePreview() {
+		if (!previewKey) return;
+		previewKey = null;
+		askPreview(null);
+	}
+	// New rows keep the preview at its end unless it was scrolled up.
+	$effect(() => {
+		void preview?.lines;
+		if (previewBox && previewPinned) previewBox.scrollTop = previewBox.scrollHeight;
+	});
+
 	// ⌘F (Ctrl+F) focuses the search.
 	function onKey(e: KeyboardEvent) {
+		if (previewKey && e.key === 'Escape') {
+			e.preventDefault();
+			closePreview();
+			return;
+		}
 		if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
 			e.preventDefault();
 			searchBox?.focus();
@@ -173,11 +215,11 @@
 								role="button"
 								tabindex="0"
 								aria-label="{c.title} — {c.status} — {c.project}"
-								title={t('adeWorkflow.popout.openTask', { title: c.title })}
+								title={t('adeWorkflow.popout.previewTask', { title: c.title })}
 								class="group relative cursor-pointer rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editor-background) p-2.5 text-xs outline-none transition-[border-color,box-shadow] hover:border-(--vscode-focusBorder)/60 hover:shadow-md hover:shadow-black/25 focus-visible:border-(--vscode-focusBorder)"
 								style:margin-left={c.depth ? `${Math.min(c.depth, 3) * 12}px` : undefined}
-								onclick={() => reveal(c)}
-								onkeydown={(e) => e.target === e.currentTarget && e.key === 'Enter' && (e.preventDefault(), reveal(c))}
+								onclick={() => openPreview(c)}
+								onkeydown={(e) => e.target === e.currentTarget && e.key === 'Enter' && (e.preventDefault(), openPreview(c))}
 							>
 								<div class="flex items-center gap-1.5">
 									<span class={['size-2 shrink-0 rounded-full', c.dot]} title={c.status}></span>
@@ -197,6 +239,50 @@
 					</div>
 				</section>
 			{/each}
+		</div>
+	{/if}
+	{#if previewCard}
+		{@const c = previewCard}
+		<!-- Orca's AgentTerminalDialog: outside clicks and Escape close it. -->
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="fixed inset-0 z-30 flex items-center justify-center bg-black/50" onclick={(e) => e.target === e.currentTarget && closePreview()}>
+			<div role="dialog" aria-modal="true" aria-labelledby="board-preview-title" class="flex w-[calc(100vw-40px)] flex-col overflow-hidden rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editorWidget-background,var(--vscode-editor-background)) shadow-xl shadow-black/40">
+				<header class="flex shrink-0 items-center gap-1.5 px-2.5 py-2 text-xs">
+					{#if c.agent}<AgentIcon agent={c.agent} size={13} />{/if}
+					<h2 id="board-preview-title" class="min-w-0 truncate text-[12px] font-semibold">{c.title}</h2>
+					<span class="shrink-0 text-[11px] text-(--vscode-descriptionForeground)">{c.agent ? `${c.agent} · ` : ''}{c.status}</span>
+					<button class="ml-auto grid size-6 place-items-center rounded opacity-70 hover:bg-(--vscode-toolbar-hoverBackground) hover:opacity-100" aria-label={t('adeWorkflow.popout.close')} title={t('adeWorkflow.popout.close')} onclick={closePreview}><Icon name="close" size={14} /></button>
+				</header>
+				{#if preview?.lines}
+					<div
+						bind:this={previewBox}
+						role="log"
+						aria-label={t('adeWorkflow.popout.preview')}
+						tabindex="-1"
+						class="flex h-[calc(100vh-140px)] flex-col overflow-auto bg-(--vscode-terminal-background,var(--vscode-panel-background)) p-1.5 text-(--vscode-terminal-foreground,var(--vscode-foreground))"
+						onscroll={(e) => (previewPinned = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 4)}
+					>
+						<pre class="mt-auto font-mono text-xs leading-[1.35] whitespace-pre select-text">{preview.lines.join('\n')}</pre>
+					</div>
+				{:else if preview}
+					<div class="max-h-[calc(100vh-140px)] min-h-0 flex-1 overflow-y-auto px-2.5 pb-2 text-[11px]">
+						<p class="text-(--vscode-descriptionForeground)">{t('adeWorkflow.popout.previewUnavailable')}</p>
+						{#if c.summary}<p class="mt-2 break-words whitespace-pre-wrap">{c.summary}</p>{/if}
+					</div>
+				{:else}
+					<div class="h-[calc(100vh-140px)] bg-(--vscode-terminal-background,var(--vscode-panel-background))"></div>
+				{/if}
+				<footer class="flex shrink-0 items-center px-2.5 py-1.5">
+					<button
+						class="ml-auto flex h-6 items-center gap-1 rounded-md border border-(--vscode-button-border,var(--vscode-widget-border)) px-2 text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
+						title={t('adeWorkflow.popout.openTask', { title: c.title })}
+						onclick={() => {
+							reveal(c);
+							closePreview();
+						}}><Icon name="openExternal" size={12} />{t('adeWorkflow.popout.openInWindow')}</button
+					>
+				</footer>
+			</div>
 		</div>
 	{/if}
 </div>

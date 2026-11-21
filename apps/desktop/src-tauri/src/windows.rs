@@ -711,22 +711,26 @@ pub fn window_count(app: AppHandle) -> usize {
 // ipc/dashboard-popout.ts). One pop-out window, reused by every Pop Out; the workspace window that
 // last asked for it feeds it. That window builds the agent board's snapshot and publishes it here;
 // the pop-out only mirrors it (no workspace, watchers, terminals or session of its own), gets the
-// last snapshot when its page loads, and a card click brings the feeding window to the front and
-// opens the task there. The pop-out closes with the window that feeds it.
+// last snapshot when its page loads; a card click opens its terminal preview there (the feeding
+// window adds that card's terminal rows to its snapshots), and Open task brings the feeding
+// window to the front and opens the task there. The pop-out closes with the window that feeds it.
 
 /// To every window: the label of the window that feeds the pop-out, `null` once it closed.
 pub const BOARD_POPOUT_OWNER: &str = "board-popout:owner";
 /// To the pop-out: the board's latest snapshot (opaque here; boardPopout.ts builds it).
 pub const BOARD_POPOUT_SNAPSHOT: &str = "board-popout:snapshot";
-/// To the feeding window: the pop-out wants a fresh snapshot.
+/// To the feeding window: the pop-out wants a fresh snapshot; the payload is the card whose
+/// terminal preview the pop-out shows (Orca's AgentTerminalDialog), `null` for none.
 pub const BOARD_POPOUT_REQUESTED: &str = "board-popout:requested";
-/// To the feeding window: open task `slug` of project `root` (a card was clicked).
+/// To the feeding window: open task `slug` of project `root` (Open task in a card's preview).
 pub const BOARD_POPOUT_REVEAL: &str = "board-popout:reveal";
 
 #[derive(Default)]
 struct BoardPopout {
   owner: Option<String>,
   snapshot: Option<serde_json::Value>,
+  /// The card whose terminal preview the pop-out shows; kept across a change of feeding window.
+  preview: Option<Reveal>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -771,7 +775,7 @@ impl BoardPopout {
   }
 }
 
-static BOARD_STATE: std::sync::Mutex<BoardPopout> = std::sync::Mutex::new(BoardPopout { owner: None, snapshot: None });
+static BOARD_STATE: std::sync::Mutex<BoardPopout> = std::sync::Mutex::new(BoardPopout { owner: None, snapshot: None, preview: None });
 
 fn board() -> std::sync::MutexGuard<'static, BoardPopout> {
   BOARD_STATE.lock().unwrap_or_else(|e| e.into_inner())
@@ -803,7 +807,8 @@ pub async fn board_popout_open(app: AppHandle, window: tauri::WebviewWindow) -> 
     let _ = app.emit(BOARD_POPOUT_OWNER, Some(&me));
   }
   // A pop-out already open shows the new feeder's board straight away.
-  let _ = app.emit_to(me.as_str(), BOARD_POPOUT_REQUESTED, ());
+  let preview = board().preview.clone();
+  let _ = app.emit_to(me.as_str(), BOARD_POPOUT_REQUESTED, preview);
   Ok(())
 }
 
@@ -828,23 +833,44 @@ pub fn board_popout_request(app: AppHandle, window: tauri::WebviewWindow) -> Opt
   if window.label() != workspace::BOARD_POPOUT {
     return None;
   }
-  let (owner, snapshot) = {
-    let b = board();
-    (b.owner.clone(), b.snapshot.clone())
+  let (owner, snapshot, preview) = {
+    let mut b = board();
+    // A loaded page shows no preview dialog yet.
+    b.preview = None;
+    (b.owner.clone(), b.snapshot.clone(), b.preview.clone())
   };
   if let Some(owner) = owner {
-    let _ = app.emit_to(owner.as_str(), BOARD_POPOUT_REQUESTED, ());
+    let _ = app.emit_to(owner.as_str(), BOARD_POPOUT_REQUESTED, preview);
   }
   snapshot
 }
 
-#[derive(Clone, serde::Serialize)]
-struct Reveal {
+/// The pop-out opened (or closed, `None`) the terminal preview of a card (Orca's card click opens
+/// AgentTerminalDialog): the feeding window adds that card's last terminal lines to its snapshots.
+/// The lines stay in memory and only travel between Kingu's own windows.
+#[tauri::command]
+pub fn board_popout_preview(app: AppHandle, window: tauri::WebviewWindow, card: Option<Reveal>) -> Result<(), String> {
+  if window.label() != workspace::BOARD_POPOUT {
+    return Err("only the pop-out previews a terminal".into());
+  }
+  let owner = {
+    let mut b = board();
+    b.preview = card.clone();
+    b.owner.clone()
+  };
+  if let Some(owner) = owner {
+    app.emit_to(owner.as_str(), BOARD_POPOUT_REQUESTED, card).map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Reveal {
   root: String,
   slug: String,
 }
 
-/// A card in the pop-out was clicked: the feeding window comes to the front and opens the task
+/// Open task in a card's preview in the pop-out: the feeding window comes to the front and opens the task
 /// (Orca's revealAgent focuses the main window and reveals the agent's terminal).
 #[tauri::command]
 pub fn board_popout_reveal(app: AppHandle, window: tauri::WebviewWindow, root: String, slug: String) -> Result<(), String> {
@@ -865,6 +891,11 @@ mod tests {
     let mut b = BoardPopout::default();
     assert!(b.opened_by("main"));
     assert!(!b.opened_by("main"));
+    // The card the pop-out previews outlives a change of feeding window, not the pop-out.
+    b.preview = Some(Reveal { root: "/r".into(), slug: "s".into() });
+    assert!(b.opened_by("window-1"));
+    assert!(b.preview.is_some());
+    assert!(b.opened_by("main"));
     assert!(!b.publish("window-1", serde_json::json!(1)));
     assert!(b.publish("main", serde_json::json!(2)));
     assert_eq!(b.snapshot, Some(serde_json::json!(2)));
@@ -878,6 +909,7 @@ mod tests {
     b.opened_by("main");
     assert_eq!(b.closed(workspace::BOARD_POPOUT), BoardClosed::Popout);
     assert_eq!(b.owner, None);
+    assert_eq!(b.preview, None);
   }
 
   const MAIN: Rect = Rect { x: 0.0, y: 0.0, width: 1728.0, height: 1117.0 };

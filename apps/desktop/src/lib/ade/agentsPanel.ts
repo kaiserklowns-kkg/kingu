@@ -12,8 +12,19 @@ export function sessionAgo(then: number, now: number): string {
 
 /** A CLI's own resume command for one of its sessions (claude/gemini `--resume <id>`, `codex resume <id>`,
  * `opencode --session <id>` as Orca's ai-vault-resume-command.ts). */
-export function resumeArgv(agent: string, id: string): string[] {
+export function resumeArgv(agent: string, id: string, path?: string | null): string[] {
 	if (agent === 'opencode') return ['opencode', '--session', id];
+	// OpenCode 2 and Rovo Dev resume through their launch commands (Orca's TUI launchCmd).
+	if (agent === 'opencode2') return ['opencode2', '--standalone', '--session', id];
+	if (agent === 'rovo') return ['acli', 'rovodev', 'run', '--restore', id];
+	// OMP: `omp --resume <id>`, with `--profile <name>` for a transcript in a named profile's store
+	// (OMP takes the profile only from a flag or its env; Orca's ompTranscriptProfileArgs).
+	if (agent === 'omp') {
+		const profile = ompProfile(path);
+		return ['omp', ...(profile ? ['--profile', profile] : []), '--resume', id];
+	}
+	// Antigravity's CLI: `agy --conversation <id>`.
+	if (agent === 'antigravity') return ['agy', '--conversation', id];
 	// Orca's ai-vault-resume-command.ts: `copilot --resume=<id>`.
 	if (agent === 'copilot') return ['copilot', `--resume=${id}`];
 	if (agent === 'cursor') return ['cursor-agent', '--resume', id];
@@ -38,4 +49,13 @@ export function resumeArgv(agent: string, id: string): string[] {
 	if (agent === 'codex') return ['codex', 'resume', id];
 	if (agent === 'gemini') return ['gemini', '--resume', id];
 	return ['claude', '--resume', id];
+}
+
+/** The named OMP profile whose store holds `path` (`…/profiles/<name>/agent/sessions/…` or
+ * `…/omp/profiles/<name>/sessions/…`), when the name is one OMP accepts (Orca's normalizedOmpProfile). */
+export function ompProfile(path: string | null | undefined): string | null {
+	const m = path?.match(/[\\/]profiles[\\/]([^\\/]+)[\\/]agent[\\/]sessions[\\/]|[\\/]omp[\\/]profiles[\\/]([^\\/]+)[\\/]sessions[\\/]/);
+	const name = (m?.[1] ?? m?.[2])?.trim();
+	if (!name || name === 'default') return null;
+	return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) && !name.endsWith('.') && !/^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i.test(name) ? name : null;
 }

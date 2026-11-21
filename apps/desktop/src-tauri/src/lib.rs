@@ -632,9 +632,17 @@ async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>)
     all.extend(sessions::list_jcode(&root, &env_dir("JCODE_HOME").unwrap_or_else(|| home.join(".jcode")).join("sessions"), limit));
     // OpenClaw (`$OPENCLAW_STATE_DIR` or ~/.openclaw, and the legacy ~/.clawdbot: agents/<agent>/sessions) and Pi (`$PI_CODING_AGENT_DIR`, else ~/.pi/agent/sessions); Orca's message-graph scanners.
     all.extend(sessions::list_openclaw(&root, &[env_dir("OPENCLAW_STATE_DIR").unwrap_or_else(|| home.join(".openclaw")), home.join(".clawdbot")], limit));
-    all.extend(sessions::list_pi(&root, &env_dir("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi").join("agent").join("sessions")), limit));
+    let pi_sessions = env_dir("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi").join("agent").join("sessions"));
+    all.extend(sessions::list_pi(&root, &pi_sessions, limit));
+    // OMP (`$OMP_CODING_AGENT_DIR`, else ~/.omp[/profiles/<name>]/agent/sessions or $XDG_DATA_HOME/omp, per OMP's dirs.ts), plus the OMP-written files in Pi's folder (Orca's scanners/omp).
+    all.extend(sessions::list_omp(&root, &sessions::omp_sessions_dirs(&home, &|k| std::env::var(k).ok()), &pi_sessions, limit));
     // Muse (`$XDG_DATA_HOME/muse/sessions`, else ~/.local/share/muse/sessions; date shards of <uuid>/session.jsonl; Orca's scanners/muse).
     all.extend(sessions::list_muse(&root, &env_dir("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share")).join("muse").join("sessions"), limit));
+    // Rovo Dev (~/.rovodev/sessions/<id>/metadata.json + session_context.json) and the Antigravity CLI (~/.gemini/antigravity-cli/brain, folders from its history and cache indexes).
+    all.extend(sessions::list_rovo(&root, &home.join(".rovodev").join("sessions"), limit));
+    all.extend(sessions::list_antigravity(&root, &home.join(".gemini").join("antigravity-cli").join("brain"), limit));
+    // OpenCode 2: session_v2 / session_message tables in the same opencode*.db files (Orca's scanners/opencode2).
+    all.extend(sessions::list_opencode2(&dbs, &root, limit));
     all.sort_by_key(|s| std::cmp::Reverse(s.updated));
     all.truncate(limit);
     Ok(all)
@@ -1642,6 +1650,7 @@ pub fn run() {
       windows::board_popout_owner,
       windows::board_popout_publish,
       windows::board_popout_request,
+      windows::board_popout_preview,
       windows::board_popout_reveal,
       windows::workspace_storage_stale,
       window::window_close,

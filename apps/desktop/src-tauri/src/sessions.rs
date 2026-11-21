@@ -20,7 +20,7 @@ pub struct Session {
   pub created: i64,
   pub updated: i64,
   pub path: String,
-  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi`, `devin`, `grok`, `hermes`, `jcode`, `openclaw`, `pi`, `zcode` or `muse` (Orca's session history covers many CLIs).
+  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi`, `devin`, `grok`, `hermes`, `jcode`, `openclaw`, `pi`, `zcode`, `muse`, `omp`, `rovo`, `antigravity` or `opencode2` (Orca's session history covers many CLIs).
   pub agent: &'static str,
 }
 
@@ -1479,12 +1479,77 @@ pub fn list_zcode(db: &Path, root: &Path, limit: usize) -> Vec<Session> {
   list_store(&[db.to_path_buf()], root, limit, "zcode")
 }
 
+/// OpenCode 2 sessions of `root`: current releases keep `session_v2` / `session_message` tables in
+/// the same `opencode*.db` files as v1 (Orca's `scanners/opencode2`; databases without them are skipped).
+pub fn list_opencode2(dbs: &[PathBuf], root: &Path, limit: usize) -> Vec<Session> {
+  list_store(dbs, root, limit, "opencode2")
+}
+
+/// An OpenCode 2 message's text (Orca `extractOpenCode2MessageText`, in SQL): `text` as a string
+/// or a list of strings, else the `text` items of `content`. Malformed rows give NULL, not an error.
+const OPENCODE2_TEXT: &str = "CASE WHEN json_valid(m.data) THEN CASE json_type(m.data, '$.text') \
+  WHEN 'text' THEN json_extract(m.data, '$.text') \
+  WHEN 'array' THEN (SELECT group_concat(j.value, char(10)) FROM json_each(m.data, '$.text') j WHERE j.type = 'text') \
+  ELSE CASE WHEN json_type(m.data, '$.content') = 'array' THEN (SELECT group_concat(CASE WHEN j.type = 'object' THEN json_extract(j.value, '$.text') END, char(10)) FROM json_each(m.data, '$.content') j \
+    WHERE CASE WHEN j.type = 'object' THEN json_extract(j.value, '$.type') = 'text' AND json_type(j.value, '$.text') = 'text' ELSE 0 END) END END END";
+
+/// [`store_query`]'s columns for OpenCode 2's `session_v2` (Orca's list and parse queries): top-level,
+/// unarchived sessions of `root`, the `user` / `assistant` message count, the first user message and
+/// the latest text among the newest 100 messages (Orca's bounded preview window).
+pub fn opencode2_query(session_cols: &[String], message_cols: &[String], root: &Path, limit: usize) -> Option<String> {
+  let has = |cols: &[String], c: &str| cols.iter().any(|x| x == c);
+  if !["id", "time_created", "time_updated", "directory"].iter().all(|c| has(session_cols, c)) {
+    return None;
+  }
+  let col = |c: &str| if has(session_cols, c) { format!("s.{c}") } else { "NULL".into() };
+  let messages = ["session_id", "type"].iter().all(|c| has(message_cols, c));
+  let read = messages && ["data", "time_created", "seq"].iter().all(|c| has(message_cols, c));
+  let count = if messages { "(SELECT COUNT(*) FROM session_message m WHERE m.session_id = s.id AND m.type IN ('user','assistant'))".into() } else { "0".to_owned() };
+  let (last, first) = if read {
+    (
+      format!("(SELECT json_object('role', x.type, 'text', x.t) FROM (SELECT m.type AS type, {OPENCODE2_TEXT} AS t, m.time_created AS tc, m.seq AS sq FROM session_message m WHERE m.session_id = s.id AND m.type IN ('user','assistant') ORDER BY m.time_created DESC, m.seq DESC LIMIT 100) x WHERE trim(COALESCE(x.t, '')) != '' ORDER BY x.tc DESC, x.sq DESC LIMIT 1)"),
+      format!("(SELECT {OPENCODE2_TEXT} FROM session_message m WHERE m.session_id = s.id AND m.type = 'user' ORDER BY m.time_created ASC, m.seq ASC LIMIT 1)"),
+    )
+  } else {
+    ("NULL".into(), "NULL".into())
+  };
+  let top = if has(session_cols, "parent_id") { " AND s.parent_id IS NULL" } else { "" };
+  let live = if has(session_cols, "time_archived") { " AND s.time_archived IS NULL" } else { "" };
+  let r = root.to_string_lossy();
+  let below = format!("{}/", r.trim_end_matches('/'));
+  Some(format!(
+    "SELECT s.id, {title} AS title, s.directory, s.time_created, s.time_updated, {model} AS model_json, {count} AS message_count, {last} AS last, {first} AS first_prompt \
+     FROM session_v2 s WHERE (s.directory = {root} OR substr(s.directory, 1, {n}) = {below}){top}{live} \
+     ORDER BY CASE WHEN s.time_updated > 0 THEN s.time_updated ELSE s.time_created END DESC LIMIT {limit}",
+    title = col("title"),
+    model = col("model"),
+    root = sql_text(&r),
+    n = below.chars().count(),
+    below = sql_text(&below),
+  ))
+}
+
+/// One [`opencode2_query`] row: as [`store_session`], with a bare model id accepted (Orca
+/// `extractModelId`: a plain id or JSON with `id` / `modelID`) and an id safe to resume.
+fn opencode2_session(row: &serde_json::Map<String, Value>, db: &Path) -> Option<Session> {
+  let mut s = store_session(row, db, "opencode2").filter(|s| safe_id(&s.id))?;
+  if s.model.is_none() {
+    s.model = row.get("model_json").and_then(Value::as_str).map(str::trim).filter(|m| !m.is_empty() && !m.starts_with('{')).map(str::to_owned);
+  }
+  Some(s)
+}
+
 fn list_store(dbs: &[PathBuf], root: &Path, limit: usize, agent: &'static str) -> Vec<Session> {
   let mut out: Vec<Session> = Vec::new();
   for db in dbs {
-    let Some(sql) = store_query(&column_names(db, "session"), &column_names(db, "message"), &column_names(db, "part"), root, limit, agent == "zcode") else { continue };
+    let sql = if agent == "opencode2" {
+      opencode2_query(&column_names(db, "session_v2"), &column_names(db, "session_message"), root, limit)
+    } else {
+      store_query(&column_names(db, "session"), &column_names(db, "message"), &column_names(db, "part"), root, limit, agent == "zcode")
+    };
+    let Some(sql) = sql else { continue };
     match crate::accounts::managed::sqlite_rows(db, &sql) {
-      Ok(rows) => out.extend(rows.iter().filter_map(|r| store_session(r, db, agent))),
+      Ok(rows) => out.extend(rows.iter().filter_map(|r| if agent == "opencode2" { opencode2_session(r, db) } else { store_session(r, db, agent) })),
       Err(e) => log::warn!("{agent} sessions in {}: {e}", db.display()),
     }
   }
@@ -1633,20 +1698,77 @@ fn omp_written(r: &Value) -> bool {
 
 /// One message-graph transcript (`.jsonl` of `session` / `model_change` / `message` records,
 /// Orca `consumeMessageGraphRecordLine`): the `session` header gives the id and folder, the first
-/// user message the title. `agent` is `openclaw` or `pi`; a Pi-folder file OMP wrote is not Pi's.
+/// user message the title. `agent` is `openclaw`, `pi` or `omp`; a Pi-folder file OMP wrote is not Pi's.
 pub fn read_graph(path: &Path, agent: &'static str) -> Option<Session> {
+  graph(path, agent, false)
+}
+
+/// An OMP title record folded so far (Orca `OmpTranscriptTitle`).
+#[derive(Clone)]
+struct OmpTitle {
+  title: String,
+  user: bool,
+  at: Option<i64>,
+}
+
+/// Orca `foldOmpTranscriptTitle`: OMP's persisted names (`title` v1 slots, `title_change`, the
+/// `session` header's `title`, legacy `session_info` names); a user's name outlives automatic ones,
+/// and an older record of the same source does not replace a newer one.
+fn fold_omp_title(cur: Option<OmpTitle>, r: &Value) -> Option<OmpTitle> {
+  let t = r.get("type").and_then(Value::as_str);
+  let legacy = t == Some("session_info");
+  if !legacy && !matches!(t, Some("session" | "title_change" | "title")) {
+    return cur;
+  }
+  if t == Some("title") && r.get("v").and_then(Value::as_i64) != Some(1) {
+    return cur;
+  }
+  let Some(title) = str_field(r, if legacy { "name" } else { "title" }).map(|x| short(&x, 120)).filter(|x| !x.is_empty()) else { return cur };
+  let user = if legacy {
+    true
+  } else {
+    match r.get("source").filter(|v| !v.is_null()).or_else(|| r.get("titleSource")).map(Value::as_str) {
+      None => false,
+      Some(Some("user")) => true,
+      Some(Some("auto")) => false,
+      Some(_) => return cur,
+    }
+  };
+  if cur.as_ref().is_some_and(|c| c.user && !user) {
+    return cur;
+  }
+  let at = r.get(if t == Some("title") { "updatedAt" } else { "timestamp" }).and_then(when_of);
+  if let (Some(c), Some(a)) = (&cur, at)
+    && c.user == user
+    && c.at.is_some_and(|ca| a < ca)
+  {
+    return cur;
+  }
+  Some(OmpTitle { title, user, at })
+}
+
+/// [`read_graph`]; `omp_only`: a file in Pi's folder, an OMP session only once a record shows OMP wrote it.
+fn graph(path: &Path, agent: &'static str, omp_only: bool) -> Option<Session> {
   let text = std::fs::read_to_string(path).ok()?;
   let mut s = Session { id: id_from_file_name(path)?, title: String::new(), preview: None, cwd: None, branch: None, model: None, messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent };
   let mut title = None;
+  let mut omp_title: Option<OmpTitle> = None;
+  let mut omp_marked = false;
   for line in text.lines() {
     let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
     if !r.is_object() {
       continue;
     }
-    if agent == "pi" && omp_written(&r) {
-      return None;
+    if omp_written(&r) {
+      if agent == "pi" {
+        return None;
+      }
+      omp_marked = true;
     }
     widen(&mut s, r.get("timestamp").and_then(when_of));
+    if agent == "omp" {
+      omp_title = fold_omp_title(omp_title, &r);
+    }
     match r.get("type").and_then(Value::as_str) {
       Some("session") => {
         if let Some(id) = str_field(&r, "id") {
@@ -1670,10 +1792,11 @@ pub fn read_graph(path: &Path, agent: &'static str) -> Option<Session> {
       _ => {}
     }
   }
-  if !safe_id(&s.id) {
+  if !safe_id(&s.id) || (omp_only && !omp_marked) {
     return None;
   }
-  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  // OMP's stored name wins over the first prompt (Orca keeps the prompt as `fallbackTitle`).
+  s.title = omp_title.map(|t| t.title).or(title).unwrap_or_else(|| "Untitled session".into());
   Some(s)
 }
 
@@ -1835,9 +1958,617 @@ pub fn list_muse(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
   newest_of(root, files, limit, read_muse)
 }
 
+// ---- OMP (Orca ai-vault scanners/omp, the message-graph parser) --------------------------------
+
+/// Orca `normalizedOmpProfile`: `Some(None)` is the default profile, `None` a name OMP rejects.
+fn omp_profile(v: Option<&str>) -> Option<Option<String>> {
+  let p = v.map(str::trim).unwrap_or("");
+  if p.is_empty() || p == "default" {
+    return Some(None);
+  }
+  let b = p.as_bytes();
+  let reserved = {
+    let stem = p.split('.').next().unwrap_or("").to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit())
+  };
+  let ok = b.len() <= 64 && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit()) && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'.' | b'_' | b'-')) && !p.ends_with('.') && !reserved;
+  ok.then(|| Some(p.to_owned()))
+}
+
+/// Orca `normalizeAgentSessionsDir(…, '.omp')`: a sessions folder, an agent folder or an `.omp` home.
+fn omp_agent_sessions(home: &Path, raw: &str) -> PathBuf {
+  let t = raw.trim().trim_end_matches(['/', '\\']);
+  if t.is_empty() {
+    return home.join(".omp").join("agent").join("sessions");
+  }
+  let p = PathBuf::from(t);
+  match p.file_name().and_then(|n| n.to_str()) {
+    Some("sessions") => p,
+    Some("agent") => p.join("sessions"),
+    Some(".omp") => p.join("agent").join("sessions"),
+    _ => p,
+  }
+}
+
+/// OMP's session folders (Orca `ompSessionsRootDirs`: `resolveOmpSessionsDir` mirroring OMP's
+/// dirs.ts, then every named profile's existing store). `env` reads a variable. A relative or
+/// root-folder override gives no folder.
+pub fn omp_sessions_dirs(home: &Path, env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+  let usable = |p: PathBuf| (p.is_absolute() && p.parent().is_some()).then_some(p);
+  let set = |k: &str| env(k).filter(|v| !v.is_empty());
+  if let Some(d) = env("OMP_CODING_AGENT_DIR").filter(|v| !v.trim().is_empty()) {
+    // The legacy override pins one location; no profile enumeration.
+    return usable(omp_agent_sessions(home, &d)).into_iter().collect();
+  }
+  let mut out = Vec::new();
+  // Node's `join(home, PI_CONFIG_DIR)`: an absolute value still lands under the home folder.
+  let base = home.join(set("PI_CONFIG_DIR").map_or_else(|| ".omp".into(), |c| c.trim_start_matches(['/', '\\']).to_owned()));
+  let xdg = if cfg!(unix) { set("XDG_DATA_HOME").map(PathBuf::from) } else { None };
+  let raw = env("OMP_PROFILE").or_else(|| env("PI_PROFILE"));
+  if let Some(profile) = omp_profile(raw.as_deref()) {
+    let config_root = profile.as_ref().map_or_else(|| base.clone(), |p| base.join("profiles").join(p));
+    let default_agent = config_root.join("agent");
+    let inherited = omp_profile(env("PI_PROFILE").as_deref()).flatten().map(|p| base.join("profiles").join(p).join("agent"));
+    let over = set("PI_CODING_AGENT_DIR").filter(|o| profile.is_none() && inherited.as_deref() != Some(Path::new(o)));
+    let agent_dir = over.map_or_else(|| Some(default_agent.clone()), |o| usable(PathBuf::from(o)));
+    if let Some(agent_dir) = agent_dir {
+      let data_root = xdg.as_ref().filter(|_| agent_dir == default_agent).map(|x| profile.as_ref().map_or_else(|| x.join("omp"), |p| x.join("omp").join("profiles").join(p))).filter(|d| d.is_dir());
+      out.push(data_root.map_or_else(|| agent_dir.join("sessions"), |d| d.join("sessions")));
+    }
+  }
+  let profiles = base.join("profiles");
+  let xdg_profiles = xdg.map(|x| x.join("omp").join("profiles"));
+  let mut names: Vec<String> = [Some(&profiles), xdg_profiles.as_ref()]
+    .into_iter()
+    .flatten()
+    .flat_map(|d| std::fs::read_dir(d).into_iter().flatten().flatten().take(256))
+    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+    .filter_map(|e| e.file_name().to_str().map(str::to_owned))
+    .filter(|n| omp_profile(Some(n)).flatten().as_deref() == Some(n.as_str()))
+    .collect();
+  names.sort();
+  names.dedup();
+  for n in names {
+    // OMP writes to the profile's XDG folder once it exists, so it comes first.
+    out.extend(xdg_profiles.iter().map(|x| x.join(&n).join("sessions")).chain([profiles.join(&n).join("agent").join("sessions")]).filter(|d| d.is_dir()));
+  }
+  let mut seen = std::collections::HashSet::new();
+  out.retain(|d| seen.insert(d.clone()));
+  out
+}
+
+/// Orca `OMP_SESSION_ARTIFACT_DIR_PATTERN`: `<YYYY-MM-DDTHH-MM-SS-mmmZ>_<uuid>`, a conversation's task
+/// artifact folder (subagent transcripts, counted under their parent rather than listed).
+fn omp_artifact_dir(name: &str) -> bool {
+  let Some((stamp, id)) = name.split_once('_') else { return false };
+  let b = stamp.as_bytes();
+  b.len() == 24
+    && crate::accounts::managed::is_uuid(id)
+    && b.iter().enumerate().all(|(i, c)| match i {
+      4 | 7 | 13 | 16 | 19 => *c == b'-',
+      10 => c.eq_ignore_ascii_case(&b'T'),
+      23 => c.eq_ignore_ascii_case(&b'Z'),
+      _ => c.is_ascii_digit(),
+    })
+}
+
+/// OMP's `.jsonl` transcripts under `dir` (Orca `isOmpConversationDirectory`: workspace buckets, not
+/// task artifact folders), at most four folders down; symlinks are not followed.
+fn omp_files(dir: &Path) -> Vec<(std::time::SystemTime, PathBuf)> {
+  let mut out = Vec::new();
+  let mut stack = vec![(dir.to_path_buf(), 0usize)];
+  let mut seen = 0usize;
+  while let Some((d, level)) = stack.pop() {
+    for e in std::fs::read_dir(&d).into_iter().flatten().flatten().take(4096) {
+      seen += 1;
+      if seen > 50_000 {
+        return out;
+      }
+      let Ok(t) = e.file_type() else { continue };
+      let p = e.path();
+      if t.is_dir() && level < 4 && (level == 0 || !e.file_name().to_str().is_some_and(omp_artifact_dir)) {
+        stack.push((p, level + 1));
+      } else if t.is_file() && p.extension().is_some_and(|x| x == "jsonl") {
+        out.push((modified(&p), p));
+      }
+    }
+  }
+  out
+}
+
+/// OMP sessions of `root`: every transcript in OMP's own folders, and those in Pi's folder (`pi`;
+/// OMP inherits `PI_CODING_AGENT_DIR`) that hold a record only OMP writes (Orca `isOmpWrittenRecord`).
+pub fn list_omp(root: &Path, dirs: &[PathBuf], pi: &Path, limit: usize) -> Vec<Session> {
+  let mut files: Vec<(std::time::SystemTime, PathBuf)> = dirs.iter().flat_map(|d| omp_files(d)).collect();
+  let own: std::collections::HashSet<PathBuf> = files.iter().map(|f| f.1.clone()).collect();
+  let pi_files: Vec<_> = omp_files(pi).into_iter().filter(|f| !own.contains(&f.1)).collect();
+  let in_pi: std::collections::HashSet<PathBuf> = pi_files.iter().map(|f| f.1.clone()).collect();
+  files.extend(pi_files);
+  newest_of(root, files, limit, |p| graph(p, "omp", in_pi.contains(p)))
+}
+
+// ---- Rovo Dev (Orca ai-vault scanners/session-scanner-graph-parsers, session-scanner-rovo-metadata) -
+
+/// The first non-blank string among `keys` (Orca `firstString`).
+fn first_str(v: &Value, keys: &[&str]) -> Option<String> {
+  keys.iter().find_map(|k| str_field(v, k))
+}
+
+/// Orca `extractContentText` for Rovo: a string, or the strings / `text` / `content` of a list.
+fn loose_text(v: &Value) -> Option<String> {
+  match v {
+    Value::String(s) => Some(s.clone()),
+    Value::Array(items) => {
+      let t: Vec<&str> = items.iter().filter_map(|i| i.as_str().or_else(|| i.get("text").and_then(Value::as_str)).or_else(|| i.get("content").and_then(Value::as_str))).filter(|t| !t.trim().is_empty()).collect();
+      (!t.is_empty()).then(|| t.join(" "))
+    }
+    _ => None,
+  }
+}
+
+/// A regular file (not a symlink) of at most `max` bytes, as text.
+fn small_file(p: &Path, max: u64) -> Option<String> {
+  let m = std::fs::symlink_metadata(p).ok()?;
+  if !m.is_file() || m.len() > max {
+    return None;
+  }
+  std::fs::read_to_string(p).ok()
+}
+
+/// One Rovo Dev session (`~/.rovodev/sessions/<id>/metadata.json` with its `session_context.json`,
+/// Orca `parseRovoSessionFile`): the metadata gives the title, folder and times; the context's
+/// `messages` and `message_history` (request / response `parts`) the turns.
+pub fn read_rovo(meta_path: &Path) -> Option<Session> {
+  let id = meta_path.parent()?.file_name()?.to_str()?.to_owned();
+  if !safe_id(&id) {
+    return None;
+  }
+  let meta: Value = serde_json::from_str(&small_file(meta_path, 16 << 20)?).ok()?;
+  meta.as_object()?;
+  let cwd = first_str(&meta, &["workspace_path", "workspacePath", "workspace", "cwd", "working_directory", "workingDirectory", "project_path", "projectPath"]);
+  let mut s = Session { id, title: String::new(), preview: None, cwd, branch: None, model: None, messages: 0, created: 0, updated: 0, path: meta_path.display().to_string(), agent: "rovo" };
+  let mut title = first_str(&meta, &["title", "name", "summary"]).map(|t| short(&t, 120));
+  widen(&mut s, meta.get("created_at").or_else(|| meta.get("createdAt")).and_then(when_of));
+  widen(&mut s, meta.get("updated_at").or_else(|| meta.get("updatedAt")).and_then(when_of));
+  let context: Value = small_file(&meta_path.with_file_name("session_context.json"), 64 << 20).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+  for m in context.get("messages").and_then(Value::as_array).into_iter().flatten() {
+    let role = m.get("role").and_then(Value::as_str).unwrap_or("");
+    if role != "user" && role != "assistant" {
+      continue;
+    }
+    s.messages += 1;
+    widen(&mut s, m.get("timestamp").and_then(when_of));
+    take_turn(&mut s, &mut title, role, m.get("content").and_then(loose_text));
+  }
+  for e in context.get("message_history").and_then(Value::as_array).into_iter().flatten() {
+    widen(&mut s, e.get("timestamp").and_then(when_of));
+    let role = match (e.get("role").and_then(Value::as_str), e.get("kind").and_then(Value::as_str)) {
+      (Some(r), _) => r,
+      (None, Some("request")) => "user",
+      (None, Some("response")) => "assistant",
+      _ => continue,
+    };
+    if role != "user" && role != "assistant" {
+      continue;
+    }
+    // Orca `rovoTextParts`: user prompts and text parts; tool calls and returns are not turns.
+    let parts: Vec<&str> = e
+      .get("parts")
+      .and_then(Value::as_array)
+      .into_iter()
+      .flatten()
+      .filter(|p| match p.get("part_kind").and_then(Value::as_str) {
+        Some("text") => true,
+        Some("user-prompt") => role == "user",
+        _ => false,
+      })
+      .filter_map(|p| p.get("content").and_then(Value::as_str).or_else(|| p.get("text").and_then(Value::as_str)))
+      .collect();
+    if parts.is_empty() {
+      continue;
+    }
+    s.messages += 1;
+    take_turn(&mut s, &mut title, role, Some(parts.join(" ")));
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some(s)
+}
+
+/// Rovo Dev sessions of `root` (`~/.rovodev/sessions/<id>/metadata.json`).
+pub fn list_rovo(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
+  let mut files = Vec::new();
+  for d in std::fs::read_dir(sessions).into_iter().flatten().flatten().take(4096) {
+    if !d.file_type().is_ok_and(|t| t.is_dir()) {
+      continue;
+    }
+    let meta = d.path().join("metadata.json");
+    if std::fs::symlink_metadata(&meta).is_ok_and(|m| m.is_file()) {
+      let t = modified(&meta).max(modified(&d.path().join("session_context.json")));
+      files.push((t, meta));
+    }
+  }
+  newest_of(root, files, limit, read_rovo)
+}
+
+// ---- Antigravity CLI (Orca ai-vault scanners/antigravity) --------------------------------------
+
+/// Orca `extractAntigravityUserRequest`: the `<USER_REQUEST>` body, else the whole content.
+fn ag_request(content: &str) -> Option<String> {
+  const OPEN: &str = "<USER_REQUEST>";
+  let body = match content.find(OPEN) {
+    None => content,
+    Some(i) => {
+      let rest = &content[i + OPEN.len()..];
+      rest.find("</USER_REQUEST>").map_or(rest, |e| &rest[..e])
+    }
+  };
+  let t = body.trim();
+  (!t.is_empty()).then(|| t.to_owned())
+}
+
+/// Orca `antigravityHistoryPromptHash`: the SHA-256 of a prompt with its whitespace folded, for a
+/// prompt short enough to be stored whole (a title cut to 96 UTF-16 units cannot identify one).
+fn ag_prompt_hash(v: &str) -> Option<String> {
+  use sha2::{Digest, Sha256};
+  if v.encode_utf16().count() > 4096 {
+    return None;
+  }
+  let p = v.split_whitespace().collect::<Vec<_>>().join(" ");
+  if p.is_empty() || p.encode_utf16().count() > 96 || p.ends_with("...") {
+    return None;
+  }
+  Some(Sha256::digest(p.as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Where Antigravity's own indexes place its conversations (Orca `AntigravityHistoryIndex`): by
+/// conversation id (`None` when sources disagree), and by opening-prompt hash with the time.
+#[derive(Default)]
+struct AgIndex {
+  by_id: std::collections::HashMap<String, Option<String>>,
+  by_prompt: std::collections::HashMap<String, Vec<(i64, String)>>,
+}
+
+/// Records `id → path` once; a second, different path marks the id ambiguous (Orca `unique`).
+fn ag_unique(map: &mut std::collections::HashMap<String, Option<String>>, id: &str, path: Option<&str>) {
+  if id.is_empty() || id.len() > 512 || path.is_some_and(|p| p.is_empty() || p.len() > 4096) {
+    return;
+  }
+  match map.get(id) {
+    Some(old) if old.as_deref() != path => {
+      map.insert(id.to_owned(), None);
+    }
+    Some(_) => {}
+    None => {
+      map.insert(id.to_owned(), path.map(str::to_owned));
+    }
+  }
+}
+
+fn ag_absolute(p: &str) -> bool {
+  let b = p.as_bytes();
+  p.starts_with(['/', '\\']) || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'/' | b'\\'))
+}
+
+const AG_INDEX_MAX: u64 = 4 << 20;
+
+/// Antigravity's `history.jsonl` and `cache/{conversation_metadata,projects,last_conversations}.json`
+/// beside its `brain` folder (Orca `indexAntigravityHistory` + `antigravityMetadataWorkspaces`),
+/// each read only when at most 4 MiB.
+fn ag_index(home: &Path) -> AgIndex {
+  let mut ix = AgIndex::default();
+  let json = |name: &str| small_file(&home.join("cache").join(name), AG_INDEX_MAX).and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object);
+  for line in small_file(&home.join("history.jsonl"), AG_INDEX_MAX).unwrap_or_default().lines().take(10_000) {
+    let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
+    let Some(ws) = r.get("workspace").and_then(Value::as_str).map(str::trim).filter(|w| !w.is_empty() && w.len() <= 4096) else { continue };
+    let Some(at) = r.get("timestamp").and_then(when_of) else { continue };
+    if let Some(id) = r.get("conversationId").and_then(Value::as_str) {
+      ag_unique(&mut ix.by_id, id, Some(ws));
+    }
+    if let Some(h) = r.get("display").and_then(Value::as_str).and_then(ag_prompt_hash) {
+      ix.by_prompt.entry(h).or_default().push((at, ws.to_owned()));
+    }
+  }
+  let entries = |v: Option<Value>| v.and_then(|v| v.as_object().cloned()).into_iter().flatten().take(10_000);
+  let mut project_paths = std::collections::HashMap::new();
+  for (k, v) in entries(json("projects.json")) {
+    let Some(v) = v.as_str() else { continue };
+    if ag_absolute(&k) {
+      ag_unique(&mut project_paths, v, Some(&k));
+    } else if ag_absolute(v) {
+      ag_unique(&mut project_paths, &k, Some(v));
+    }
+  }
+  let mut paths = std::collections::HashMap::new();
+  for (path, id) in entries(json("last_conversations.json")) {
+    if let Some(id) = id.as_str().filter(|_| ag_absolute(&path)) {
+      ag_unique(&mut paths, id, Some(&path));
+    }
+  }
+  for (id, v) in entries(json("conversation_metadata.json").and_then(|m| m.get("conversations").cloned())) {
+    if let Some(path) = v.pointer("/summary/ProjectID").and_then(Value::as_str).and_then(|p| project_paths.get(p)) {
+      ag_unique(&mut paths, &id, path.as_deref());
+    }
+  }
+  for (id, path) in paths {
+    match ix.by_id.get(&id) {
+      None => {
+        ix.by_id.insert(id, path);
+      }
+      Some(old) if *old != path => {
+        ix.by_id.insert(id, None);
+      }
+      Some(_) => {}
+    }
+  }
+  ix
+}
+
+/// One Antigravity transcript (`<brain>/<id>/.system_generated/logs/transcript[_full].jsonl`, Orca
+/// `consumeAntigravityRecordLine`): `USER_INPUT` / `REQUEST` requests and `PLANNER_RESPONSE`
+/// replies; also the opening request's hash and time, to find its folder in the indexes.
+fn read_antigravity(path: &Path) -> Option<(Session, Option<(String, i64)>)> {
+  let id = path.parent()?.parent()?.parent()?.file_name()?.to_str()?.to_owned();
+  if !safe_id(&id) {
+    return None;
+  }
+  let text = std::fs::read_to_string(path).ok()?;
+  let mut s = Session { id, title: String::new(), preview: None, cwd: None, branch: None, model: None, messages: 0, created: 0, updated: 0, path: path.display().to_string(), agent: "antigravity" };
+  let mut title = None;
+  let mut opening: Option<Option<(String, i64)>> = None;
+  for line in text.lines() {
+    if line.len() > 4 << 20 {
+      continue;
+    }
+    let Ok(r) = serde_json::from_str::<Value>(line) else { continue };
+    if !r.is_object() {
+      continue;
+    }
+    let at = r.get("created_at").and_then(when_of);
+    widen(&mut s, at);
+    let (source, kind, content) = (str_field(&r, "source"), str_field(&r, "type"), str_field(&r, "content"));
+    if matches!(source.as_deref(), Some("USER_EXPLICIT" | "USER")) && matches!(kind.as_deref(), Some("USER_INPUT" | "REQUEST")) {
+      let Some(req) = content.as_deref().and_then(ag_request) else { continue };
+      s.messages += 1;
+      opening.get_or_insert_with(|| ag_prompt_hash(&req).zip(at));
+      take_turn(&mut s, &mut title, "user", Some(req));
+    } else if source.as_deref() == Some("MODEL") && kind.as_deref() == Some("PLANNER_RESPONSE") && content.is_some() {
+      s.messages += 1;
+      take_turn(&mut s, &mut title, "assistant", content);
+    }
+  }
+  s.title = title.unwrap_or_else(|| "Untitled session".into());
+  Some((s, opening.flatten()))
+}
+
+/// One conversation folder as a session: the full transcript over the compact one unless only the
+/// compact one has turns (Orca `sessionAliasBeats`), with its folder from the indexes (Orca
+/// `findAntigravityWorkspace`: by id, else one history row of the same opening prompt within 2 s).
+fn read_antigravity_conversation(dir: &Path, ix: &AgIndex) -> Option<Session> {
+  let logs = dir.join(".system_generated").join("logs");
+  let mut best: Option<(Session, Option<(String, i64)>)> = None;
+  for name in ["transcript_full.jsonl", "transcript.jsonl"] {
+    let p = logs.join(name);
+    if !std::fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) {
+      continue;
+    }
+    let Some(c) = read_antigravity(&p) else { continue };
+    if best.as_ref().is_none_or(|b| b.0.messages == 0 && c.0.messages > 0) {
+      best = Some(c);
+    }
+  }
+  let (mut s, opening) = best?;
+  s.cwd = match ix.by_id.get(&s.id) {
+    Some(path) => path.clone(),
+    None => opening.and_then(|(hash, at)| {
+      let m: Vec<&(i64, String)> = ix.by_prompt.get(&hash)?.iter().filter(|(t, _)| (t - at).abs() <= 2_000).collect();
+      (m.len() == 1).then(|| m[0].1.clone())
+    }),
+  };
+  Some(s)
+}
+
+/// Antigravity CLI sessions of `root` (`~/.gemini/antigravity-cli/brain`; the IDE's brains are an
+/// opt-in in Orca that `agy` cannot resume natively, so they are left out).
+pub fn list_antigravity(root: &Path, brain: &Path, limit: usize) -> Vec<Session> {
+  let ix = brain.parent().map(ag_index).unwrap_or_default();
+  let plain_dir = |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
+  let mut dirs = Vec::new();
+  for d in std::fs::read_dir(brain).into_iter().flatten().flatten().take(4096) {
+    let p = d.path();
+    let logs = p.join(".system_generated").join("logs");
+    if !d.file_type().is_ok_and(|t| t.is_dir()) || !plain_dir(&p.join(".system_generated")) || !plain_dir(&logs) {
+      continue;
+    }
+    // The newer of the pair drives recency (Orca `aliasMtimeMs`).
+    let t = modified(&logs.join("transcript.jsonl")).max(modified(&logs.join("transcript_full.jsonl")));
+    if t > std::time::UNIX_EPOCH {
+      dirs.push((t, p));
+    }
+  }
+  newest_of(root, dirs, limit, |d| read_antigravity_conversation(d, &ix))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn reads_omp_transcripts_with_their_stored_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let cwd = root.display().to_string();
+    let lines = |v: &[Value]| v.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+    let omp = tmp.path().join("omp/sessions");
+    let bucket = omp.join("--repo--");
+    let stamp = "2026-05-01T10-08-30-000Z_0199a000-0000-7000-8000-0000000000aa";
+    std::fs::create_dir_all(bucket.join(stamp)).unwrap();
+    let prompt = serde_json::json!({"type": "message", "timestamp": "2026-05-01T10:08:31Z", "message": {"role": "user", "content": [{"type": "text", "text": "First prompt"}]}});
+    std::fs::write(bucket.join(format!("{stamp}.jsonl")), lines(&[
+      serde_json::json!({"type": "title", "v": 1, "title": "User name", "source": "user", "updatedAt": "2026-05-01T12:00:00Z"}),
+      serde_json::json!({"type": "session", "id": "0199a000-0000-7000-8000-0000000000aa", "title": "Old header", "cwd": cwd, "timestamp": "2026-05-01T10:08:30Z"}),
+      serde_json::json!({"type": "model_change", "model": "gpt-5.4-mini"}),
+      prompt.clone(),
+      serde_json::json!({"type": "title_change", "title": "Auto name", "source": "auto", "timestamp": "2026-05-01T13:00:00Z"}),
+      serde_json::json!({"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "OMP answer"}]}}),
+    ])).unwrap();
+    // A task transcript inside the conversation's artifact folder is not its own row.
+    std::fs::write(bucket.join(stamp).join("task.jsonl"), lines(&[serde_json::json!({"type": "session", "id": "task-1", "cwd": cwd})])).unwrap();
+    // No stored name: the first prompt.
+    std::fs::write(bucket.join("plain.jsonl"), lines(&[serde_json::json!({"type": "session", "id": "omp-plain", "cwd": cwd}), prompt.clone()])).unwrap();
+    // Pi's folder: only the file OMP wrote is OMP's.
+    let pi = tmp.path().join("pi");
+    std::fs::create_dir_all(pi.join("--repo--")).unwrap();
+    std::fs::write(pi.join("--repo--/a.jsonl"), lines(&[serde_json::json!({"type": "session", "id": "pi-own", "cwd": cwd}), prompt.clone()])).unwrap();
+    std::fs::write(pi.join("--repo--/b.jsonl"), lines(&[serde_json::json!({"type": "session", "id": "omp-in-pi", "cwd": cwd}), serde_json::json!({"type": "session_info", "name": "Legacy name"}), serde_json::json!({"type": "model_change", "model": "m"})])).unwrap();
+    let mut list = list_omp(&root, std::slice::from_ref(&omp), &pi, 10);
+    list.sort_by(|a, b| a.id.cmp(&b.id));
+    let rows: Vec<(&str, &str, &str)> = list.iter().map(|s| (s.id.as_str(), s.title.as_str(), s.agent)).collect();
+    assert_eq!(rows, [("0199a000-0000-7000-8000-0000000000aa", "User name", "omp"), ("omp-in-pi", "Legacy name", "omp"), ("omp-plain", "First prompt", "omp")]);
+    let main = &list[0];
+    assert_eq!((main.messages, main.model.as_deref(), main.preview.as_deref()), (2, Some("gpt-5.4-mini"), Some("Agent: OMP answer")));
+    assert_eq!(list_pi(&root, &pi, 10).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["pi-own"]);
+
+    // A newer rename of the same source wins; an older one does not.
+    let fold = |v: &[Value]| v.iter().fold(None, fold_omp_title).map(|t| t.title);
+    let slot = serde_json::json!({"type": "title", "v": 1, "title": "Current slot", "source": "user", "updatedAt": "2026-09-14T02:00:00Z"});
+    assert_eq!(fold(&[slot.clone(), serde_json::json!({"type": "title_change", "title": "Old", "source": "user", "timestamp": "2026-09-14T01:00:00Z"})]).as_deref(), Some("Current slot"));
+    assert_eq!(fold(&[slot.clone(), serde_json::json!({"type": "title_change", "title": "Newer", "source": "user", "timestamp": "2026-09-14T03:00:00Z"})]).as_deref(), Some("Newer"));
+    assert_eq!(fold(&[serde_json::json!({"type": "title", "v": 2, "title": "x"}), serde_json::json!({"type": "title_change", "title": "y", "source": "bot"})]), None);
+    assert!(omp_artifact_dir(stamp) && !omp_artifact_dir("--repo--") && !omp_artifact_dir("2026-05-01T10-08-30-000Z_not-a-uuid"));
+  }
+
+  #[test]
+  fn finds_omp_folders_like_its_dirs_ts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let env = |vars: &'static [(&'static str, &'static str)]| move |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string());
+    assert_eq!(omp_sessions_dirs(home, &env(&[])), [home.join(".omp/agent/sessions")]);
+    assert_eq!(omp_sessions_dirs(home, &env(&[("OMP_CODING_AGENT_DIR", "/x/.omp")])), [PathBuf::from("/x/.omp/agent/sessions")]);
+    assert!(omp_sessions_dirs(home, &env(&[("OMP_CODING_AGENT_DIR", "relative")])).is_empty());
+    assert_eq!(omp_sessions_dirs(home, &env(&[("OMP_PROFILE", "work")])), [home.join(".omp/profiles/work/agent/sessions")]);
+    // A name OMP rejects selects no primary folder.
+    assert!(omp_sessions_dirs(home, &env(&[("OMP_PROFILE", "Bad Name")])).is_empty());
+    assert_eq!(omp_sessions_dirs(home, &env(&[("PI_CODING_AGENT_DIR", "/agents/pi")])), [PathBuf::from("/agents/pi/sessions")]);
+    // Existing named profiles are listed too.
+    std::fs::create_dir_all(home.join(".omp/profiles/side/agent/sessions")).unwrap();
+    std::fs::create_dir_all(home.join(".omp/profiles/NOPE/agent/sessions")).unwrap();
+    assert_eq!(omp_sessions_dirs(home, &env(&[])), [home.join(".omp/agent/sessions"), home.join(".omp/profiles/side/agent/sessions")]);
+    assert_eq!((omp_profile(Some("default")), omp_profile(Some("con")), omp_profile(Some("a.b-c"))), (Some(None), None, Some(Some("a.b-c".into()))));
+  }
+
+  #[test]
+  fn reads_rovo_metadata_with_its_context() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let sessions = tmp.path().join("rovo");
+    let dir = sessions.join("6f0e4c1a-rovo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("metadata.json"), serde_json::json!({"workspace_path": root.join("sub").display().to_string(), "created_at": "2026-11-21T01:00:00Z"}).to_string()).unwrap();
+    std::fs::write(dir.join("session_context.json"), serde_json::json!({
+      "message_history": [
+        {"kind": "request", "timestamp": "2026-11-21T01:00:05Z", "parts": [{"part_kind": "system-prompt", "content": "be nice"}, {"part_kind": "user-prompt", "content": "Add the rovo scanner"}]},
+        {"kind": "response", "timestamp": "2026-11-21T01:01:00Z", "parts": [{"part_kind": "tool-call", "tool_name": "x"}, {"part_kind": "text", "content": "Added. ✓ 日本語"}]},
+        {"kind": "request", "parts": [{"part_kind": "tool-return", "content": "ok"}]}
+      ]
+    }).to_string()).unwrap();
+    let other = sessions.join("elsewhere");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("metadata.json"), serde_json::json!({"cwd": "/elsewhere", "title": "x"}).to_string()).unwrap();
+    let list = list_rovo(&root, &sessions, 10);
+    assert_eq!(list.len(), 1);
+    let s = &list[0];
+    assert_eq!((s.id.as_str(), s.title.as_str(), s.messages, s.agent), ("6f0e4c1a-rovo", "Add the rovo scanner", 2, "rovo"));
+    assert_eq!(s.preview.as_deref(), Some("Agent: Added. ✓ 日本語"));
+    assert!(s.updated > s.created && s.created > 0);
+    // Metadata's title wins; a plain `messages` list counts too.
+    std::fs::write(dir.join("metadata.json"), serde_json::json!({"cwd": root.display().to_string(), "title": "Named"}).to_string()).unwrap();
+    std::fs::write(dir.join("session_context.json"), serde_json::json!({"messages": [{"role": "user", "content": [{"text": "hi"}]}, {"role": "system", "content": "s"}]}).to_string()).unwrap();
+    let s = read_rovo(&dir.join("metadata.json")).unwrap();
+    assert_eq!((s.title.as_str(), s.messages, s.preview.as_deref()), ("Named", 1, Some("You: hi")));
+  }
+
+  #[test]
+  fn reads_antigravity_transcripts_placed_by_its_indexes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let home = tmp.path().join(".gemini/antigravity-cli");
+    let brain = home.join("brain");
+    let rec = |source: &str, kind: &str, content: &str, at: &str| serde_json::json!({"source": source, "type": kind, "content": content, "created_at": at}).to_string();
+    let write = |id: &str, name: &str, lines: &[String]| {
+      let logs = brain.join(id).join(".system_generated/logs");
+      std::fs::create_dir_all(&logs).unwrap();
+      std::fs::write(logs.join(name), lines.join("\n")).unwrap();
+    };
+    // Matched by its opening prompt and time in history.jsonl.
+    let a = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    write(a, "transcript.jsonl", &[rec("USER_EXPLICIT", "USER_INPUT", "<USER_REQUEST>ORCA_8742_REPRO</USER_REQUEST>", "2026-07-15T11:39:10.000Z"), rec("MODEL", "PLANNER_RESPONSE", "Done", "2026-07-15T11:39:12.000Z")]);
+    // The full transcript is preferred over the compact one.
+    write(a, "transcript_full.jsonl", &[rec("USER_EXPLICIT", "USER_INPUT", "<USER_REQUEST>ORCA_8742_REPRO</USER_REQUEST>", "2026-07-15T11:39:10.000Z"), rec("MODEL", "PLANNER_RESPONSE", "Done in full", "2026-07-15T11:39:12.000Z")]);
+    // Placed by id through the cache's project index.
+    let b = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+    write(b, "transcript.jsonl", &[rec("USER", "REQUEST", "plain request", "2026-07-15T12:00:00.000Z")]);
+    // A long prompt cannot be matched by its hash: no folder, so not listed.
+    let c = "cccccccc-dddd-4eee-8fff-aaaaaaaaaaaa";
+    let long = "shared worker preamble ".repeat(7);
+    write(c, "transcript.jsonl", &[rec("USER_EXPLICIT", "USER_INPUT", &format!("<USER_REQUEST>{long}A</USER_REQUEST>"), "2026-07-15T11:39:10.000Z")]);
+    let ms = 1_784_115_550_100i64; // 2026-07-15T11:39:10.100Z
+    std::fs::write(home.join("history.jsonl"), [
+      serde_json::json!({"display": "ORCA_8742_REPRO", "timestamp": ms, "workspace": root.display().to_string()}),
+      serde_json::json!({"display": format!("{long}A"), "timestamp": ms, "workspace": root.display().to_string()}),
+    ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+    std::fs::create_dir_all(home.join("cache")).unwrap();
+    std::fs::write(home.join("cache/projects.json"), serde_json::json!({root.join("pkg").display().to_string(): "proj-1"}).to_string()).unwrap();
+    std::fs::write(home.join("cache/conversation_metadata.json"), serde_json::json!({"conversations": {b: {"summary": {"ProjectID": "proj-1"}}}}).to_string()).unwrap();
+    let mut list = list_antigravity(&root, &brain, 10);
+    list.sort_by(|x, y| x.id.cmp(&y.id));
+    let rows: Vec<(&str, &str, Option<&str>)> = list.iter().map(|s| (s.id.as_str(), s.title.as_str(), s.preview.as_deref())).collect();
+    assert_eq!(rows, [(a, "ORCA_8742_REPRO", Some("Agent: Done in full")), (b, "plain request", Some("You: plain request"))]);
+    assert!(list[0].path.ends_with("transcript_full.jsonl") && list[0].agent == "antigravity" && list[0].messages == 2);
+    assert_eq!(list[1].cwd.as_deref(), Some(root.join("pkg").display().to_string().as_str()));
+    assert_eq!(ag_request("no tags").as_deref(), Some("no tags"));
+    assert_eq!(ag_request("<USER_REQUEST>  open").as_deref(), Some("open"));
+    assert!(ag_prompt_hash(&"x".repeat(97)).is_none() && ag_prompt_hash("ends...").is_none());
+  }
+
+  #[test]
+  fn reads_opencode2_sessions_of_this_folder() {
+    let sqlite = Path::new(crate::accounts::managed::SQLITE);
+    if !sqlite.exists() {
+      return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("opencode.db");
+    let sql = r#"
+      CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER, time_updated INTEGER);
+      CREATE TABLE session_v2 (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, parent_id TEXT, slug TEXT NOT NULL, directory TEXT NOT NULL, title TEXT, model TEXT, version TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, time_archived INTEGER);
+      CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+      INSERT INTO session_v2 VALUES ('ses_2a', 'p', NULL, 's', '/repo', 'OpenCode 2 title', 'gpt-5', '2', 1000, 3000, NULL);
+      INSERT INTO session_v2 VALUES ('ses_2b', 'p', NULL, 's', '/repo/.kingu/worktrees/t', NULL, '{"id":"claude-x"}', '2', 1500, 2000, NULL);
+      INSERT INTO session_v2 VALUES ('ses_child', 'p', 'ses_2a', 's', '/repo', 'sub', NULL, '2', 1600, 2600, NULL);
+      INSERT INTO session_v2 VALUES ('ses_old', 'p', NULL, 's', '/repo', 'Archived', NULL, '2', 100, 200, 300);
+      INSERT INTO session_v2 VALUES ('ses_x', 'p', NULL, 's', '/repo-other', 'Elsewhere', NULL, '2', 100, 5000, NULL);
+      INSERT INTO session_message VALUES ('m1', 'ses_2a', 'user', 1, 1000, 1000, '{"type":"user","text":"Fix the login"}');
+      INSERT INTO session_message VALUES ('m2', 'ses_2a', 'assistant', 2, 2000, 2000, '{"type":"assistant","content":[{"type":"text","text":"Fixed"},"stray",{"type":"tool","name":"bash"},{"type":"text","text":"it."}]}');
+      INSERT INTO session_message VALUES ('m3', 'ses_2a', 'assistant', 3, 2500, 2500, '{"content":[{"type":"tool","name":"bash"}]}');
+      INSERT INTO session_message VALUES ('m4', 'ses_2a', 'tool', 4, 2600, 2600, 'not json');
+      INSERT INTO session_message VALUES ('m5', 'ses_2b', 'user', 1, 1500, 1500, '{"text":["Add","search"]}');
+    "#;
+    assert!(std::process::Command::new(sqlite).arg(&db).arg(sql).status().unwrap().success());
+    let list = list_opencode2(std::slice::from_ref(&db), Path::new("/repo"), 10);
+    let ids: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
+    assert_eq!(ids, ["ses_2a", "ses_2b"]);
+    let a = &list[0];
+    assert_eq!((a.title.as_str(), a.model.as_deref(), a.messages, a.preview.as_deref(), a.agent), ("OpenCode 2 title", Some("gpt-5"), 3, Some("Agent: Fixed it."), "opencode2"));
+    assert_eq!(a.path, format!("{}#ses_2a", db.display()));
+    assert_eq!((list[1].title.as_str(), list[1].model.as_deref()), ("Add search", Some("claude-x")));
+    // A v1-only database has no OpenCode 2 rows.
+    let v1 = dir.path().join("opencode-v1.db");
+    assert!(std::process::Command::new(sqlite).arg(&v1).arg("CREATE TABLE session (id TEXT);").status().unwrap().success());
+    assert!(list_opencode2(&[v1], Path::new("/repo"), 10).is_empty());
+  }
 
   #[test]
   fn reads_muse_session_logs() {
