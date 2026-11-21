@@ -1,0 +1,16 @@
+# Certificates come from Let's Encrypt / ZeroSSL automatically. To get expiry
+# mail, add a global block at the top:  { email ops@example.com }
+
+# Dashboard (people sign in here).
+{$KINGU_WEB_HOST} {
+	encode zstd gzip
+	reverse_proxy web:3000
+}
+
+# Team server API (the desktop app and the dashboard's SSE proxy talk to it).
+{$KINGU_API_HOST} {
+	# Server-Sent Events: pass every event through at once.
+	reverse_proxy api:8787 {
+		flush_interval -1
+	}
+}

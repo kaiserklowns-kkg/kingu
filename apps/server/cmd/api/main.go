@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -12,6 +13,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/kaiserklowns-kkg/kingu/apps/server/internal/api"
 	"github.com/kaiserklowns-kkg/kingu/apps/server/internal/db"
@@ -24,6 +27,7 @@ func main() {
 	flag.StringVar(&m.org, "mint-token-org", "", "mint a personal access token for this org uuid, print it and exit")
 	flag.StringVar(&m.user, "mint-token-user", "", "user id for -mint-token-org (added as a member if needed)")
 	flag.StringVar(&m.role, "mint-token-role", "dev", "member role for a new member: owner|lead|dev|viewer")
+	flag.StringVar(&m.newOrg, "create-org", "", "create an org with this name, mint an owner token for -mint-token-user, print both and exit")
 	flag.Parse()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -34,7 +38,7 @@ func main() {
 	}
 }
 
-type mintFlags struct{ org, user, role string }
+type mintFlags struct{ org, user, role, newOrg string }
 
 func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 	addr := os.Getenv("KINGU_API_ADDR")
@@ -63,13 +67,30 @@ func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 		return err
 	}
 	if migrate {
-		if err := db.Migrate(startCtx, pool, logger); err != nil {
+		if err := runMigrations(startCtx, logger, pool); err != nil {
 			return err
 		}
 		if migrateOnly {
 			logger.Info("migrations complete")
 			return nil
 		}
+	}
+
+	if mint.newOrg != "" {
+		if mint.org != "" || mint.user == "" {
+			return errors.New("-create-org needs -mint-token-user (the first owner) and no -mint-token-org")
+		}
+		orgID, err := api.CreateOrg(startCtx, pool, mint.newOrg)
+		if err != nil {
+			return fmt.Errorf("create org: %w", err)
+		}
+		t, err := api.MintToken(startCtx, pool, orgID, mint.user, "owner", "cli", 0)
+		if err != nil {
+			return fmt.Errorf("mint token: %w", err)
+		}
+		fmt.Println("org_id:", orgID)
+		fmt.Println(t.Token)
+		return nil
 	}
 
 	if mint.org != "" || mint.user != "" {
@@ -85,11 +106,23 @@ func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 		return nil
 	}
 
-	dev := os.Getenv("KINGU_DEV") == "1"
-	if dev {
+	cfg, err := serverConfig(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if cfg.Dev {
 		logger.Warn("KINGU_DEV=1: X-Kingu-Org header auth and POST /v1/dev/tokens are enabled; never expose this server")
 	}
-	app := api.New(pool, logger, api.Config{Dev: dev})
+	if cfg.OIDC != nil {
+		logger.Info("OIDC sign-in enabled", "issuer", cfg.OIDC.Issuer, "org", cfg.OIDC.OrgID)
+	}
+	var certs *certReloader
+	if c, k := os.Getenv("KINGU_TLS_CERT"), os.Getenv("KINGU_TLS_KEY"); c != "" || k != "" {
+		if certs, err = newCertReloader(c, k); err != nil {
+			return err
+		}
+	}
+	app := api.New(pool, logger, cfg)
 	app.Start(ctx)
 
 	srv := &http.Server{
@@ -103,10 +136,18 @@ func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
+	if certs != nil {
+		srv.TLSConfig = certs.tlsConfig()
+	}
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("kingu api listening", "addr", addr)
-		errCh <- srv.ListenAndServe()
+		logger.Info("kingu api listening", "addr", addr, "tls", certs != nil,
+			"rate_limit_store", cmp.Or(cfg.RateLimitStore, "memory"), "trusted_proxies", len(cfg.TrustedProxies))
+		if certs != nil {
+			errCh <- srv.ListenAndServeTLS("", "")
+		} else {
+			errCh <- srv.ListenAndServe()
+		}
 	}()
 
 	select {
@@ -118,4 +159,31 @@ func run(logger *slog.Logger, migrate, migrateOnly bool, mint mintFlags) error {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// runMigrations applies migrations over KINGU_MIGRATE_DATABASE_URL when set
+// (a role that owns the schema), then grants the serving role (DATABASE_URL)
+// only data access. Without it, the serving role runs them itself.
+func runMigrations(ctx context.Context, logger *slog.Logger, serving *pgxpool.Pool) error {
+	dsn := os.Getenv("KINGU_MIGRATE_DATABASE_URL")
+	if dsn == "" {
+		return db.Migrate(ctx, serving, logger)
+	}
+	owner, err := db.Open(ctx, dsn)
+	if err != nil {
+		return fmt.Errorf("migration database: %w", err)
+	}
+	defer owner.Close()
+	if err := db.Migrate(ctx, owner, logger); err != nil {
+		return err
+	}
+	role, err := db.CurrentRole(ctx, serving)
+	if err != nil {
+		return err
+	}
+	if err := db.GrantApp(ctx, owner, role); err != nil {
+		return fmt.Errorf("grant serving role %q: %w", role, err)
+	}
+	logger.Info("granted data access to the serving role", "role", role)
+	return nil
 }

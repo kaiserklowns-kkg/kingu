@@ -139,6 +139,11 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		} else if n > 0 {
 			s.logger.Info("pruned expired org_events", "rows", n)
 		}
+		if s.cfg.RateLimitStore == "postgres" {
+			if _, err := pruneRateLimits(ctx, s.pool); err != nil && ctx.Err() == nil {
+				s.logger.Warn("prune rate_limits failed", "err", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return

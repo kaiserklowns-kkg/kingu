@@ -53,10 +53,12 @@ curl -s localhost:8787/v1/me -H "Authorization: Bearer $TOKEN"
 curl -sN localhost:8787/v1/events -H "Authorization: Bearer $TOKEN"   # live SSE stream
 ```
 
-Without dev mode, mint tokens from the CLI (the org must exist):
+Without dev mode, create the org and its first owner from the CLI, then add
+everyone else from the dashboard (Members → add, then "create token"):
 
 ```sh
-go run ./cmd/api -mint-token-org <org uuid> -mint-token-user alice [-mint-token-role dev]
+go run ./cmd/api -create-org "Acme" -mint-token-user alice   # prints org_id and alice's owner token
+go run ./cmd/api -mint-token-org <org uuid> -mint-token-user bob [-mint-token-role dev]
 ```
 
 Then run the dashboard (`apps/web`, see its README) with
@@ -65,6 +67,11 @@ Then run the dashboard (`apps/web`, see its README) with
 Stop the cluster with `$PG/pg_ctl -D $DEV/data stop`.
 
 ### Migrations: explicit, behind a flag
+
+In production, give migrations their own role: `KINGU_MIGRATE_DATABASE_URL`
+(owns the schema) and `DATABASE_URL` (the serving role, which then only gets
+SELECT/INSERT/UPDATE/DELETE and cannot ALTER, DROP or TRUNCATE). `deploy/` sets
+this up.
 
 Migrations run **only** when `-migrate` (or `-migrate-only`) is passed. Schema
 changes are a deliberate deploy step rather than a side effect of any replica
@@ -79,6 +86,16 @@ binary with `embed.FS`.
 | `KINGU_API_ADDR` | `127.0.0.1:8787` | listen address                         |
 | `DATABASE_URL`   | (required)       | libpq keyword/value or `postgres://` URL |
 | `KINGU_DEV`      | unset            | `1` enables the `X-Kingu-Org`/`X-Kingu-User` headers and `POST /v1/dev/tokens`. Never set it on a reachable server. |
+| `KINGU_MIGRATE_DATABASE_URL` | unset | With `-migrate`/`-migrate-only`: run migrations as this (schema-owning) role, then grant the `DATABASE_URL` role data access only |
+| `KINGU_RATE_LIMIT_STORE` | `memory` | `postgres` shares rate limits across replicas (`rate_limits` table) |
+| `KINGU_TRUSTED_PROXIES` | unset     | Comma-separated IPs/CIDRs of proxies whose `X-Forwarded-For` is believed |
+| `KINGU_TLS_CERT`, `KINGU_TLS_KEY` | unset | Serve HTTPS directly (TLS 1.2+); renewed files are reloaded within a minute |
+| `KINGU_OIDC_ISSUER` | unset         | Enables OIDC sign-in (see below). Exact `iss` of the provider, https |
+| `KINGU_OIDC_CLIENT_ID` | (required with issuer) | OAuth client id; ID tokens must carry it in `aud` |
+| `KINGU_OIDC_ORG` | (required with issuer) | Org uuid the provider's users belong to |
+| `KINGU_OIDC_USER_CLAIM` | `email`   | `email` (must be `email_verified`; compared lowercased) or `sub` → `members.user_id` |
+| `KINGU_OIDC_AUTO_JOIN_ROLE` | (off) | `viewer` or `dev`: someone the IdP signs in who is not a member joins with this role at their first `POST /v1/auth/session` (audited as `member.add` with `via: oidc auto-join`); every other call with a non-member's ID token is still `403 not_a_member`. Never `lead` or `owner` |
+| `KINGU_OIDC_AUTO_JOIN_DOMAINS` | (any) | Comma-separated lowercase email domains (`acme.com,acme.co.th`) allowed to auto-join; needs a verified email |
 
 Rate limit (20 req/s, burst 40 per credential), SSE heartbeat (15s), concurrent
 streams per credential (4) and event pruning interval (10 min) are fields of
@@ -95,20 +112,47 @@ streams per credential (4) and event pruning interval (10 min) are fields of
 - The token lookup runs before the org is known, so `api_tokens` has an extra
   RLS policy that exposes exactly the row whose hash equals the
   transaction-local `app.token_hash`.
-- `viewer` members are read-only (403 `forbidden` on writes).
+- Roles (403 `forbidden` otherwise):
+
+  | Role | May |
+  |------|-----|
+  | `owner` | everything below, plus: any member's role (including owners and leads), other members' tokens (list, mint, revoke), renaming the org, deleting projects |
+  | `lead` | create and edit projects, delete tasks, approve/remove team snaps, read the audit log, add/change/remove `dev` and `viewer` members, close anyone's run |
+  | `dev` | create/sync tasks and runs, share artifacts and skills, close their own runs |
+  | `viewer` | read only, except creating and revoking their own tokens |
+
+  The org always keeps at least one owner (409 `last_owner`).
 - **Dev headers** (`X-Kingu-Org`, optional `X-Kingu-User`) are accepted only
   with `KINGU_DEV=1`, and act as an `owner`. A bearer token always wins.
-- **OIDC (TODO):** `internal/api/auth.go` defines the `Authenticator`
-  interface. An OIDC implementation verifies JWTs against the issuer's JWKS,
-  maps the subject to `members.user_id` and is registered in `api.New` ahead of
-  the PAT authenticator.
+- **OIDC ID tokens** (`Authorization: Bearer <JWT>`, `internal/api/oidc.go`),
+  when `KINGU_OIDC_ISSUER` is set. The signature is checked against the issuer's
+  JWKS (from `/.well-known/openid-configuration`; RS/PS 256–512, ES256/ES384;
+  `none` and HMAC are refused, RSA keys must be ≥ 2048 bits), then `iss`, `aud`
+  (and `azp` with several audiences), `exp`, `nbf` and `iat` with 60s leeway.
+  Keys are cached for an hour; an unknown `kid` (key rotation) refetches at most
+  every 30s, and known keys keep working while the provider is down. The
+  `email` (or `sub`) claim must already be a member of `KINGU_OIDC_ORG`:
+  people are added on the dashboard's Members page first, otherwise 403
+  `not_a_member`. 503 `oidc_unavailable` when the JWKS cannot be fetched.
+- **`POST /v1/auth/session`** (with an ID token) mints a 12-hour Kingu token for
+  that member, named "SSO session". The dashboard's "Sign in with SSO" uses it.
 
 ## Rate limiting
 
-An in-memory token bucket per credential (token id, or org+user for dev
+A token bucket per credential (token id, OIDC subject, or org+user for dev
 headers): 20 requests/second sustained, burst 40. Over the limit the API
 returns 429 `rate_limited` with `Retry-After`. Failed authentication is also
-limited per client IP. Buckets are per replica.
+limited per client IP (1/s, burst 20). The client IP is the connection's
+address, or, for connections from `KINGU_TRUSTED_PROXIES`, the rightmost
+`X-Forwarded-For` entry that is not a trusted proxy (so clients cannot choose
+their own).
+
+Buckets are in memory (per replica) by default. With
+`KINGU_RATE_LIMIT_STORE=postgres` every replica shares them through the
+`rate_limits` table: one atomic UPSERT per check, idle rows pruned hourly. If
+that query fails, the replica falls back to its in-memory bucket rather than
+failing requests. Concurrent SSE streams per credential are still counted per
+replica.
 
 ## Tenancy and Row-Level Security
 
@@ -135,16 +179,31 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 |--------|----------------------------|--------------|
 | GET    | `/health`                  | Also pings the DB. 503 if the DB is unreachable. |
 | GET    | `/v1/me`                   | `{org_id, org_name, user_id, role, token_prefix}` |
-| POST   | `/v1/projects`             | `{name, repo_url, default_base_ref?="main"}` |
-| GET    | `/v1/projects`             | `?limit=1..500` (default 100) |
+| POST   | `/v1/auth/session`         | **OIDC ID token only.** Returns a 12-hour token like `POST /v1/tokens` |
+| PATCH  | `/v1/org`                  | **Owner.** `{name}` |
+| GET    | `/v1/members`              | Any member. `{user_id, role, created_at, active_tokens}` by user_id, paged |
+| PUT    | `/v1/members/{user_id}`    | **Owner, or lead for dev/viewer.** `{role}`: 201 added, 200 changed |
+| DELETE | `/v1/members/{user_id}`    | **Owner, or lead for dev/viewer.** Also deletes their tokens |
+| GET    | `/v1/tokens`               | The caller's tokens (`current` marks the one in use). **Owner:** `?user_id=` or `?all=true` |
+| POST   | `/v1/tokens`               | `{name, ttl_hours? (omitted = 2160 = 90 days, 0 = never, max 8760), user_id? (owner only)}`; returns the plaintext once. Max 50 active per member (409 `too_many_tokens`) |
+| DELETE | `/v1/tokens/{id}`          | Revoke your own token, or (owner) anyone's. Idempotent |
+| GET    | `/v1/audit`                | **Owner/lead.** Newest first: `?actor=&action=&target_type=&target_id=`; `action` ending in `.` is a prefix (`token.`) |
+| POST   | `/v1/projects`             | **Owner/lead.** `{name, repo_url, default_base_ref?="main"}` |
+| GET    | `/v1/projects`             | Paged, newest first. Each has `task_count` |
+| GET    | `/v1/projects/{id}`        | One project |
+| PATCH  | `/v1/projects/{id}`        | **Owner/lead.** `{name?, repo_url?, default_base_ref?}` (at least one) |
+| DELETE | `/v1/projects/{id}`        | **Owner.** Deletes its tasks and runs too; returns `{tasks}` deleted |
 | POST   | `/v1/projects/{id}/tasks`  | `{title (≤300), source?=manual\|github\|linear\|jira, external_ref? (required iff source≠manual), status?=backlog, branch?}` |
 | GET    | `/v1/projects/{id}/tasks`  | `?status=…&limit=…` |
 | GET    | `/v1/tasks`                | Org-wide, newest change first: `?project_id=&status=&limit=` |
-| PATCH  | `/v1/tasks/{id}`           | `{status?, branch?}` (at least one) |
+| GET    | `/v1/tasks/{id}`           | One task with `project_name` (its runs: `GET /v1/runs?task_id=`) |
+| PATCH  | `/v1/tasks/{id}`           | `{title?, status?, branch?}` (at least one) |
+| DELETE | `/v1/tasks/{id}`           | **Owner/lead.** With its runs. A desktop-synced task comes back on its next sync |
 | PUT    | `/v1/tasks/{client_task_id}/sync` | Desktop upsert, see below |
 | POST   | `/v1/tasks/{id}/runs`      | `{adapter, model?, machine_id?, started_at?, ended_at?, exit_reason?, input_tokens?, output_tokens?, cost_usd?}` |
 | PUT    | `/v1/tasks/{client_task_id}/runs/{client_run_id}/sync` | Desktop run upsert, see below |
-| GET    | `/v1/runs`                 | Run history with `task_title`, `project_name`, `source`, `external_ref`, `cost_usd`, `created_by`, newest first: `?task_id=&limit=` |
+| GET    | `/v1/runs`                 | Run history with `task_title`, `project_name`, `source`, `external_ref`, `cost_usd`, `created_by`, newest first: `?task_id=`, paged |
+| POST   | `/v1/runs/{id}/close`      | **Its creator, or owner/lead.** End a run its desktop never finished. Optional `{ended_at?=now, exit_reason?="closed", input_tokens?, output_tokens?, cost_usd?}`; 409 `run_closed` if it already ended |
 | GET    | `/v1/snaps`                | Team Snap catalog (any member), see below |
 | PUT    | `/v1/snaps/{snap_id}`      | **owner/lead.** Approve and pin a snap, see below |
 | DELETE | `/v1/snaps/{snap_id}`      | **owner/lead.** Remove it from the catalog |
@@ -160,6 +219,12 @@ Every `/v1` request needs `Authorization: Bearer kgu_…` (or, in dev mode,
 
 Task status is one of `backlog`, `running`, `needs_input`, `review`, `done` or
 `failed`. Lists return `{"items": [...]}`.
+
+**Pagination.** Projects, tasks, runs, members, tokens and the audit log are
+keyset-paged: `?limit=1..500` (default 100) and `{"items": [...], "next_cursor":
+"…" | null}`. Pass `?cursor=<next_cursor>` with the same filters for the next
+page; a page is never shifted by rows added in front of it. A tampered cursor is
+400 `invalid_cursor`. (Snaps, skills and artifacts are small and unpaged.)
 
 ### `PUT /v1/tasks/{client_task_id}/sync`
 
@@ -290,7 +355,7 @@ PUT /v1/skills/pdf
 ### `GET /v1/events` (SSE)
 
 - One stream per request, scoped to the caller's org by RLS. Messages:
-  `id: <n>` / `event: task.created|task.updated|run.created|run.updated|snap.updated|snap.removed` /
+  `id: <n>` / `event: task.created|task.updated|task.deleted|run.created|run.updated|snap.updated|snap.removed|…` /
   `data: {"id","kind","project_id","task_id","at","data":{…row metadata…}}`.
 - Triggers on `tasks` and `agent_runs` insert the event row into `org_events`
   and `pg_notify('kingu_events', '<org_id>:<event_id>')`. One dedicated
@@ -319,7 +384,8 @@ Input handling:
 
 Codes: `missing_token`, `invalid_token`, `missing_org`, `invalid_org`,
 `unknown_org`, `forbidden`, `rate_limited`, `too_many_streams`,
-`invalid_input`, `invalid_status`, `invalid_json`, `unknown_field`,
+`invalid_input`, `invalid_status`, `invalid_cursor`, `invalid_json`, `unknown_field`,
+`last_owner`, `too_many_tokens`, `run_closed`, `not_a_member`, `oidc_unavailable`,
 `content_not_allowed`, `unsupported_media_type`, `body_too_large`,
 `not_found`, `conflict`, `internal`.
 
@@ -348,13 +414,8 @@ then `pg_ctl` on `PATH`. If none is found, they skip.
 
 ## TODO
 
-- **Auth (OIDC):** implement the `Authenticator` for OIDC bearer JWTs (see
-  above), then enforce owner/lead/dev roles per endpoint beyond viewer = read-only.
-- Token management endpoints (list/revoke for the caller and for org owners).
-- Rate limiting is per replica (in memory); move to a shared store when
-  running several replicas.
-- Endpoints for org and member management, closing runs, and reading the
-  audit log.
-- Cursor pagination instead of `limit` only.
-- TLS and deployment config. Use a separate migration role from the serving
-  role.
+- OIDC for several orgs on one server (today: one issuer → one org).
+  (Auto-join with a default role is done: `KINGU_OIDC_AUTO_JOIN_ROLE`.)
+- Creating orgs over the API (today: `-create-org` on the CLI) and deleting them.
+- See `deploy/` for Docker images, compose, TLS and the two-role database
+  setup.

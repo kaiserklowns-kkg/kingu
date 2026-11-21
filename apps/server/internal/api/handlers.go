@@ -19,13 +19,15 @@ type project struct {
 	DefaultBaseRef string    `json:"default_base_ref"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	TaskCount      int       `json:"task_count"`
 }
 
-const projectCols = `id::text, org_id::text, name, repo_url, default_base_ref, created_at, updated_at`
+const projectCols = `id::text, org_id::text, name, repo_url, default_base_ref, created_at, updated_at,
+	(SELECT count(*) FROM tasks t WHERE t.project_id = projects.id)::int`
 
 func scanProject(row pgx.Row) (project, error) {
 	var p project
-	err := row.Scan(&p.ID, &p.OrgID, &p.Name, &p.RepoURL, &p.DefaultBaseRef, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.OrgID, &p.Name, &p.RepoURL, &p.DefaultBaseRef, &p.CreatedAt, &p.UpdatedAt, &p.TaskCount)
 	return p, err
 }
 
@@ -133,6 +135,10 @@ func (s *Server) createProject(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any,
 	if err := checkText("name", req.Name, maxProjectNameLen, true); err != nil {
 		return 0, nil, err
 	}
+	// Projects define what the whole team syncs into: owners and leads only.
+	if !oc.P.canAdmin() {
+		return 0, nil, errForbidden
+	}
 	if err := checkRepoURL(req.RepoURL); err != nil {
 		return 0, nil, err
 	}
@@ -158,12 +164,14 @@ func (s *Server) createProject(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any,
 }
 
 func (s *Server) listProjects(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, error) {
-	limit, err := parseLimit(r)
+	pg, err := parsePage(r, true, true)
 	if err != nil {
 		return 0, nil, err
 	}
 	rows, err := tx.Query(r.Context(),
-		`SELECT `+projectCols+` FROM projects ORDER BY created_at DESC, id LIMIT $1`, limit)
+		`SELECT `+projectCols+` FROM projects
+		  WHERE ($1::timestamptz IS NULL OR (created_at, id) < ($1, $2::uuid))
+		  ORDER BY created_at DESC, id DESC LIMIT $3`, pg.afterTime(), pg.afterID(), pg.Limit+1)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -171,7 +179,7 @@ func (s *Server) listProjects(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, e
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusOK, listResponse[project]{Items: items}, nil
+	return http.StatusOK, pageOf(items, pg.Limit, func(p project) cursor { return cursor{T: &p.CreatedAt, ID: p.ID} }), nil
 }
 
 // ---- tasks -----------------------------------------------------------------
@@ -249,7 +257,7 @@ func (s *Server) listTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, erro
 	if err != nil {
 		return 0, nil, err
 	}
-	limit, err := parseLimit(r)
+	pg, err := parsePage(r, true, true)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -263,7 +271,8 @@ func (s *Server) listTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, erro
 	rows, err := tx.Query(r.Context(),
 		`SELECT `+taskCols+` FROM tasks
 		 WHERE project_id = $1 AND ($2 = '' OR status = $2)
-		 ORDER BY created_at DESC, id LIMIT $3`, projectID, status, limit)
+		   AND ($3::timestamptz IS NULL OR (created_at, id) < ($3, $4::uuid))
+		 ORDER BY created_at DESC, id DESC LIMIT $5`, projectID, status, pg.afterTime(), pg.afterID(), pg.Limit+1)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -271,10 +280,11 @@ func (s *Server) listTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, erro
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusOK, listResponse[task]{Items: items}, nil
+	return http.StatusOK, pageOf(items, pg.Limit, func(t task) cursor { return cursor{T: &t.CreatedAt, ID: t.ID} }), nil
 }
 
 type patchTaskReq struct {
+	Title  *string `json:"title"`
 	Status *string `json:"status"`
 	Branch *string `json:"branch"`
 }
@@ -288,8 +298,13 @@ func (s *Server) patchTask(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 	if err := decodeJSON(r, &req); err != nil {
 		return 0, nil, err
 	}
-	if req.Status == nil && req.Branch == nil {
-		return 0, nil, errBadRequest("invalid_input", "at least one of status, branch is required")
+	if req.Title == nil && req.Status == nil && req.Branch == nil {
+		return 0, nil, errBadRequest("invalid_input", "at least one of title, status, branch is required")
+	}
+	if req.Title != nil {
+		if err := checkText("title", *req.Title, maxTitleLen, true); err != nil {
+			return 0, nil, err
+		}
 	}
 	if req.Status != nil && !taskStatuses[*req.Status] {
 		return 0, nil, errBadRequest("invalid_status", "status must be one of backlog, running, needs_input, review, done, failed")
@@ -304,11 +319,12 @@ func (s *Server) patchTask(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 		`UPDATE tasks SET
 		     status = COALESCE($2, status),
 		     branch = COALESCE($3, branch),
+		     title = COALESCE($5, title),
 		     updated_by = $4,
 		     updated_at = now()
 		 WHERE id = $1
 		 RETURNING `+taskCols,
-		taskID, req.Status, req.Branch, oc.Actor))
+		taskID, req.Status, req.Branch, oc.Actor, req.Title))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil, errNotFound("task not found")
 	}
@@ -316,6 +332,9 @@ func (s *Server) patchTask(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, err
 		return 0, nil, err
 	}
 	details := map[string]any{}
+	if req.Title != nil {
+		details["title"] = *req.Title
+	}
 	if req.Status != nil {
 		details["status"] = *req.Status
 	}

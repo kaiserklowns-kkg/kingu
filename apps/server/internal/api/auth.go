@@ -27,6 +27,13 @@ type Principal struct {
 	Key string
 	// TokenPrefix is the display prefix of the token used, if any.
 	TokenPrefix string
+	// TokenID is the api_tokens id of the token used, if any.
+	TokenID string
+	// Via is "oidc" for an OIDC ID token, "" otherwise.
+	Via string
+	// AutoJoin: an OIDC identity that is not a member yet and joins at this
+	// sign-in (OIDCConfig.AutoJoinRole); only POST /v1/auth/session sets it.
+	AutoJoin bool
 }
 
 // canWrite reports whether the principal may mutate data.
@@ -36,17 +43,15 @@ func (p *Principal) canWrite() bool { return p.Role != "viewer" }
 // the team Snap catalog (owners and leads).
 func (p *Principal) canAdmin() bool { return p.Role == "owner" || p.Role == "lead" }
 
+// isOwner reports whether the principal owns the org (members, org settings,
+// other members' tokens).
+func (p *Principal) isOwner() bool { return p.Role == "owner" }
+
 // Authenticator turns request credentials into a Principal.
 //
 // Implementations return (nil, nil) when the request carries no credential of
 // their kind, so several can be chained; an *apiError means the credential was
 // present but rejected.
-//
-// TODO(auth/OIDC): add an OIDCAuthenticator that verifies `Authorization:
-// Bearer <JWT>` against the issuer's JWKS (iss, aud, exp, nbf), maps the
-// issuer-scoped subject to members.user_id and derives OrgID from a verified
-// org claim (or a per-org issuer). Wire it in New() ahead of the PAT
-// authenticator for bearer values that do not start with TokenPrefix.
 type Authenticator interface {
 	Authenticate(ctx context.Context, r *http.Request) (*Principal, error)
 }
@@ -105,12 +110,7 @@ func MintToken(ctx context.Context, pool *pgxpool.Pool, orgID, userID, role, nam
 	if role == "" {
 		role = "dev"
 	}
-	var raw [tokenRandomBytes]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return nil, fmt.Errorf("random token: %w", err)
-	}
-	token := TokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
-	out := &MintedToken{Token: token, Prefix: token[:tokenDisplayLen], OrgID: orgID, UserID: userID}
+	var out *MintedToken
 	err := pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT set_config('app.org_id', $1, true)`, orgID); err != nil {
 			return err
@@ -127,29 +127,47 @@ func MintToken(ctx context.Context, pool *pgxpool.Pool, orgID, userID, role, nam
 			 ON CONFLICT (org_id, user_id) DO NOTHING`, userID, role); err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT role FROM members WHERE user_id = $1`, userID).Scan(&out.Role); err != nil {
-			return err
-		}
-		var expires *time.Time
-		if ttl > 0 {
-			t := time.Now().Add(ttl).UTC().Truncate(time.Second)
-			expires = &t
-		}
-		if err := tx.QueryRow(ctx,
-			`INSERT INTO api_tokens (org_id, user_id, name, token_hash, prefix, expires_at)
-			 VALUES (app_current_org(), $1, $2, $3, $4, $5)
-			 RETURNING id::text, expires_at`,
-			userID, name, HashToken(token), out.Prefix, expires).Scan(&out.ID, &out.ExpiresAt); err != nil {
-			return err
-		}
-		// Audit without the token itself; the prefix is enough to identify it.
-		_, err := tx.Exec(ctx,
-			`INSERT INTO audit_log (org_id, actor, action, target_type, target_id, details)
-			 VALUES (app_current_org(), $1, 'token.create', 'api_token', $2, $3)`,
-			userID, out.ID, map[string]any{"prefix": out.Prefix, "name": name})
+		var err error
+		out, err = mintTokenTx(ctx, tx, userID, userID, name, ttl)
 		return err
 	})
 	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// mintTokenTx creates a token for userID, who must already be a member of the
+// org that tx is scoped to, and audits it as actor.
+func mintTokenTx(ctx context.Context, tx pgx.Tx, actor, userID, name string, ttl time.Duration) (*MintedToken, error) {
+	var raw [tokenRandomBytes]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, fmt.Errorf("random token: %w", err)
+	}
+	token := TokenPrefix + base64.RawURLEncoding.EncodeToString(raw[:])
+	out := &MintedToken{Token: token, Prefix: token[:tokenDisplayLen], UserID: userID}
+	if err := tx.QueryRow(ctx, `SELECT app_current_org()::text, role FROM members WHERE user_id = $1`, userID).
+		Scan(&out.OrgID, &out.Role); err != nil {
+		return nil, err
+	}
+	var expires *time.Time
+	if ttl > 0 {
+		t := time.Now().Add(ttl).UTC().Truncate(time.Second)
+		expires = &t
+	}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO api_tokens (org_id, user_id, name, token_hash, prefix, expires_at)
+		 VALUES (app_current_org(), $1, $2, $3, $4, $5)
+		 RETURNING id::text, expires_at`,
+		userID, name, HashToken(token), out.Prefix, expires).Scan(&out.ID, &out.ExpiresAt); err != nil {
+		return nil, err
+	}
+	// Audit without the token itself; the prefix is enough to identify it.
+	details := map[string]any{"prefix": out.Prefix, "name": name}
+	if userID != actor {
+		details["user_id"] = userID
+	}
+	if err := audit(ctx, tx, orgCtx{Actor: actor}, "token.create", "api_token", out.ID, details); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -179,7 +197,7 @@ func (a *tokenAuthenticator) Authenticate(ctx context.Context, r *http.Request) 
 		return nil, nil
 	}
 	if !wellFormedToken(tok) {
-		// TODO(auth/OIDC): JWT bearer tokens go to the OIDC authenticator.
+		// JWTs reach here only when OIDC is off (or the OIDC authenticator passed).
 		return nil, errInvalidToken
 	}
 	hash := hex.EncodeToString(HashToken(tok))
@@ -208,6 +226,7 @@ func (a *tokenAuthenticator) Authenticate(ctx context.Context, r *http.Request) 
 			return errInvalidToken
 		}
 		p.Key = "tok:" + id
+		p.TokenID = id
 		// The membership decides the role; a removed member's tokens stop working.
 		if _, err := tx.Exec(ctx, `SELECT set_config('app.org_id', $1, true)`, p.OrgID); err != nil {
 			return err
@@ -252,6 +271,34 @@ func (devHeaderAuthenticator) Authenticate(_ context.Context, r *http.Request) (
 		actor = u
 	}
 	return &Principal{OrgID: orgID, UserID: actor, Role: "owner", Key: "dev:" + orgID + ":" + actor}, nil
+}
+
+// CreateOrg inserts an org and returns its id. The caller then mints the
+// first owner's token with MintToken.
+func CreateOrg(ctx context.Context, pool *pgxpool.Pool, name string) (string, error) {
+	if err := checkText("org name", name, 200, true); err != nil {
+		return "", err
+	}
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	raw[6] = raw[6]&0x0f | 0x40
+	raw[8] = raw[8]&0x3f | 0x80
+	h := hex.EncodeToString(raw[:])
+	orgID := h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
+	// RLS on orgs only admits the row whose id is app.org_id.
+	err := pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT set_config('app.org_id', $1, true)`, orgID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO orgs (id, name) VALUES ($1, $2)`, orgID, name)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	return orgID, nil
 }
 
 // ---- dev token minting -------------------------------------------------------
@@ -311,19 +358,8 @@ func (s *Server) handleDevMintToken(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		var raw [16]byte
-		_, _ = rand.Read(raw[:])
-		raw[6] = raw[6]&0x0f | 0x40
-		raw[8] = raw[8]&0x3f | 0x80
-		h := hex.EncodeToString(raw[:])
-		orgID = h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
-		err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, `SELECT set_config('app.org_id', $1, true)`, orgID); err != nil {
-				return err
-			}
-			_, err := tx.Exec(ctx, `INSERT INTO orgs (id, name) VALUES ($1, $2)`, orgID, req.OrgName)
-			return err
-		})
+		id, err := CreateOrg(ctx, s.pool, req.OrgName)
+		orgID = id
 		if err != nil {
 			writeError(w, s.toAPIError(r, err))
 			return
