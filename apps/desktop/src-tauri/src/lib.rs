@@ -621,6 +621,9 @@ async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>)
     all.extend(sessions::list_kimi(&root, &kimi_home.join("sessions"), limit));
     // Devin (~/.local/share/devin/cli: transcripts and agent_logs, with sessions.db; Orca's scanners/devin).
     all.extend(sessions::list_devin(&root, &home.join(".local").join("share").join("devin").join("cli"), limit));
+    // Grok CLI (`$GROK_HOME` when absolute, else ~/.grok; sessions/<encoded folder>/<id>; Orca's scanners/grok).
+    let grok_home = std::env::var("GROK_HOME").ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".grok"));
+    all.extend(sessions::list_grok(&root, &dirs, &grok_home.join("sessions"), limit));
     all.sort_by_key(|s| std::cmp::Reverse(s.updated));
     all.truncate(limit);
     Ok(all)
@@ -1692,6 +1695,8 @@ pub fn run() {
       floating_browser::floating_browser_show,
       floating_browser::floating_browser_open_external,
       floating_browser::floating_browser_close,
+      floating_browser::cookies::browser_cookie_sources,
+      floating_browser::cookies::browser_cookie_import,
       floating_browser::floating_browser_zoom,
       floating_browser::floating_browser_find,
       floating_browser::floating_browser_devtools,

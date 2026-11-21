@@ -13,6 +13,11 @@
 	import { draftPrompt } from './agentTarget.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { cleanProfile } from './adeTabs';
+	import { invoke } from '@tauri-apps/api/core';
+	import { open } from '@tauri-apps/plugin-dialog';
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
+	import { status } from '#lib/workbench/status.svelte.ts';
+	import { cookieImportFailureText, cookieImportMessages, type CookieImportFrom, type CookieImportSummary, type CookieSource } from './cookieImport';
 
 	let { worktree, id }: { worktree: string; id: string } = $props();
 	const tab = $derived(adeLayout.browserTab(worktree, id));
@@ -37,6 +42,55 @@
 		const clean = name ? cleanProfile(name) : null;
 		if (clean) adeLayout.setBrowserProfile(worktree, id, clean);
 	}
+	// Orca's Import Cookies: from Chrome or Edge (a profile of theirs) or a cookie file, into this
+	// tab's profile. Only the imported domains are replaced; Google logins are never imported.
+	let importing = $state(false);
+	async function importCookies() {
+		if (importing) return;
+		const into = profile;
+		const sources = await invoke<CookieSource[]>('browser_cookie_sources').catch(() => [] as CookieSource[]);
+		const pick = await quick.choose({
+			placeholder: t('ade.cookieImport.pick', { profile: into || t('ade.browserProfile.default') }),
+			items: [
+				...sources.flatMap((s) =>
+					s.profiles.map((p) => ({ id: `b:${s.browser}:${p.directory}`, label: t('ade.cookieImport.from', { browser: s.label }), description: s.profiles.length > 1 ? p.name : '' }))
+				),
+				{ id: 'file', label: t('ade.cookieImport.fromFile') },
+				{ id: 'google', label: t('ade.cookieImport.googleTitle'), description: t('ade.cookieImport.googleDescription') }
+			]
+		});
+		if (!pick || pick.id === 'google') return;
+		let from: CookieImportFrom;
+		let success: (count: number) => string;
+		if (pick.id === 'file') {
+			const path = await open({ multiple: false, directory: false, filters: [{ name: t('ade.cookieImport.fileFilter'), extensions: ['json'] }] });
+			if (typeof path !== 'string') return;
+			from = { kind: 'file', path };
+			success = (count) => t('ade.cookieImport.importedFile', { count });
+		} else {
+			const [, browser, directory] = pick.id.match(/^b:([^:]+):(.*)$/) ?? [];
+			const source = sources.find((s) => s.browser === browser);
+			const browserProfile = source?.profiles.find((p) => p.directory === directory);
+			if (!source || !browserProfile) return;
+			from = { kind: 'browser', browser: source.browser, directory: browserProfile.directory };
+			success = (count) =>
+				source.profiles.length > 1
+					? t('ade.cookieImport.importedProfile', { count, browser: source.label, profile: browserProfile.name })
+					: t('ade.cookieImport.imported', { count, browser: source.label });
+		}
+		importing = true;
+		status.flash(t('ade.cookieImport.importing'));
+		try {
+			const summary = await invoke<CookieImportSummary>('browser_cookie_import', { profile: into, from });
+			const { info, warnings } = cookieImportMessages(summary, success(summary.imported));
+			if (info) notifications.info(info);
+			for (const w of warnings) notifications.warn(w);
+		} catch (e) {
+			status.error(cookieImportFailureText(e));
+		} finally {
+			importing = false;
+		}
+	}
 	const visible = $derived(
 		adeLayout.key === worktree && (adeLayout.activeTab(worktree) === id || !!adeLayout.treeOf(worktree) && hasLeaf(adeLayout.treeOf(worktree)!, id)) && !adeLayout.board && !floating.open && !quick.visible && !systemSettings.visible
 	);
@@ -53,6 +107,7 @@
 	onPick={(el) => void draftPrompt(worktree, pickedPrompt(el), t('ade.design.what', { selector: el.selector }))}
 	{profile}
 	onProfile={pickProfile}
+	onImportCookies={importCookies}
 	onNewTab={() => adeLayout.newBrowser(worktree)}
 	frame=""
 	padding=""

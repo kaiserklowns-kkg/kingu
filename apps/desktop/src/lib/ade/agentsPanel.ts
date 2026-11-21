@@ -27,6 +27,8 @@ export function resumeArgv(agent: string, id: string): string[] {
 	if (agent === 'kimi') return ['kimi', '--session', id];
 	if (agent === 'cline') return ['cline', '--id', id];
 	if (agent === 'devin') return ['devin', '--resume', id];
+	// Orca groups grok with `--resume <id>` (ai-vault-resume-command.ts; base command `grok`).
+	if (agent === 'grok') return ['grok', '--resume', id];
 	if (agent === 'codex') return ['codex', 'resume', id];
 	if (agent === 'gemini') return ['gemini', '--resume', id];
 	return ['claude', '--resume', id];

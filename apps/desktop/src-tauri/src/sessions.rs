@@ -20,7 +20,7 @@ pub struct Session {
   pub created: i64,
   pub updated: i64,
   pub path: String,
-  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi` or `devin` (Orca's session history covers many CLIs).
+  /// `claude`, `codex`, `gemini`, `opencode`, `copilot`, `cursor`, `qoder`, `codebuddy`, `droid`, `kiro`, `cline`, `kimi`, `devin` or `grok` (Orca's session history covers many CLIs).
   pub agent: &'static str,
 }
 
@@ -1125,6 +1125,226 @@ pub fn list_devin(root: &Path, cli: &Path, limit: usize) -> Vec<Session> {
   out
 }
 
+// ---- Grok CLI (Orca ai-vault scanners/grok, shared/grok-session-paths.ts) ---------------------
+
+/// Orca `GROK_SESSION_GROUP_SCAN_MAX_ENTRIES`: folders looked at per level, so a huge or corrupt
+/// store cannot stall the listing.
+const GROK_SCAN_MAX_ENTRIES: usize = 2048;
+
+/// Orca `isSafeGrokSessionId`: 1 to 128 of `A-Z a-z 0-9 _ -` (official ids are UUIDs).
+fn grok_safe_id(s: &str) -> bool {
+  !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// Grok's folder under `sessions/` for a working folder (Orca `grokEncodedCwdDirName`): the path
+/// URL-encoded like `encodeURIComponent` with `!'()*` encoded too; above 255 bytes, a slug of the
+/// last name (lowercase, runs of other characters as `-`, at most 40) and 16 hex of its BLAKE3.
+pub fn grok_dir_name(cwd: &str) -> Option<String> {
+  if cwd.trim().is_empty() {
+    return None;
+  }
+  let mut encoded = String::new();
+  for b in cwd.bytes() {
+    if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+      encoded.push(b as char);
+    } else {
+      encoded.push_str(&format!("%{b:02X}"));
+    }
+  }
+  if encoded == "." || encoded == ".." {
+    return None;
+  }
+  if encoded.len() <= 255 {
+    return Some(encoded);
+  }
+  let last = Path::new(cwd).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+  let mut slug = String::new();
+  for c in last.to_lowercase().chars() {
+    if c.is_ascii_lowercase() || c.is_ascii_digit() {
+      slug.push(c);
+    } else if !slug.ends_with('-') {
+      slug.push('-');
+    }
+  }
+  let slug: String = slug.trim_matches('-').chars().take(40).collect();
+  let hash = blake3::hash(cwd.as_bytes()).to_hex();
+  Some(format!("{}-{}", if slug.is_empty() { "workspace" } else { &slug }, &hash.as_str()[..16]))
+}
+
+/// The working folder a URL-encoded group name stands for (`None` for a slug+hash name).
+fn grok_decoded_dir(name: &str) -> Option<String> {
+  let b = name.as_bytes();
+  let mut out = Vec::with_capacity(b.len());
+  let mut i = 0;
+  while i < b.len() {
+    match b[i] {
+      b'%' => {
+        let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+        out.push(u8::from_str_radix(hex, 16).ok()?);
+        i += 3;
+      }
+      c if c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.' | b'~') => {
+        out.push(c);
+        i += 1;
+      }
+      _ => return None,
+    }
+  }
+  String::from_utf8(out).ok().filter(|d| Path::new(d).is_absolute())
+}
+
+/// A real folder or file, not a link out of Grok's store (Orca `isSafeChatHistoryFile`).
+fn grok_plain(p: &Path, dir: bool) -> bool {
+  std::fs::symlink_metadata(p).is_ok_and(|m| if dir { m.is_dir() } else { m.is_file() })
+}
+
+/// Orca `extractGrokFirstUserPromptText`'s parts: string content, or `text` parts of an array.
+fn grok_flatten(v: &Value) -> Option<String> {
+  match v {
+    Value::String(s) => Some(s.clone()),
+    Value::Array(items) => {
+      let parts: Vec<&str> = items
+        .iter()
+        .filter_map(|i| match i {
+          Value::String(s) => Some(s.as_str()),
+          Value::Object(o) if o.get("type").and_then(Value::as_str).is_none_or(|t| t == "text") => o.get("text").and_then(Value::as_str),
+          _ => None,
+        })
+        .collect();
+      (!parts.is_empty()).then(|| parts.join("\n"))
+    }
+    _ => None,
+  }
+}
+
+/// Orca `stripGrokUserQueryEnvelope`: the body of `<user_query>`, all of it when the closer is missing.
+fn grok_strip_query(text: &str) -> String {
+  let lower = text.to_ascii_lowercase();
+  let Some(start) = lower.find("<user_query>") else { return text.to_owned() };
+  let body = start + "<user_query>".len();
+  match lower[body..].find("</user_query>") {
+    Some(end) => text[body..body + end].trim().to_owned(),
+    None => text[body..].trim().to_owned(),
+  }
+}
+
+/// Orca `isGrokBootstrapContextText`: only `<user_info>` context (perhaps with a `<git_status>`).
+fn grok_bootstrap(text: &str) -> bool {
+  let n = text.trim().to_ascii_lowercase();
+  if !n.starts_with("<user_info>") {
+    return false;
+  }
+  let Some(end) = n.find("</user_info>") else { return !n.contains("<user_query>") };
+  let rest = n[end + "</user_info>".len()..].trim();
+  rest.is_empty() || (rest.starts_with("<git_status>") && rest.ends_with("</git_status>"))
+}
+
+/// Orca `extractGrokFirstUserPromptText`: the user's ask without Grok's context envelope.
+fn grok_user_text(v: &Value) -> Option<String> {
+  let raw = grok_flatten(v)?;
+  if grok_bootstrap(&raw) {
+    return None;
+  }
+  let t = grok_strip_query(&raw).trim().to_owned();
+  if t.is_empty() || grok_bootstrap(&t) {
+    return None;
+  }
+  let lower = t.to_ascii_lowercase();
+  if (lower.starts_with("<user_info>") || lower.starts_with("<user_info ")) && !lower.contains("<user_query>") {
+    return None;
+  }
+  Some(t)
+}
+
+/// One Grok session (`<sessions>/<encoded cwd>/<id>/summary.json` with `chat_history.jsonl` beside
+/// it, Orca `parseGrokSessionFile`): the summary gives the id, folder, title, model, branch, count
+/// and times; the history the `user` / `assistant` turns.
+pub fn read_grok(summary_path: &Path) -> Option<Session> {
+  let dir = summary_path.parent()?;
+  let dir_name = dir.file_name()?.to_str()?;
+  if !grok_safe_id(dir_name) || summary_path.file_name()? != "summary.json" || !grok_plain(summary_path, false) {
+    return None;
+  }
+  let summary: Value = serde_json::from_slice(&std::fs::read(summary_path).ok()?).ok()?;
+  summary.as_object()?;
+  let str_at = |v: &Value, p: &str| v.pointer(p).and_then(Value::as_str).map(str::trim).filter(|x| !x.is_empty()).map(str::to_owned);
+  // The id is a resume argument: Grok's own when safe, else the folder's (already checked).
+  let id = str_at(&summary, "/info/id").filter(|i| grok_safe_id(i)).unwrap_or_else(|| dir_name.to_owned());
+  let count = ["/num_chat_messages", "/num_messages"].iter().filter_map(|p| summary.pointer(p).and_then(Value::as_u64)).find(|n| *n > 0).unwrap_or(0);
+  let mut s = Session {
+    id,
+    title: str_at(&summary, "/generated_title").or_else(|| str_at(&summary, "/session_summary")).map(|t| short(&t, 120)).unwrap_or_default(),
+    preview: None,
+    cwd: str_at(&summary, "/info/cwd"),
+    branch: str_at(&summary, "/head_branch"),
+    model: str_at(&summary, "/current_model_id"),
+    messages: 0,
+    created: 0,
+    updated: 0,
+    path: summary_path.display().to_string(),
+    agent: "grok",
+  };
+  for k in ["created_at", "updated_at", "last_active_at"] {
+    widen(&mut s, summary.get(k).and_then(when_of));
+  }
+  let mut first_prompt: Option<String> = None;
+  let mut turns = 0u32;
+  // A summary-only session still lists (Orca ignores a missing or unreadable history).
+  let history = dir.join("chat_history.jsonl");
+  let text = if grok_plain(&history, false) { std::fs::read(&history).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default() } else { String::new() };
+  for line in text.lines() {
+    let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
+    let role = v.get("type").and_then(Value::as_str).unwrap_or("");
+    let Some(content) = v.get("content") else { continue };
+    let t = match role {
+      "user" => grok_user_text(content),
+      "assistant" => match content {
+        Value::String(c) => Some(grok_strip_query(c)),
+        other => text_of(other),
+      },
+      _ => continue,
+    };
+    let Some(t) = t.map(|t| t.trim().to_owned()).filter(|t| !t.is_empty()) else { continue };
+    turns += 1;
+    widen(&mut s, v.get("timestamp").and_then(when_of));
+    if role == "user" {
+      first_prompt.get_or_insert_with(|| t.clone());
+    }
+    s.preview = Some(short(&format!("{}: {t}", if role == "user" { "You" } else { "Agent" }), 240));
+  }
+  s.messages = if count > 0 { u32::try_from(count).unwrap_or(u32::MAX) } else { turns };
+  if s.title.is_empty() {
+    s.title = first_prompt.map_or_else(|| "Untitled session".into(), |t| short(&t, 120));
+  }
+  Some(s)
+}
+
+/// Grok sessions of `root` (`sessions` is `$GROK_HOME/sessions`, else `~/.grok/sessions`). Only the
+/// groups of `root`'s folders are opened: the exact names of `dirs` (the folder and its worktrees,
+/// long ones in the slug+hash form) and URL-encoded names of any folder inside `root`.
+pub fn list_grok(root: &Path, dirs: &[PathBuf], sessions: &Path, limit: usize) -> Vec<Session> {
+  let exact: Vec<String> = dirs.iter().filter_map(|d| d.to_str()).filter_map(grok_dir_name).collect();
+  let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+  let groups = std::fs::read_dir(sessions).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).take(GROK_SCAN_MAX_ENTRIES);
+  for g in groups {
+    let Some(name) = g.file_name().to_str().map(str::to_owned) else { continue };
+    if !exact.contains(&name) && !grok_decoded_dir(&name).is_some_and(|d| inside(root, &d)) {
+      continue;
+    }
+    let ids = std::fs::read_dir(g.path()).into_iter().flatten().flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).take(GROK_SCAN_MAX_ENTRIES);
+    for e in ids {
+      if !e.file_name().to_str().is_some_and(grok_safe_id) {
+        continue;
+      }
+      let summary = e.path().join("summary.json");
+      if grok_plain(&summary, false) {
+        files.push((modified(&summary), summary));
+      }
+    }
+  }
+  newest_of(root, files, limit, read_grok)
+}
+
 // ---- OpenCode (Orca ai-vault scanners/opencode/sqlite) ---------------------------------------
 
 /// OpenCode's databases (Orca `listOpenCodeDatabases`): `$OPENCODE_DB` when set (absolute, or a
@@ -1649,5 +1869,84 @@ mod tests {
     let mut ids: Vec<String> = list_devin(Path::new("/repo"), cli, 10).into_iter().map(|s| s.id).collect();
     ids.sort();
     assert_eq!(ids, ["dv-1", "dv-2"], "the db fills dv-2's folder and hides dv-3");
+  }
+
+  #[test]
+  fn names_grok_folders_like_orca() {
+    // Orca's grok-session-paths.test.ts vectors (URL form up to 255 bytes, then slug + BLAKE3).
+    assert_eq!(grok_dir_name("/repo/!'()*").as_deref(), Some("%2Frepo%2F%21%27%28%29%2A"));
+    assert_eq!(grok_dir_name(&format!("/{}", "a".repeat(252))), Some(format!("%2F{}", "a".repeat(252))));
+    let long = "a".repeat(260);
+    let cases = [
+      (format!("/Users/test/{}", "中".repeat(30)), "workspace-43f12fb9a5ee1037".to_owned()),
+      ("/Users/dev/Documents/開発プロジェクト/機能追加/テスト環境/ソースコード/main-branch".to_owned(), "main-branch-6aaeefdde2a621aa".to_owned()),
+      (format!("/{long}/My Workspace  "), "my-workspace-821ab64a500ab620".to_owned()),
+      (format!("/{long}/İProject"), "i-project-a676b9c62bbe86c8".to_owned()),
+      (format!("/{long}/{} !! end", "A".repeat(39)), format!("{}--6306ef8d209ddda1", "a".repeat(39))),
+    ];
+    for (cwd, want) in cases {
+      assert_eq!(grok_dir_name(&cwd), Some(want), "{cwd}");
+    }
+    let n = grok_dir_name(&format!("/{}", "a".repeat(253))).unwrap();
+    assert!(n.starts_with(&"a".repeat(40)) && n.len() == 57, "{n}");
+    assert_eq!(grok_dir_name("."), None);
+    assert_eq!(grok_dir_name(".."), None);
+    assert_eq!(grok_dir_name("  "), None);
+    assert_eq!(grok_decoded_dir("%2Frepo%2Fapp").as_deref(), Some("/repo/app"));
+    assert_eq!(grok_decoded_dir("app-0123456789abcdef"), None);
+    for bad in ["../escape", "nested/id", "nested\\id", ".", "..", &"x".repeat(129)] {
+      assert!(!grok_safe_id(bad), "{bad}");
+    }
+    assert!(grok_safe_id("019e37f4-5135-7b63-a4ab-6d13aa6bf528"));
+  }
+
+  #[test]
+  fn unwraps_grok_user_queries() {
+    let raw = "<user_info>\nOS Version: macos\n</user_info>\n<user_query>\nfix i18n keep ko\n</user_query>";
+    assert_eq!(grok_user_text(&Value::String(raw.into())).as_deref(), Some("fix i18n keep ko"));
+    assert_eq!(grok_user_text(&Value::String("<user_info>context</user_info><user_query>\nShip it".into())).as_deref(), Some("Ship it"));
+    assert_eq!(grok_user_text(&Value::String("<user_info>\nOS Version: macos\n</user_info>".into())), None);
+    assert_eq!(grok_user_text(&Value::String("<user_info>x</user_info><git_status>clean</git_status>".into())), None);
+    assert_eq!(grok_user_text(&serde_json::json!([{ "type": "text", "text": "fix the flaky tests" }, { "type": "image" }])).as_deref(), Some("fix the flaky tests"));
+  }
+
+  #[test]
+  fn reads_grok_sessions_of_the_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join("sessions");
+    let root = Path::new("/repo");
+    let worktree = PathBuf::from(format!("/repo/.kingu/worktrees/{}", "w".repeat(260)));
+    let write = |group: &str, id: &str, cwd: &str, history: &str| {
+      let d = sessions.join(group).join(id);
+      std::fs::create_dir_all(&d).unwrap();
+      let summary = serde_json::json!({ "info": { "id": id, "cwd": cwd }, "current_model_id": "grok-4", "head_branch": "main",
+        "created_at": "2026-11-20T09:00:00.000Z", "updated_at": "2026-11-20T09:05:00.000Z" });
+      std::fs::write(d.join("summary.json"), summary.to_string()).unwrap();
+      std::fs::write(d.join("chat_history.jsonl"), history).unwrap();
+    };
+    let history = [
+      serde_json::json!({ "type": "user", "content": [{ "type": "text", "text": "<user_info>\nShell: zsh\n</user_info>\n<user_query>\nAdd a test\n</user_query>" }], "timestamp": "2026-11-20T09:00:01.000Z" }),
+      serde_json::json!({ "type": "tool", "content": "ignored" }),
+      serde_json::json!({ "type": "assistant", "content": "Added it.", "timestamp": "2026-11-20T09:10:00.000Z" }),
+    ]
+    .map(|v| v.to_string())
+    .join("\n");
+    write(&grok_dir_name("/repo").unwrap(), "s-root", "/repo", &history);
+    write(&grok_dir_name("/repo/sub").unwrap(), "s-sub", "/repo/sub", &history);
+    write(&grok_dir_name(worktree.to_str().unwrap()).unwrap(), "s-long", worktree.to_str().unwrap(), "");
+    write(&grok_dir_name("/other").unwrap(), "s-other", "/other", &history);
+    // A group whose name says /repo but whose summary says otherwise is still dropped.
+    write(&grok_dir_name("/repo/lie").unwrap(), "s-lie", "/elsewhere", &history);
+    // Unsafe session folder names are never read.
+    write(&grok_dir_name("/repo").unwrap(), "bad.id", "/repo", &history);
+    let list = list_grok(root, &[root.to_path_buf(), worktree.clone()], &sessions, 10);
+    let mut ids: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["s-long", "s-root", "s-sub"]);
+    let s = list.iter().find(|s| s.id == "s-root").unwrap();
+    assert_eq!((s.title.as_str(), s.model.as_deref(), s.branch.as_deref(), s.messages, s.preview.as_deref(), s.agent), ("Add a test", Some("grok-4"), Some("main"), 2, Some("Agent: Added it."), "grok"));
+    assert_eq!(s.updated - s.created, 10 * 60 * 1000);
+    let long = list.iter().find(|s| s.id == "s-long").unwrap();
+    assert_eq!((long.title.as_str(), long.messages), ("Untitled session", 0));
   }
 }

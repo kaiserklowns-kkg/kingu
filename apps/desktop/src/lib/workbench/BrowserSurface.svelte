@@ -11,6 +11,7 @@
 	import { quick } from './quick.svelte';
 	import { status } from './status.svelte';
 	import Icon from './Icon.svelte';
+	import { t } from '#lib/i18n/index.ts';
 
 	let {
 		label,
@@ -21,6 +22,7 @@
 		onPick,
 		profile = '',
 		onProfile,
+		onImportCookies,
 		onNewTab,
 		frame = 'rounded border border-(--vscode-widget-border)',
 		padding = 'px-2 pb-2',
@@ -38,6 +40,8 @@
 		profile?: string;
 		/** Orca's toolbar profile picker; absent: no picker (the floating browser). */
 		onProfile?: () => void;
+		/** Orca's Import Cookies (from Chrome / Edge or a cookie file) into the profile; absent: no button. */
+		onImportCookies?: () => void;
 		onNewTab?: () => void;
 		frame?: string;
 		padding?: string;
@@ -234,6 +238,9 @@
 		<button class={BTN} aria-label="Reload" title="Reload" onclick={reload}><Icon name="refresh" size={14} /></button>
 		{#if onProfile}
 			<button class="h-6 max-w-28 shrink-0 truncate rounded px-1.5 text-[11px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" title={`Browser profile: ${profile || 'Default'} (its own cookies and storage)`} aria-label={`Browser profile: ${profile || 'Default'}`} onclick={onProfile}>{profile || 'Default'}</button>
+		{/if}
+		{#if onImportCookies}
+			<button class={BTN} aria-label={t('ade.cookieImport.action')} title={t('ade.cookieImport.action')} onclick={onImportCookies}><Icon name="signIn" size={14} /></button>
 		{/if}
 		<div class="mx-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-full border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-3 focus-within:border-(--vscode-focusBorder)">
 			<Icon name="globe" size={13} />

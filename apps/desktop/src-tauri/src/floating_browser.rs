@@ -4,6 +4,9 @@
 
 use std::sync::Mutex;
 
+/// Orca's cookie import into a browser profile (Chrome / Edge / a cookie file).
+pub mod cookies;
+
 use tauri::http::{header, Request, Response};
 use tauri::{
   webview::{Webview, WebviewBuilder},

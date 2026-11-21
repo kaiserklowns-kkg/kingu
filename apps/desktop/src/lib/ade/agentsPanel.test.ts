@@ -16,5 +16,6 @@ describe('session history resume commands', () => {
 		expect(resumeArgv('kimi', 'session_1')).toEqual(['kimi', '--session', 'session_1']);
 		expect(resumeArgv('cline', 'cl-1')).toEqual(['cline', '--id', 'cl-1']);
 		expect(resumeArgv('devin', 'dv')).toEqual(['devin', '--resume', 'dv']);
+		expect(resumeArgv('grok', '019e37f4-5135-7b63-a4ab-6d13aa6bf528')).toEqual(['grok', '--resume', '019e37f4-5135-7b63-a4ab-6d13aa6bf528']);
 	});
 });
