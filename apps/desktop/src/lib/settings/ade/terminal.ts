@@ -183,6 +183,16 @@ export const TERMINAL_SETTINGS: SettingSchema[] = [
 		scope: 'local'
 	},
 	{
+		id: 'kingu.terminal.quickCommandsInsert',
+		group: G,
+		type: 'object',
+		values: 'boolean',
+		default: {},
+		description:
+			'คำสั่งด่วนที่พิมพ์ลง terminal โดยไม่กด Enter: ชื่อ → true เช่น { "Deploy": true } คำสั่งจะรออยู่ที่ prompt ให้แก้หรือกด Enter เอง คำสั่งหลายบรรทัดจะรวมเป็นบรรทัดเดียวคั่นด้วย ; (Orca: Append Enter ของ quick command) (Quick commands typed without Enter, label → true: the command waits on the prompt for you to edit or press Enter; several lines become one, joined with ;.)',
+		scope: 'local'
+	},
+	{
 		id: 'kingu.terminal.quickPrompts',
 		group: G,
 		type: 'object',

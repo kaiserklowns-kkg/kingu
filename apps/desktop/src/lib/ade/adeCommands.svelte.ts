@@ -85,17 +85,31 @@ export function installAdeCommands(): () => void {
 		commands.register({ ...K.clear, category: 'Terminal', scope: 'agents', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() }),
 		// Orca's Workspace Space: disk used by each task's worktree (IDE and Agents layout alike).
 		// Orca's browser tools while a browser tab is shown (zoom stays on the toolbar: ⌘= ⌘- ⌘0 zoom Kingu).
-		...(['find', 'devtools'] as const).map((action) =>
+		// Back / Forward (⌘[ / ⌘] on macOS) and Focus Address Bar (⌘L): Orca's browser chords
+		// (definitions-core-2/3.ts). Like find, they act while Kingu's own UI has the focus; keys typed
+		// into the page stay with the page. Orca's Alt+← / Alt+→ off macOS are left out: a key scoped
+		// to the Agents layout would take them from the quick input's Back there. ⌘[ / ⌘] are the
+		// pane-focus keys too (a terminal tab is never the browser tab in front), and ⌘L (Toggle Right
+		// Side Bar) gives way while a browser tab is in front, as Orca's browser scope does.
+		...(
+			[
+				{ action: 'find', title: 'Browser: Find in Page', key: 'cmd+f' },
+				{ action: 'devtools', title: 'Browser: Toggle Developer Tools', key: 'alt+cmd+i' },
+				{ action: 'back', title: 'Browser: Go Back', mac: 'cmd+[' },
+				{ action: 'forward', title: 'Browser: Go Forward', mac: 'cmd+]' },
+				{ action: 'address', title: 'Browser: Focus Address Bar', key: 'cmd+l', weight: 1 }
+			] as const
+		).map(({ action, title, ...keys }) =>
 			commands.register({
 				id: `kingu.browser.${action}`,
-				title: action === 'find' ? 'Browser: Find in Page' : 'Browser: Toggle Developer Tools',
+				title,
 				category: 'Browser',
-				key: action === 'find' ? 'cmd+f' : 'alt+cmd+i',
+				...keys,
 				scope: 'agents',
 				when: () => front() && adeLayout.activeBrowser() !== null,
 				run: () => {
 					const b = adeLayout.activeBrowser();
-					if (b) browserAction(browserLabel(b.key, b.tab.id), action);
+					if (b) browserAction(browserLabel(b.key, b.tab.id, b.tab.profile), action);
 				}
 			})
 		),

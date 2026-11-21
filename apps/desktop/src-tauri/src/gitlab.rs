@@ -231,6 +231,91 @@ pub fn comment(t: &dyn Transport, project: &str, iid: u64, body: &str) -> Result
   call(t, Request::post(format!("/projects/{}/issues/{iid}/notes", encoded(project)), json!({ "body": body }))).map(|_| ())
 }
 
+/// Closes or reopens the issue (Orca's `GitLabIssueUpdate.state`, `state_event` in GitLab's API).
+pub fn set_state(t: &dyn Transport, project: &str, iid: u64, open: bool) -> Result<Issue, String> {
+  parse_issue(&call(t, Request::put(format!("/projects/{}/issues/{iid}", encoded(project)), json!({ "state_event": if open { "reopen" } else { "close" } })))?)
+}
+
+/// Assigns the issue to the signed-in user (`me`, its id from `/user`), or unassigns everyone
+/// (GitLab: `assignee_ids` of `[0]`; Orca's `addAssignees` / `removeAssignees`).
+pub fn assign(t: &dyn Transport, project: &str, iid: u64, me: bool) -> Result<Issue, String> {
+  let ids = if me {
+    let id = call(t, Request::get("/user"))?["id"].as_u64().ok_or_else(|| tr!(TrackerMsg::NoViewer, service = SERVICE))?;
+    json!([id])
+  } else {
+    json!([0])
+  };
+  parse_issue(&call(t, Request::put(format!("/projects/{}/issues/{iid}", encoded(project)), json!({ "assignee_ids": ids })))?)
+}
+
+/// Members per page of `members/all`, and the most pages read (Orca reads every page).
+const MEMBERS_PAGE: usize = 100;
+const MEMBERS_PAGES: usize = 5;
+
+/// The ids of the issue's assignees, as GitLab returns them.
+fn assignee_ids(t: &dyn Transport, project: &str, iid: u64) -> Result<Vec<u64>, String> {
+  let v = call(t, Request::get(format!("/projects/{}/issues/{iid}", encoded(project))))?;
+  Ok(v["assignees"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(|u| u["id"].as_u64()).collect())
+}
+
+/// The people who can be assigned the issue (Orca's `listAssignableUsers`: the project's
+/// `members/all`, inherited group members included), its assignees marked: `id` is the user's
+/// numeric id, `name` "Name (@username)", sorted by name. At most 500 members.
+pub fn members(t: &dyn Transport, project: &str, iid: u64) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  let current = assignee_ids(t, project, iid)?;
+  let mut out: Vec<crate::tracker_http::StateChoice> = Vec::new();
+  for page in 1..=MEMBERS_PAGES {
+    let v = call(t, Request::get(format!("/projects/{}/members/all?per_page={MEMBERS_PAGE}&page={page}", encoded(project))))?;
+    let rows = v.as_array().map(Vec::as_slice).unwrap_or_default();
+    for u in rows {
+      let (Some(id), username) = (u["id"].as_u64().filter(|id| *id > 0), text(u, "username")) else { continue };
+      if username.is_empty() || out.iter().any(|c| c.id == id.to_string()) {
+        continue;
+      }
+      let name = text(u, "name");
+      out.push(crate::tracker_http::StateChoice { id: id.to_string(), name: if name.is_empty() { format!("@{username}") } else { format!("{name} (@{username})") }, current: current.contains(&id), needs_fields: false });
+    }
+    if rows.len() < MEMBERS_PAGE {
+      break;
+    }
+  }
+  let key = |c: &crate::tracker_http::StateChoice| c.name.trim_start_matches('@').to_lowercase();
+  out.sort_by(|a, b| key(a).cmp(&key(b)).then_with(|| a.id.cmp(&b.id)));
+  Ok(out)
+}
+
+/// Adds user `user_id` to the issue's assignees or removes them (Orca's `addAssignees` /
+/// `removeAssignees`; GitLab's REST API takes the whole `assignee_ids` list, `[0]` for nobody).
+pub fn set_assignee(t: &dyn Transport, project: &str, iid: u64, user_id: u64, add: bool) -> Result<Issue, String> {
+  if user_id == 0 {
+    return Err(tr!(TrackerMsg::BadUser, service = SERVICE, user = user_id));
+  }
+  let mut ids = assignee_ids(t, project, iid)?;
+  ids.retain(|id| *id != user_id);
+  if add {
+    ids.push(user_id);
+  }
+  ids.truncate(100);
+  let ids = if ids.is_empty() { vec![0] } else { ids };
+  parse_issue(&call(t, Request::put(format!("/projects/{}/issues/{iid}", encoded(project)), json!({ "assignee_ids": ids })))?)
+}
+
+/// Adds and removes labels (Orca's `addLabels` / `removeLabels`: GitLab's `add_labels` / `remove_labels`).
+pub fn edit_labels(t: &dyn Transport, project: &str, iid: u64, add: &[String], remove: &[String]) -> Result<Issue, String> {
+  let clean = |list: &[String]| -> Result<String, String> {
+    list.iter().map(|l| crate::tracker_http::clean_label(l, &[',']).ok_or_else(|| tr!(TrackerMsg::BadLabel, label = l.clone()))).collect::<Result<Vec<_>, _>>().map(|v| v.join(","))
+  };
+  let mut body = serde_json::Map::new();
+  let (a, r) = (clean(add)?, clean(remove)?);
+  if !a.is_empty() {
+    body.insert("add_labels".into(), Value::String(a));
+  }
+  if !r.is_empty() {
+    body.insert("remove_labels".into(), Value::String(r));
+  }
+  parse_issue(&call(t, Request::put(format!("/projects/{}/issues/{iid}", encoded(project)), Value::Object(body)))?)
+}
+
 /// Only a page on the connected GitLab host opens from a task's GitLab link.
 pub fn gitlab_url(url: &str, host: &str) -> Result<url::Url, String> {
   let u = url::Url::parse(url).map_err(|e| e.to_string())?;
@@ -364,6 +449,46 @@ pub async fn gitlab_issue_comment(host: String, key: String, body: String) -> Re
 }
 
 #[tauri::command]
+pub async fn gitlab_issue_set_state(host: String, key: String, open: bool) -> Result<Issue, String> {
+  let host = host_or_err(&host)?;
+  let (project, iid) = split_key(&key)?;
+  blocking(move || {
+    let issue = set_state(&connected(&host)?, &project, iid, open)?;
+    log::info!("{} gitlab issue {project}#{iid}", if open { "reopened" } else { "closed" });
+    Ok(issue)
+  })
+  .await
+}
+
+#[tauri::command]
+pub async fn gitlab_issue_assign(host: String, key: String, me: bool) -> Result<Issue, String> {
+  let host = host_or_err(&host)?;
+  let (project, iid) = split_key(&key)?;
+  blocking(move || assign(&connected(&host)?, &project, iid, me)).await
+}
+
+#[tauri::command]
+pub async fn gitlab_issue_members(host: String, key: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  let host = host_or_err(&host)?;
+  let (project, iid) = split_key(&key)?;
+  blocking(move || members(&connected(&host)?, &project, iid)).await
+}
+
+#[tauri::command]
+pub async fn gitlab_issue_set_assignee(host: String, key: String, user_id: u64, add: bool) -> Result<Issue, String> {
+  let host = host_or_err(&host)?;
+  let (project, iid) = split_key(&key)?;
+  blocking(move || set_assignee(&connected(&host)?, &project, iid, user_id, add)).await
+}
+
+#[tauri::command]
+pub async fn gitlab_issue_labels(host: String, key: String, add: Vec<String>, remove: Vec<String>) -> Result<Issue, String> {
+  let host = host_or_err(&host)?;
+  let (project, iid) = split_key(&key)?;
+  blocking(move || edit_labels(&connected(&host)?, &project, iid, &add, &remove)).await
+}
+
+#[tauri::command]
 pub fn gitlab_issue_open(host: String, url: String) -> Result<(), String> {
   let host = host_or_err(&host)?;
   crate::system::open_web_url(gitlab_url(&url, &host)?.as_str())
@@ -473,5 +598,62 @@ mod tests {
     assert!(gitlab_url("https://git.acme.dev:8443/a/b/-/issues/1", "git.acme.dev:8443").is_ok());
     assert!(gitlab_url("https://gitlab.com.evil.dev/x", "gitlab.com").is_err());
     assert!(gitlab_url("http://gitlab.com/x", "gitlab.com").is_err());
+  }
+
+  #[test]
+  fn closes_and_reopens_with_a_state_event() {
+    let t = Fake::new(&[(200, issue(12)), (200, issue(12))]);
+    set_state(&t, "acme/app", 12, false).unwrap();
+    set_state(&t, "acme/app", 12, true).unwrap();
+    let seen = t.requests();
+    assert_eq!((seen[0].method, seen[0].path.as_str(), seen[0].body.clone()), (Method::Put, "/projects/acme%2Fapp/issues/12", Some(json!({ "state_event": "close" }))));
+    assert_eq!(seen[1].body, Some(json!({ "state_event": "reopen" })));
+  }
+
+  #[test]
+  fn assigns_to_me_by_user_id_or_unassigns_everyone() {
+    let t = Fake::new(&[(200, json!({ "id": 7, "username": "k" })), (200, issue(12)), (200, issue(12))]);
+    assign(&t, "acme/app", 12, true).unwrap();
+    assign(&t, "acme/app", 12, false).unwrap();
+    let seen = t.requests();
+    assert_eq!(seen[1].body, Some(json!({ "assignee_ids": [7] })));
+    assert_eq!(seen[2].body, Some(json!({ "assignee_ids": [0] })));
+  }
+
+  #[test]
+  fn lists_project_members_with_assignees_marked_and_adds_or_removes_one() {
+    let mut assigned = issue(12);
+    assigned["assignees"] = json!([{ "id": 7, "username": "bo" }]);
+    let full: Vec<Value> = (1..=100).map(|i| json!({ "id": 100 + i, "username": format!("u{i}"), "name": if i == 1 { "" } else { "Zed" } })).collect();
+    let t = Fake::new(&[
+      (200, assigned.clone()),
+      (200, Value::Array(full)),
+      (200, json!([{ "id": 7, "username": "bo", "name": "Bo Lee" }, { "id": 9, "username": "ann", "name": "Ann" }, { "id": 7, "username": "bo" }, { "username": "noid" }])),
+    ]);
+    let list = members(&t, "acme/app", 12).unwrap();
+    assert_eq!(list.len(), 102);
+    assert_eq!((list[0].id.as_str(), list[0].name.as_str(), list[0].current), ("9", "Ann (@ann)", false));
+    assert!(list.iter().any(|c| c.id == "7" && c.name == "Bo Lee (@bo)" && c.current));
+    assert!(list.iter().any(|c| c.name == "@u1"));
+    let seen = t.requests();
+    assert_eq!(seen[1].path, "/projects/acme%2Fapp/members/all?per_page=100&page=1");
+    assert_eq!(seen[2].path, "/projects/acme%2Fapp/members/all?per_page=100&page=2");
+
+    let t = Fake::new(&[(200, assigned.clone()), (200, issue(12)), (200, assigned), (200, issue(12))]);
+    set_assignee(&t, "acme/app", 12, 9, true).unwrap();
+    set_assignee(&t, "acme/app", 12, 7, false).unwrap();
+    let seen = t.requests();
+    assert_eq!((seen[1].method, seen[1].body.clone()), (Method::Put, Some(json!({ "assignee_ids": [7, 9] }))));
+    assert_eq!(seen[3].body, Some(json!({ "assignee_ids": [0] })), "removing the last assignee leaves nobody");
+    assert!(set_assignee(&t, "acme/app", 12, 0, true).is_err());
+    assert_eq!(t.requests().len(), 4);
+  }
+
+  #[test]
+  fn edits_labels_as_comma_lists() {
+    let t = Fake::new(&[(200, issue(12))]);
+    edit_labels(&t, "acme/app", 12, &["bug".into(), "ux".into()], &["old".into()]).unwrap();
+    assert_eq!(t.requests()[0].body, Some(json!({ "add_labels": "bug,ux", "remove_labels": "old" })));
+    assert!(edit_labels(&t, "acme/app", 12, &["a,b".into()], &[]).is_err());
   }
 }

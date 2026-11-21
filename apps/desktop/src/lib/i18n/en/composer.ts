@@ -44,6 +44,8 @@ export const composer = {
 	'composer.run.editsHint': 'Edits files without asking, and asks before using other tools',
 	'composer.run.all': 'Allow all',
 	'composer.run.allHint': 'Runs tool calls without asking',
+	'composer.run.assisted': 'Assisted permissions',
+	'composer.run.assistedHint': 'A reviewer model lets low-risk tool calls run and asks you about the rest (Claude agent only)',
 	'composer.run.global': 'Global auto-approve is on',
 
 	'composer.menu.search': 'Search',

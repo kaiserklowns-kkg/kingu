@@ -31,7 +31,7 @@
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
 	import { isPassiveInput, parseProgramStatus, PROGRAM_STATUS_OSC, type ProgramEvent } from '#lib/ade/programStatus.ts';
 	import { INSERT_EVENT } from '#lib/voice/target.ts';
-	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
+	import { QUICK_INSERT_ID, quickAppendsEnter, quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 	import { ago, failed, ShellIntegration, type Command } from './shellIntegrationAddon.ts';
 	import { decorationPlaces } from './shellIntegration.ts';
@@ -59,6 +59,7 @@
 		slug,
 		run,
 		type,
+		typeEnter = true,
 		task,
 		cwdFrom,
 		folder,
@@ -81,6 +82,8 @@
 		slug?: string;
 		run?: string[];
 		type?: string;
+		/** `type` is left on the prompt without Enter (a quick command in Insert mode). */
+		typeEnter?: boolean;
 		task?: TaskSpawn;
 		cwdFrom?: string;
 		folder?: string;
@@ -285,7 +288,7 @@
 	function runQuick(index: number) {
 		const q = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'))[index];
 		if (!q) return;
-		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
+		invoke('pty_write', { key, data: quickCommandInput(q.command, quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), q.label)) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 		term?.focus();
 	}
 
@@ -402,7 +405,7 @@
 			if (disposed) return;
 			if (a.epoch) epoch = a.epoch;
 			// The shell reads typed-ahead input once it is ready, like keys pressed while it starts.
-			if (a.spawned && type?.trim()) invoke('pty_write', { key, data: quickCommandInput(type) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
+			if (a.spawned && type?.trim()) invoke('pty_write', { key, data: quickCommandInput(type, typeEnter) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;

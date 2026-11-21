@@ -10,6 +10,13 @@ export const adeWorkflow = {
 	'adeWorkflow.board.title': 'บอร์ดงาน',
 	'adeWorkflow.board.prFilter': 'สถานะ PR',
 	'adeWorkflow.board.prAll': 'PR ทั้งหมด',
+	'adeWorkflow.board.otherProject': 'อยู่ใน {project}: เปิดโปรเจกต์นั้นแล้วเปิดงานนี้',
+	'adeWorkflow.board.projectsAll': 'ทุกโปรเจกต์',
+	'adeWorkflow.board.projectsChosen': '{count} โปรเจกต์',
+	'adeWorkflow.board.projectFilter': 'กรองตามโปรเจกต์',
+	'adeWorkflow.board.openProject': 'เปิดอยู่',
+	'adeWorkflow.board.clearFilters': 'ล้างตัวกรองทั้งหมด',
+	'adeWorkflow.board.removeFilter': 'เอาตัวกรอง {name} ออก',
 	'adeWorkflow.board.idle': 'ว่าง',
 	'adeWorkflow.board.idleHint': 'งานที่เสร็จแล้วและคุณเห็นแล้ว',
 	'adeWorkflow.board.showIdle': 'แสดงงานที่ว่าง',
@@ -28,6 +35,13 @@ export const adeWorkflow = {
 	'adeWorkflow.board.byAgent': 'สถานะ agent',
 	'adeWorkflow.board.byAgentTitle': 'คอลัมน์ตามสิ่งที่ agent ทำอยู่: รอคุณ กำลังทำ เสร็จแล้ว',
 	'adeWorkflow.board.cardTitle': '{title}: ลากไปคอลัมน์อื่นเพื่อเปลี่ยนสถานะ',
+	// BoardPopoutWindow.svelte / boardPopout.svelte.ts: the board's pop-out window
+	'adeWorkflow.board.popOut': 'แยกหน้าต่าง',
+	'adeWorkflow.board.popOutTitle': 'เปิดบอร์ด agent ในหน้าต่างของมันเอง (Open as Pop-out ของ Orca) โดยแสดงตามหน้าต่างนี้',
+	'adeWorkflow.popout.windowTitle': 'บอร์ด Agent ของ Kingu',
+	'adeWorkflow.popout.title': 'บอร์ด Agent',
+	'adeWorkflow.popout.waiting': 'กำลังรอบอร์ดจากหน้าต่างที่เปิดหน้าต่างนี้…',
+	'adeWorkflow.popout.openTask': '{title}: เปิดงานนี้ในหน้าต่าง Kingu',
 	// AdeSidebar.svelte
 	'adeWorkflow.groupBy': 'ขั้นตอน',
 	// worktreeActions.ts / worktreeMenu.svelte.ts

@@ -982,6 +982,8 @@ mod tests {
     assert_eq!(commit_flags(&all), ["commit", "-q", "--cleanup=strip", "--amend", "--signoff", "-S", "--no-verify", "--allow-empty"]);
   }
 
+  // A shell-script hook made executable with a Unix mode.
+  #[cfg(unix)]
   #[test]
   fn no_verify_skips_the_pre_commit_hook() {
     let (_tmp, repo) = temp_repo();

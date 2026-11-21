@@ -212,9 +212,26 @@ export function quickCommands(map: Readonly<Record<string, unknown>> | undefined
 		.slice(0, MAX_QUICK_COMMANDS);
 }
 
-/** What is typed into the shell: each line followed by Enter, like typing it. */
-export function quickCommandInput(command: string): string {
+/**
+ * What is typed into the shell: each line followed by Enter, like typing it. `appendEnter` off
+ * (Orca's Insert run mode, `buildTerminalQuickCommandInput`): the command is left on the prompt,
+ * its lines joined into one shell list (Orca's `flattenTerminalQuickCommand`) so none runs early.
+ */
+export function quickCommandInput(command: string, appendEnter = true): string {
+	if (!appendEnter) {
+		return command
+			.split(/\r\n|\r|\n/)
+			.map((l) => l.trim())
+			.filter(Boolean)
+			.join('; ');
+	}
 	return `${command.replace(/\r?\n/g, '\r')}\r`;
+}
+
+/** `kingu.terminal.quickCommandsInsert`: the quick commands typed without Enter (Orca: appendEnter off). */
+export const QUICK_INSERT_ID = 'kingu.terminal.quickCommandsInsert';
+export function quickAppendsEnter(insert: Readonly<Record<string, unknown>> | undefined, label: string): boolean {
+	return insert?.[label] !== true;
 }
 
 /** The tab bar's Quick Commands button (Orca's split button): the command run last, else the first. */

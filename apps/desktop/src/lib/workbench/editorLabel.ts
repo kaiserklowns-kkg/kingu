@@ -24,6 +24,7 @@ import { terminalIdOfEditor } from '#lib/terminal/terminalEditor.svelte.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { isDisassemblyKey, parseMemoryKey } from '#lib/debug/memory.ts';
 import { chatIdOfDebugKey } from '#lib/agent/chatDebug.ts';
+import { DEFAULT_KEYBINDINGS_KEY, DEFAULT_SETTINGS_KEY } from '#lib/settings/defaultsJson.ts';
 
 const compiled = new WeakMap<object, ReturnType<typeof customLabelPatterns>>();
 
@@ -39,6 +40,9 @@ function custom(key: string): string | undefined {
 
 export function editorLabel(key: string): string {
 	if (key === SETTINGS_EDITOR_KEY) return 'Settings';
+	// VS Code (preferencesService.ts): the raw defaults open as `defaultSettings.jsonc`, the keybindings with the label "Default Keybindings".
+	if (key === DEFAULT_SETTINGS_KEY) return 'defaultSettings.jsonc';
+	if (key === DEFAULT_KEYBINDINGS_KEY) return 'Default Keybindings';
 	if (isUntitled(key)) return untitledLabel(untitledName(key), untitledFirstLines.get(key) ?? '', settings.get<'content' | 'name'>('workbench.editor.untitled.labelFormat'));
 	if (isSearchEditorKey(key)) return searchEditorName(key, searchEditors.peek(key)?.config.query ?? '');
 	if (isBoardKey(key)) return t('workbench.editorLabel.board');

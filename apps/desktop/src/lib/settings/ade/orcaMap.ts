@@ -163,6 +163,7 @@ export const ORCA_MAP: readonly OrcaRow[] = [
 	['terminalScopeHistoryByWorktree', 'kingu.terminal.scopeHistoryByWorktree', 'added'],
 	['terminalQuickCommands', 'kingu.terminal.quickCommands', 'added'],
 	['terminalQuickCommands[action=prompt]', 'kingu.terminal.quickPrompts', 'added', 'prompts run with their agent or kingu.agent.cli'],
+	['terminalQuickCommands.appendEnter', 'kingu.terminal.quickCommandsInsert', 'added', 'the commands typed without Enter, by label'],
 	['terminalQuickCommands[action=prompt].agent', 'kingu.terminal.quickPromptAgents', 'added', 'the agent of each prompt, by label'],
 	['terminalFontFamily', 'terminal.integrated.fontFamily', 'mapped'],
 	['terminalFontSize', 'terminal.integrated.fontSize', 'mapped'],

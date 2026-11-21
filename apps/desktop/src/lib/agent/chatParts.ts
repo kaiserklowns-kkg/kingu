@@ -6,7 +6,7 @@
 
 import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
-import { guardAskedText, guardBlockedText } from './guardText';
+import { assistedText, guardAskedText, guardBlockedText } from './guardText';
 import type { AgentEvent, McpAction, McpRequestEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
 import type { ArtifactEvent } from '#lib/artifacts/artifacts.ts';
 
@@ -21,6 +21,8 @@ export type ToolPart = {
 	children?: Part[];
 	/** The `chat.tools.*.autoApprove` rules that let it run without a prompt (`tool_auto_approved`). */
 	autoApproved?: string[];
+	/** Assisted permissions let it run without a prompt: the reviewer's reason (`assisted_review`). */
+	assistedApproved?: string;
 };
 
 export type Part =
@@ -87,6 +89,8 @@ export function buildTurns(run: ChatView): Turn[] {
 	const askReasons = new Map<string, string>();
 	/** Auto-approvals that came before their call's `tool_use`, by tool call id. */
 	const approvedEarly = new Map<string, string[]>();
+	/** An Assisted approval that came before its tool_use, by tool use id. */
+	const assistedEarly = new Map<string, string>();
 	/** Votes by checkpoint, the last one winning. */
 	const votes = new Map<number, Vote | null>();
 	const close = (canceled: boolean) => {
@@ -116,6 +120,8 @@ export function buildTurns(run: ChatView): Turn[] {
 				const tool: ToolPart = { kind: 'tool', id: ev.id, name: ev.name, input: ev.input };
 				const early = approvedEarly.get(ev.id);
 				if (early) tool.autoApproved = early;
+				const assisted = assistedEarly.get(ev.id);
+				if (assisted !== undefined) tool.assistedApproved = assisted;
 				sink(ev.parent_tool_use_id).push(tool);
 				if (ev.id) tools.set(ev.id, tool);
 				break;
@@ -135,6 +141,18 @@ export function buildTurns(run: ChatView): Turn[] {
 			case 'guard_asked':
 				askReasons.set(ev.request_id, guardAskedText(ev));
 				break;
+			case 'assisted_review': {
+				if (ev.verdict !== 'approved') {
+					// A safety ask's own reason (a guard_asked for the same prompt) stays first.
+					if (ev.request_id && !askReasons.has(ev.request_id)) askReasons.set(ev.request_id, assistedText(ev));
+					break;
+				}
+				if (!ev.tool_use_id) break;
+				const tool = tools.get(ev.tool_use_id);
+				if (tool) tool.assistedApproved = ev.reason;
+				else assistedEarly.set(ev.tool_use_id, ev.reason);
+				break;
+			}
 			case 'tool_auto_approved': {
 				if (!ev.tool_use_id) break;
 				const tool = tools.get(ev.tool_use_id);

@@ -7,7 +7,7 @@
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { withoutQuickCommand, withQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
+	import { QUICK_INSERT_ID, withoutQuickCommand, withQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
 	import { invoke } from '@tauri-apps/api/core';
 	import { enabledBins } from './agentCli';
 	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
@@ -15,13 +15,15 @@
 
 	type Scope = 'user' | 'repo';
 	type Kind = 'command' | 'prompt';
-	let { onclose, onsaved, initial }: { onclose: () => void; onsaved?: (label: string) => void; /** Edit Quick Command: the one being changed and where it is kept. */ initial?: { kind: Kind; label: string; command: string; scope: Scope; agent?: string } } = $props();
+	let { onclose, onsaved, initial }: { onclose: () => void; onsaved?: (label: string) => void; /** Edit Quick Command: the one being changed and where it is kept. */ initial?: { kind: Kind; label: string; command: string; scope: Scope; agent?: string; appendEnter?: boolean } } = $props();
 
 	const IDS: Record<Kind, string> = { command: 'kingu.terminal.quickCommands', prompt: 'kingu.terminal.quickPrompts' };
 	let kind = $state<Kind>(untrack(() => initial?.kind ?? 'command'));
 	// A prompt's agent (Orca's Choose agent): '' = kingu.agent.cli. Kept in kingu.terminal.quickPromptAgents.
 	const AGENTS_ID = 'kingu.terminal.quickPromptAgents';
 	let agent = $state(untrack(() => initial?.agent ?? ''));
+	// Orca's Append Enter (on by default): off types the command without running it (kingu.terminal.quickCommandsInsert).
+	let appendEnter = $state(untrack(() => initial?.appendEnter ?? true));
 	let found = $state<string[]>([]);
 	onMount(() => {
 		void invoke<string[]>('agent_cli_found', { names: KNOWN_BINS })
@@ -52,6 +54,21 @@
 		if (JSON.stringify(nextAgents) !== JSON.stringify(before && typeof before === 'object' ? before : {})) await settings.set(AGENTS_ID, nextAgents, scope);
 	}
 
+	/** A command's Insert mode next to it (same scope, same label), like a prompt's agent. */
+	async function saveInsert() {
+		const of = (s: Scope) => (s === 'repo' ? settings.repo.values : settings.user.values)[QUICK_INSERT_ID];
+		if (initial?.kind === 'command' && (initial.label !== label.trim() || initial.scope !== scope || kind !== 'command')) {
+			const old = of(initial.scope);
+			if (old && typeof old === 'object' && initial.label in old) await settings.set(QUICK_INSERT_ID, withoutKey(old, initial.label), initial.scope);
+		}
+		if (kind !== 'command') return;
+		const current = withoutKey(of(scope), label.trim());
+		const next = appendEnter ? current : { ...current, [label.trim()]: true };
+		const before = of(scope);
+		if (JSON.stringify(next) !== JSON.stringify(before && typeof before === 'object' ? before : {})) await settings.set(QUICK_INSERT_ID, next, scope);
+	}
+	const withoutKey = (map: unknown, key: string): Record<string, unknown> => Object.fromEntries(Object.entries(map && typeof map === 'object' ? (map as Record<string, unknown>) : {}).filter(([k]) => k !== key));
+
 	async function save(e: Event) {
 		e.preventDefault();
 		if (saving) return;
@@ -68,6 +85,7 @@
 			await settings.set(IDS[kind], next, scope);
 			if (moved && !sameSlot) await settings.set(IDS[initial.kind], withoutQuickCommand(layerOf(initial.scope, initial.kind), initial.label), initial.scope);
 			await saveAgent();
+			await saveInsert();
 			onsaved?.(label.trim());
 			onclose();
 		} catch (err) {
@@ -100,6 +118,15 @@
 			<span class="text-xs text-(--vscode-descriptionForeground)">{kind === 'prompt' ? t('legacyAde.quickCommand.promptText') : t('legacyAde.quickCommand.commandText')}</span>
 			<textarea class={[INPUT, 'h-20 resize-y', kind === 'command' && 'font-mono']} placeholder={kind === 'prompt' ? t('legacyAde.quickCommand.promptPlaceholder') : 'bun run dev'} bind:value={command} disabled={saving} spellcheck={kind === 'prompt'}></textarea>
 		</label>
+		{#if kind === 'command'}
+			<label class="flex items-start gap-2">
+				<input type="checkbox" class="mt-0.5" bind:checked={appendEnter} disabled={saving} />
+				<span>
+					<span class="block">{t('legacyAde.quickCommand.appendEnter')}</span>
+					<span class="block text-[11px] text-(--vscode-descriptionForeground)">{appendEnter ? t('legacyAde.quickCommand.appendEnterOn') : t('legacyAde.quickCommand.appendEnterOff')}</span>
+				</span>
+			</label>
+		{/if}
 		{#if kind === 'prompt'}
 			<label class="block space-y-1">
 				<span class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.quickCommand.agent')}</span>

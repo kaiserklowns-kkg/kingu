@@ -8,6 +8,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Sent to the webview when the user clicks a notification: `{ slug, chat_id?, root? }`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const NOTIFICATION_CLICKED: &str = "agent:notification-clicked";
 
 /// What a click opens: an ADE task (`slug`) or an agent chat of the open folder (`chat_id`).
@@ -34,6 +35,7 @@ pub fn focus_main(app: &AppHandle) {
   }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn clicked(app: &AppHandle, target: Clicked) {
   match target.window.clone().filter(|w| crate::windows::focus(app, w)) {
     Some(w) => {
@@ -126,6 +128,7 @@ pub fn agent_notify(
 
 /// The dock badge text for `count` agents/tasks waiting on you (Orca's unread dock badge): none
 /// for 0, `99+` past 99.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn badge_label(count: u32) -> Option<String> {
   match count {
     0 => None,

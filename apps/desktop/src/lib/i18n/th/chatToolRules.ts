@@ -8,5 +8,8 @@ export const chatToolRules = {
 	'chatToolRules.allow.domainHint': 'เพิ่ม {keys} ลงใน chat.tools.urls.autoApprove ของการตั้งค่าผู้ใช้ แล้วดึงหน้านี้',
 	'chatToolRules.saveFailed': 'บันทึกกฎไม่สำเร็จ: {error}',
 	'chatToolRules.approvedBy': 'อนุมัติเองตามกฎ {rules}',
+	'chatToolRules.assistedApproved': 'Assisted permissions อนุมัติ: {reason}',
+	'chatToolRules.assistedAsked': 'Assisted permissions ขอให้คุณตัดสิน: {reason}',
+	'chatToolRules.assistedUnavailable': 'ตัวตรวจ Assisted ตัดสินไม่ได้ จึงถามคุณ: {reason}',
 	'chatToolRules.approvedByMany': 'อนุมัติเองตามกฎ {rules}'
 } satisfies Record<keyof typeof en, string>;

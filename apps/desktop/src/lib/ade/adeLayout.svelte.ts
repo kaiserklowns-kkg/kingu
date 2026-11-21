@@ -15,15 +15,16 @@ import { isDiffKey } from '#lib/workbench/scm.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { quick } from '#lib/workbench/quick.svelte.ts';
 import { confirmKill } from '#lib/terminal/confirmKill.ts';
-import { cyclePane, equalize, hasLeaf, leaf, leaves, removePane, setRatio, splitPane, type PanePath, type SplitDirection } from '#lib/terminal/paneLayout.ts';
+import { cyclePane, equalize, leaf, removePane, setRatio, splitPane, type PanePath, type SplitDirection } from '#lib/terminal/paneLayout.ts';
 import { killPty } from '#lib/terminal/pty.ts';
 import { focusTerminal } from '#lib/terminal/registry.ts';
 import { adeKey, parseAdeTerminals, persist, restore, storeName, withoutRun } from '#lib/terminal/sessions.ts';
 import {
-	activeAfterClose,
 	activePane,
 	applyTabOrder,
 	adeTabs,
+	cleanProfile,
+	profileTag,
 	cycleTab,
 	fileTabId,
 	keyOfTabId,
@@ -43,7 +44,7 @@ import {
 	type TerminalTab
 } from './adeTabs.ts';
 import { switcherOrder } from './sidebarView.ts';
-import { closeRegion, liveTree, parseSavedTabs, showIn, splitTab, splittable, type SplitDir, type TabTree } from './adeSplit.ts';
+import { activeAfterGroupClose, closeGroup, groupOf, groupTabs, liveGroups, moveToGroup, parseSavedTabs, placeTab, renameTab, shownTree, splitGroup, withShown, type SplitDir, type TabGroups, type TabTree } from './adeSplit.ts';
 import { browserTitle } from '#lib/workbench/floating.ts';
 import { t } from '#lib/i18n/index.ts';
 
@@ -51,7 +52,8 @@ export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 /** The native view label of a worktree's browser tab (AdeBrowser.svelte, browser commands). */
-export const browserLabel = (key: string, id: string) => `ade-browser-${key || 'primary'}-${id}`;
+/** A browser tab's webview label; a tab with its own profile gets a label of its own, so a new profile opens a new view. */
+export const browserLabel = (key: string, id: string, profile?: string) => `ade-browser-${key || 'primary'}-${id}${profile ? `-p${profileTag(profile)}` : ''}`;
 const STORE = 'kingu.adeTerminals';
 /** Browser and file tabs, tab order, pins, colours and splits (Orca restores every tab). */
 const TABS_STORE = 'kingu.adeTabs';
@@ -76,8 +78,8 @@ class AdeLayout {
 	pinned = $state<Record<string, string[]>>({});
 	/** A tab's color dot (`#rrggbb`), keyed by worktree and tab id. */
 	colors = $state<Record<string, string>>({});
-	/** Each worktree's regions (Orca's tab groups, drag-to-edge splits): a tree of tab ids. */
-	layouts = $state<Record<string, TabTree>>({});
+	/** Each split worktree's tab groups (Orca's: a region tree, each region with its own tab strip). */
+	layouts = $state<Record<string, TabGroups>>({});
 	/** The tab being dragged from the tab strip (the center shows its split drop zones). */
 	draggingTab = $state<string | null>(null);
 	#seq = $state(0);
@@ -272,7 +274,7 @@ class AdeLayout {
 
 	/** Next / Previous Tab, optionally only among tabs of one kind (`same`: the active tab's kind; 'terminal'). */
 	cycle(key: string, step: 1 | -1, only?: 'same' | 'terminal') {
-		const tabs = this.tabs(key);
+		const tabs = this.stripTabs(key);
 		const active = this.activeTab(key);
 		const kind = only === 'same' ? tabs.find((t) => t.id === active)?.kind : only;
 		const sameKind = (k: AdeTab['kind']) => (kind === 'file' || kind === 'diff' ? k === 'file' || k === 'diff' : k === kind);
@@ -282,7 +284,7 @@ class AdeLayout {
 
 	/** Orca's Select Tab n. */
 	selectIndex(key: string, n: number) {
-		const id = tabAtIndex(this.tabs(key).map((t) => t.id), n);
+		const id = tabAtIndex(this.stripTabs(key).map((t) => t.id), n);
 		if (id) this.select(key, id, true);
 	}
 
@@ -290,7 +292,7 @@ class AdeLayout {
 	switchRecent(step: 1 | -1) {
 		const key = this.key;
 		if (!this.switcher) {
-			const all = this.tabs(key).map((t) => t.id);
+			const all = this.stripTabs(key).map((t) => t.id);
 			// kingu.tabs.ctrlTabOrder (Orca's ctrlTabOrderMode): by recent use, or the strip order from the active tab.
 			const ids = switcherOrder(settings.get<string>('kingu.tabs.ctrlTabOrder'), mruOrder(this.mru[key] ?? [], all, this.activeTab(key)), all);
 			if (ids.length < 2) return;
@@ -372,7 +374,10 @@ class AdeLayout {
 		const id = `b${++this.#seq}`;
 		const tab: BrowserTab = { id, url, title: browserTitle(url) };
 		this.browsers[key] = [...(this.browsers[key] ?? []), tab];
-		if (background) return id;
+		if (background) {
+			this.#place(key, id);
+			return id;
+		}
 		this.select(key, id);
 		this.board = false;
 		return id;
@@ -385,6 +390,19 @@ class AdeLayout {
 		const tab = list.find((b) => b.id === id);
 		if (!tab || tab.title === title) return;
 		this.browsers[key] = list.map((b) => (b.id === id ? { ...b, title: title.trim() } : b));
+	}
+
+	/** The tab's own browser profile (Orca's toolbar picker; null: back to `kingu.browser.profile`). */
+	setBrowserProfile(key: string, id: string, profile: string | null) {
+		const list = this.browsers[key];
+		const name = profile === null ? undefined : (cleanProfile(profile) ?? undefined);
+		if (!list?.some((b) => b.id === id && b.profile !== name)) return;
+		this.browsers[key] = list.map((b) => (b.id === id ? { ...b, profile: name } : b));
+	}
+
+	/** Profile names this folder's browser tabs use, for the picker. */
+	browserProfiles(): string[] {
+		return [...new Set(Object.values(this.browsers).flatMap((l) => l.map((b) => b.profile).filter((p): p is string => !!p)))].sort();
 	}
 
 	/** Where the page went (saved, so a restored tab reopens there). */
@@ -400,7 +418,7 @@ class AdeLayout {
 		if (!tab) return;
 		const index = list.findIndex((b) => b.id === id);
 		this.closed[key] = pushClosed(this.closed[key] ?? [], { kind: 'browser', url: tab.url, title: tab.title, index });
-		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
+		this.active[key] = this.#afterClose(key, id);
 		this.browsers[key] = list.filter((b) => b.id !== id);
 	}
 
@@ -431,6 +449,7 @@ class AdeLayout {
 		// workbench.editor.enablePreview: false opens every editor pinned, here too.
 		if (!settings.get('workbench.editor.enablePreview')) preview = false;
 		this.files[key] = openFileTab(this.files[key] ?? [], file, preview, (k) => editors.isDirty(k));
+		this.#show(key, fileTabId(file));
 		this.active[key] = fileTabId(file);
 		this.board = false;
 	}
@@ -489,7 +508,7 @@ class AdeLayout {
 		const list = this.files[key] ?? [];
 		if (!list.some((f) => f.key === file)) return;
 		const id = fileTabId(file);
-		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
+		this.active[key] = this.#afterClose(key, id);
 		this.files[key] = list.filter((f) => f.key !== file);
 		if (!editors.openPaths().has(file)) forgetUntitledMarkdown(file);
 		this.closed[key] = pushClosed(this.closed[key] ?? [], { kind: 'file', key: file });
@@ -507,33 +526,84 @@ class AdeLayout {
 		else void this.closeTerminal(key, id);
 	}
 
-	/** The worktree's regions, without closed tabs; null when it shows one tab. */
+	#ids(key: string): string[] {
+		return this.tabs(key).map((t) => t.id);
+	}
+
+	/** The worktree's tab groups as they stand (closed tabs gone, the active tab shown); null when it is not split. */
+	groupsOf(key: string): TabGroups | null {
+		const g = this.layouts[key];
+		return g ? liveGroups(g, this.#ids(key), this.activeTab(key), this.mru[key]) : null;
+	}
+
+	/** The worktree's regions, each leaf the tab its group shows (where views go); null when it is not split. */
 	treeOf(key: string): TabTree | null {
-		const tree = this.layouts[key];
-		return tree ? liveTree(tree, new Set(this.tabs(key).map((t) => t.id)), this.activeTab(key)) : null;
+		const g = this.groupsOf(key);
+		return g ? shownTree(g) : null;
 	}
 
-	/** Orca's drop on a region's edge: tab `id` gets the right or bottom part of region `target` (the active one by default). */
-	splitTab(key: string, id: string, dir: SplitDir, target = this.activeTab(key)) {
-		if (!this.tabs(key).some((t) => t.id === id)) return;
-		// The active tab moving out of its own region: another tab takes that region first.
-		if (id === target) {
-			const other = (this.mru[key] ?? []).find((t) => t !== id && this.tabs(key).some((x) => x.id === t) && !(this.treeOf(key) && hasLeaf(this.treeOf(key)!, t))) ?? this.tabs(key).find((t) => t.id !== id && splittable(t.id))?.id;
-			if (!other) return;
-			this.layouts[key] = showIn(this.treeOf(key) ?? leaf(id), id, other) ?? leaf(other);
-			target = other;
-			this.active[key] = other;
-		}
-		const next = splitTab(this.treeOf(key), target, id, dir);
-		if (next) this.layouts[key] = next;
+	/** The tabs of one group's strip, in strip order. */
+	groupTabs(key: string, group: string): AdeTab[] {
+		const g = this.groupsOf(key);
+		if (!g) return this.tabs(key);
+		const ids = new Set(groupTabs(g, this.#ids(key), group));
+		return this.tabs(key).filter((t) => ids.has(t.id));
 	}
 
-	/** Closes region `id` (its tab stays open in the strip). */
-	closeRegion(key: string, id: string) {
-		const next = closeRegion(this.treeOf(key), id);
-		if (next) this.layouts[key] = next;
+	/** The active group's tabs (Orca: next/previous tab, Select Tab n and Ctrl+Tab act on it), or every tab. */
+	stripTabs(key: string): AdeTab[] {
+		const g = this.groupsOf(key);
+		return g ? this.groupTabs(key, groupOf(g, this.activeTab(key))) : this.tabs(key);
+	}
+
+	#afterClose(key: string, id: string): string {
+		return activeAfterGroupClose(this.groupsOf(key), this.#ids(key), id, this.activeTab(key));
+	}
+
+	#setGroups(key: string, g: TabGroups | null) {
+		if (g) this.layouts[key] = g;
 		else delete this.layouts[key];
-		if (this.activeTab(key) === id && next) this.active[key] = leaves(next)[0];
+	}
+
+	/** A tab opened in the background joins the active group without showing. */
+	#place(key: string, id: string) {
+		const g = this.layouts[key];
+		if (g) this.layouts[key] = placeTab(g, id, this.activeTab(key));
+	}
+
+	/** Tab `id` about to show: a new tab joins the active group (Orca), and its group shows it. */
+	#show(key: string, id: string) {
+		const stored = this.layouts[key];
+		if (!stored) return;
+		const live = liveGroups(placeTab(stored, id, this.activeTab(key)), [...new Set([...this.#ids(key), id])], this.activeTab(key), this.mru[key]);
+		this.#setGroups(key, live && withShown(live, id));
+	}
+
+	/** Orca's drop on a region's edge: tab `id` moves into a new group on the right or bottom of the group of `target` (the active tab by default). */
+	splitTab(key: string, id: string, dir: SplitDir, target = this.activeTab(key)) {
+		const ids = this.#ids(key);
+		if (!ids.includes(id)) return;
+		const g = this.groupsOf(key);
+		const next = splitGroup(g, ids, g ? groupOf(g, target) : 'g1', id, dir, this.mru[key]);
+		if (next === g) return;
+		this.#setGroups(key, next);
+		this.select(key, id);
+	}
+
+	/** Orca's drop on another group's tab or strip: tab `id` moves into the group of `target`, before tab `before` (null: at its end). */
+	moveTabTo(key: string, id: string, target: string, before: string | null) {
+		const g = this.groupsOf(key);
+		if (g && groupOf(g, id) !== groupOf(g, target)) {
+			this.#setGroups(key, moveToGroup(g, this.#ids(key), id, groupOf(g, target), this.mru[key]));
+			this.select(key, id);
+		}
+		if (before !== id) this.moveTab(key, id, before);
+	}
+
+	/** Closes region `group`; its tabs stay open in the group next to it. */
+	closeRegion(key: string, group: string) {
+		const g = this.groupsOf(key);
+		if (g) this.#setGroups(key, closeGroup(g, this.#ids(key), group, this.mru[key]));
 	}
 
 	unsplit(key: string) {
@@ -541,8 +611,8 @@ class AdeLayout {
 	}
 
 	setSplitRatio(key: string, path: PanePath, ratio: number) {
-		const tree = this.treeOf(key);
-		if (tree) this.layouts[key] = setRatio(tree, path, ratio);
+		const g = this.groupsOf(key);
+		if (g) this.layouts[key] = { ...g, tree: setRatio(g.tree, path, ratio) };
 	}
 
 	/** A click in a region: its tab becomes the active one (the regions stay). */
@@ -552,13 +622,8 @@ class AdeLayout {
 
 	/** Shows a tab; `focus` also puts the keyboard in it when it is a terminal (a shortcut, not a click). */
 	select(key: string, tab: string, focus = false) {
-		// A tab not in a region shows in the active region (a tab in one just takes focus).
-		const tree = this.treeOf(key);
-		if (tree) {
-			const next = showIn(tree, this.activeTab(key), tab);
-			if (next) this.layouts[key] = next;
-			else delete this.layouts[key];
-		}
+		// A new tab opens in the active group; a tab of another group makes that group the active one.
+		this.#show(key, tab);
 		this.active[key] = tab;
 		this.mru[key] = touchMru(this.mru[key] ?? [], tab);
 		const t = focus ? this.terminalTab(key, tab) : undefined;
@@ -573,13 +638,16 @@ class AdeLayout {
 	}
 
 	/** A terminal in that worktree; `run` is typed into its shell (an agent CLI, a Snap task). `background`: open it without switching to it. */
-	newTerminal(key: string, opts: { title?: string; run?: string[]; type?: string; background?: boolean; index?: number; color?: string } = {}): string {
+	newTerminal(key: string, opts: { title?: string; run?: string[]; type?: string; typeEnter?: boolean; background?: boolean; index?: number; color?: string } = {}): string {
 		const list = this.terminals[key] ?? [];
 		const n = list.reduce((m, t) => Math.max(m, t.n), 0) + 1;
-		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.type ? { type: opts.type } : {}), ...(opts.color ? { color: opts.color } : {}) };
+		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.type ? { type: opts.type, ...(opts.typeEnter === false ? { typeEnter: false as const } : {}) } : {}), ...(opts.color ? { color: opts.color } : {}) };
 		const at = opts.index === undefined ? list.length : Math.min(Math.max(opts.index, 0), list.length);
 		this.terminals[key] = [...list.slice(0, at), tab, ...list.slice(at)];
-		if (opts.background) return tab.id;
+		if (opts.background) {
+			this.#place(key, tab.id);
+			return tab.id;
+		}
 		this.select(key, tab.id, true);
 		this.board = false;
 		return tab.id;
@@ -597,7 +665,7 @@ class AdeLayout {
 		keys.forEach(killPty);
 		this.closed[key] = pushClosed(this.closed[key] ?? [], { kind: 'terminal', title: tab.title, index });
 		// Closing the active tab shows its neighbour (like an editor tab), else the main tab.
-		this.active[key] = activeAfterClose(this.tabs(key).map((t) => t.id), id, this.activeTab(key));
+		this.active[key] = this.#afterClose(key, id);
 		this.terminals[key] = list.filter((t) => t.id !== id);
 	}
 
@@ -628,6 +696,8 @@ class AdeLayout {
 		for (const [k, list] of Object.entries(this.files)) {
 			if (!list.some((f) => move(f.key) !== null)) continue;
 			this.files[k] = list.map((f) => ({ ...f, key: move(f.key) ?? f.key }));
+			const g = this.layouts[k];
+			if (g) this.layouts[k] = list.reduce((acc, f) => (move(f.key) !== null ? renameTab(acc, fileTabId(f.key), fileTabId(move(f.key)!)) : acc), g);
 			const active = keyOfTabId(this.active[k] ?? '');
 			const moved = active !== null ? move(active) : null;
 			if (moved !== null) this.active[k] = fileTabId(moved);

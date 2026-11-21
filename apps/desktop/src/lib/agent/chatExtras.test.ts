@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { setLocale } from '#lib/i18n/index.ts';
 import { buildTurns } from './chatParts';
 import { chatEditorKey, chatIdOfEditorKey, chimeFor, followupPrompt, isChatEditorKey, memoryText, parseFollowups, usageDisplay, MAX_FOLLOWUPS } from './chatExtras';
-import { guardAskedText } from './guardText';
+import { assistedText, guardAskedText } from './guardText';
 import { applyEvent, initialRun, type AgentEvent } from './events';
 import { replayTranscript } from './chats';
 
@@ -33,6 +33,36 @@ describe('safety asks in the chat', () => {
 		for (const ev of evs) applyEvent(s, ev);
 		const part = buildTurns(s)[0].parts.find((p) => p.kind === 'confirmation');
 		expect(part).toMatchObject({ kind: 'confirmation', reason: 'Kingu asks first: it deletes files (old.log)' });
+	});
+});
+
+describe('Assisted permissions in the chat', () => {
+	test('an approved call notes the reviewer on its tool row; a refused one gives the card its reason', () => {
+		const s = initialRun();
+		const evs: AgentEvent[] = [
+			{ kind: 'message', role: 'user', text: 'test and push' },
+			{ kind: 'assisted_review', request_id: null, tool: 'Bash', tool_use_id: 'tu1', verdict: 'approved', reason: 'Runs the tests.' },
+			{ kind: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'npm test' }, parent_tool_use_id: null },
+			{ kind: 'assisted_review', request_id: 'r2', tool: 'Bash', tool_use_id: 'tu2', verdict: 'needs_you', reason: 'Pushes to origin.' },
+			{ kind: 'permission_request', request_id: 'r2', tool: 'Bash', tool_use_id: 'tu2', title: null, input_summary: 'git push', detail: null, diff: null, input: {}, can_always: true, rules: [] }
+		];
+		for (const ev of evs) applyEvent(s, ev);
+		const parts = buildTurns(s)[0].parts;
+		expect(parts.find((p) => p.kind === 'tool')).toMatchObject({ assistedApproved: 'Runs the tests.' });
+		expect(parts.find((p) => p.kind === 'confirmation')).toMatchObject({ reason: 'Assisted permissions asks you: Pushes to origin.' });
+		expect(assistedText({ verdict: 'unavailable', reason: 'No answer.' })).toBe('The Assisted reviewer could not decide, so it asks you: No answer.');
+	});
+
+	test("a safety ask's reason wins over the reviewer's on the same prompt", () => {
+		const s = initialRun();
+		for (const ev of [
+			{ kind: 'message', role: 'user', text: 'clean' },
+			{ kind: 'guard_asked', request_id: 'r1', tool: 'Bash', tool_use_id: 'tu1', check: 'delete', paths: ['a.log'] },
+			{ kind: 'assisted_review', request_id: 'r1', tool: 'Bash', tool_use_id: 'tu1', verdict: 'needs_you', reason: 'Deletes.' },
+			{ kind: 'permission_request', request_id: 'r1', tool: 'Bash', tool_use_id: 'tu1', title: null, input_summary: 'rm a.log', detail: null, diff: null, input: {}, can_always: false, rules: [] }
+		] as AgentEvent[])
+			applyEvent(s, ev);
+		expect(buildTurns(s)[0].parts.find((p) => p.kind === 'confirmation')).toMatchObject({ reason: 'Kingu asks first: it deletes files (a.log)' });
 	});
 });
 

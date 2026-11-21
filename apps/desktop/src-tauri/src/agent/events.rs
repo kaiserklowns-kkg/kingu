@@ -232,6 +232,19 @@ pub enum AgentEvent {
     #[serde(default)]
     paths: Vec<String>,
   },
+  /// Assisted permissions reviewed a tool call (the host's assisted.ts): `approved` runs it
+  /// without a prompt (`request_id` none); otherwise the `PermissionRequest` with `request_id`
+  /// follows and `reason` says why it was not approved.
+  AssistedReview {
+    #[serde(default)]
+    request_id: Option<String>,
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    verdict: String,
+    #[serde(default)]
+    reason: String,
+  },
   /// The agent published an artifact (the host's `artifact_publish` tool, through artifacts/):
   /// version `version` of artifact `id` in project `root`. The chat shows a card that opens it.
   Artifact { id: String, title: String, version: u32, format: String, root: String },
@@ -399,6 +412,8 @@ mod tests {
   fn guard_asks_and_feedback_round_trip() {
     for v in [
       json!({"kind": "guard_asked", "request_id": "r1", "tool": "Bash", "tool_use_id": "tu1", "check": "delete", "paths": ["a.txt"]}),
+      json!({"kind": "assisted_review", "request_id": null, "tool": "Bash", "tool_use_id": "tu1", "verdict": "approved", "reason": "Runs the tests."}),
+      json!({"kind": "assisted_review", "request_id": "r2", "tool": "Bash", "tool_use_id": "tu2", "verdict": "needs_you", "reason": "Pushes."}),
       json!({"kind": "feedback", "request": 2, "vote": "up"}),
       json!({"kind": "feedback", "request": 2, "vote": null}),
     ] {

@@ -17,7 +17,7 @@ describe('chat icons', () => {
 
 	test("the pickers' icons as kingu-old draws them", () => {
 		expect(MODE_CODICON).toEqual({ agent: 'agent-compact', ask: 'question', plan: 'tasklist', custom: null });
-		expect(PERMISSION_CODICON).toEqual({ default: 'key', acceptEdits: 'edit', bypassPermissions: 'warning' });
+		expect(PERMISSION_CODICON).toEqual({ default: 'key', acceptEdits: 'edit', assisted: 'sparkle', bypassPermissions: 'warning' });
 		for (const id of [...Object.values(MODE_CODICON), ...Object.values(PERMISSION_CODICON)]) if (id) expect(drawsIcon(id)).toBe(true);
 	});
 });

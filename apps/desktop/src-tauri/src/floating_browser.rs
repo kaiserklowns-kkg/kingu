@@ -103,12 +103,23 @@ pub fn picked(url: &Url) -> Option<serde_json::Value> {
   if bytes.len() > 64 * 1024 {
     return None;
   }
-  serde_json::from_slice(&bytes).ok().filter(serde_json::Value::is_object)
+  let mut v: serde_json::Value = serde_json::from_slice(&bytes).ok().filter(serde_json::Value::is_object)?;
+  // The page wrote it: the source location stays one short line of text (never opened).
+  if let Some(obj) = v.as_object_mut() {
+    let ok = obj.get("source").and_then(|s| s.as_str()).is_some_and(|s| s.chars().count() <= SOURCE_MAX && !s.chars().any(char::is_control));
+    if !ok {
+      obj.remove("source");
+    }
+  }
+  Some(v)
 }
 
+/// Orca's `GRAB_BUDGET.sourceFileMaxLength` (500) plus the " (truncated)" the picker appends.
+const SOURCE_MAX: usize = 512;
+
 /// Orca's Design Mode picker (docs browser/design-mode.mdx): outlines the element under the
-/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box and text;
-/// Escape stops. Turning it off removes it.
+/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box, its text and,
+/// in a React dev build, its source location; Escape stops. Turning it off removes it.
 const PICK_SCRIPT: &str = r#"(() => {
   const w = window;
   if (w.__kinguPick) w.__kinguPick.stop();
@@ -131,6 +142,38 @@ const PICK_SCRIPT: &str = r#"(() => {
     }
     return parts.join(' > ');
   };
+  // Orca's grab-guest-react-script.ts: the file:line:col a React dev build records on the fiber
+  // (`_debugSource`, or its owner's), first found walking up at most 35 fibers; dev-server
+  // prefixes and query strings stripped; dropped if it looks like a secret; at most 500 chars.
+  const SECRETS = ['access_token','auth_token','api_key','apikey','client_secret','oauth_state','x-amz-','session_id','sessionid','csrf','secret','password','passwd'];
+  const cleanSource = (p) => String(p)
+    .replace(/[?#].*$/, '')
+    .replace(/^turbopack:\/\/\/\[project\]\//, '')
+    .replace(/^webpack-internal:\/\/\/\.\//, '')
+    .replace(/^webpack-internal:\/\/\//, '')
+    .replace(/^webpack:\/\/\/\.\//, '')
+    .replace(/^webpack:\/\/\//, '')
+    .replace(/^turbopack:\/\/\//, '')
+    .replace(/^https?:\/\/[^/]+\//, '')
+    .replace(/^file:\/\/\//, '/')
+    .replace(/^\([^)]+\)\/\.\//, '')
+    .replace(/^\.\//, '');
+  const source = (el) => {
+    try {
+      const k = Object.keys(el).find((n) => n.indexOf('__reactFiber$') === 0 || n.indexOf('__reactInternalInstance$') === 0);
+      let fiber = k ? el[k] : null;
+      for (let depth = 0; fiber && depth < 35; depth++, fiber = fiber.return) {
+        const s = fiber._debugSource || (fiber._debugOwner && fiber._debugOwner._debugSource);
+        if (s && s.fileName && s.lineNumber) {
+          const out = cleanSource(s.fileName) + ':' + s.lineNumber + (s.columnNumber !== undefined ? ':' + s.columnNumber : '');
+          const low = out.toLowerCase();
+          if (SECRETS.some((x) => low.indexOf(x) !== -1)) continue;
+          return out.length > 500 ? out.slice(0, 500) + ' (truncated)' : out;
+        }
+      }
+    } catch (_) {}
+    return null;
+  };
   const KEYS = ['display','position','width','height','margin','padding','color','background-color','font-family','font-size','font-weight','line-height','border','border-radius','gap','flex-direction','justify-content','align-items'];
   const move = (e) => { const r = e.target.getBoundingClientRect(); Object.assign(box.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' }); };
   const click = (e) => {
@@ -140,6 +183,8 @@ const PICK_SCRIPT: &str = r#"(() => {
     const r = el.getBoundingClientRect();
     const html = el.outerHTML.length > 3000 ? el.outerHTML.slice(0, 3000) + '…' : el.outerHTML;
     const data = { url: location.href, selector: sel(el), html, styles, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, text: (el.innerText || '').slice(0, 300) };
+    const src = source(el);
+    if (src) data.source = src;
     stop();
     const json = JSON.stringify(data);
     location.href = BASE + '#' + btoa(unescape(encodeURIComponent(json)));
@@ -400,6 +445,12 @@ mod tests {
     assert!(picked(&Url::parse(&format!("https://evil.dev/pick#{enc}")).unwrap()).is_none());
     assert!(picked(&Url::parse(&format!("{}#not-base64!", pick_url())).unwrap()).is_none());
     assert!(picked(&Url::parse(&new_tab_url()).unwrap()).is_none());
+    let pick = |json: &str| picked(&Url::parse(&format!("{}#{}", pick_url(), base64::engine::general_purpose::STANDARD.encode(json))).unwrap()).unwrap();
+    assert_eq!(pick(r#"{"source":"src/App.tsx:12:5"}"#)["source"], "src/App.tsx:12:5");
+    assert!(pick(r#"{"source":"a\nb"}"#).get("source").is_none());
+    assert!(pick(r#"{"source":7}"#).get("source").is_none());
+    assert!(pick(&format!(r#"{{"source":"{}"}}"#, "x".repeat(600))).get("source").is_none());
+    assert!(pick_script(true).contains("_debugSource") && pick_script(true).contains("data.source = src"));
     assert!(pick_script(true).contains("if (!true) return;") && pick_script(false).contains("if (!false) return;"));
     assert!(profile_store("") .is_none());
     assert_ne!(profile_store("work"), profile_store("personal"));

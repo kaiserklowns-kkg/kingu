@@ -13,6 +13,8 @@ export type TerminalTab = {
 	run?: string[];
 	/** A shell line typed into the new shell as is (a quick command: pipes, `&&`, aliases work). */
 	type?: string;
+	/** `type` stays on the prompt without Enter (Orca's Insert run mode). */
+	typeEnter?: false;
 	/** A `#rgb` / `#rrggbb` tab color (kingu.yaml defaultTabs). */
 	color?: string;
 	/** Split panes (Orca's pane layout); absent while the tab is one pane, whose id is the tab's. */
@@ -59,7 +61,21 @@ export function cycleTab(ids: string[], active: string, step: 1 | -1): string {
 export const tabAtIndex = (ids: string[], n: number): string | null => ids[n - 1] ?? null;
 
 /** A browser tab of the Agents layout (Orca's browser tabs): a real page, its title from the page. */
-export type BrowserTab = { id: string; url: string; title: string };
+/** `profile`: the tab's own browser profile (Orca's toolbar picker); absent: `kingu.browser.profile`. */
+export type BrowserTab = { id: string; url: string; title: string; profile?: string };
+
+/** A profile name the picker accepts: trimmed, 1-64 characters, no control characters. */
+export function cleanProfile(name: string): string | null {
+	const n = name.trim();
+	return n && [...n].length <= 64 && !/[\u0000-\u001f\u007f]/.test(n) ? n : null;
+}
+
+/** A short stable tag of a profile name for the tab's webview label (a new profile is a new view). */
+export function profileTag(name: string): string {
+	let h = 0x811c9dc5;
+	for (const c of new TextEncoder().encode(name)) h = Math.imul(h ^ c, 0x01000193) >>> 0;
+	return h.toString(16).padStart(8, '0');
+}
 
 /** A closed tab, enough to open it again (Orca: a fresh shell keeps only the title). */
 export type ClosedTab = { kind: 'terminal'; title?: string; index: number } | { kind: 'file'; key: string } | { kind: 'browser'; url: string; title?: string; index: number };

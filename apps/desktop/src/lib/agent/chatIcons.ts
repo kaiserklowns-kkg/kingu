@@ -155,4 +155,4 @@ export const MODE_MENU_CODICON = { agent: 'agent', ask: 'question', plan: 'taskl
  * The permission picker's icon per run mode (kingu-old's agent host picker, getConfigIcon): Manual
  * permissions a key, editing automatically Claude's `edit`, Allow all a warning.
  */
-export const PERMISSION_CODICON: Record<AgentApproval, string> = { default: 'key', acceptEdits: 'edit', bypassPermissions: 'warning' };
+export const PERMISSION_CODICON: Record<AgentApproval, string> = { default: 'key', acceptEdits: 'edit', assisted: 'sparkle', bypassPermissions: 'warning' };

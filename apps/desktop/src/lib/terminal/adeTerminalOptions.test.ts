@@ -11,6 +11,7 @@ import {
 	withQuickCommand,
 	withoutQuickCommand,
 	quickCommandInput,
+	quickAppendsEnter,
 	quickCommands,
 	stripSelectionGutter,
 	tuiWheelReports,
@@ -104,6 +105,12 @@ describe('ADE terminal settings (Orca Terminal page)', () => {
 			{ label: 'Two', command: 'a\nb' }
 		]);
 		expect(quickCommandInput('a\nb')).toBe('a\rb\r');
+		// Orca's Insert run mode (appendEnter off): one line on the prompt, nothing run.
+		expect(quickCommandInput('npm run deploy', false)).toBe('npm run deploy');
+		expect(quickCommandInput('cd web\n\n  bun dev  \r\n', false)).toBe('cd web; bun dev');
+		expect(quickAppendsEnter({ Deploy: true }, 'Deploy')).toBe(false);
+		expect(quickAppendsEnter({ Deploy: true }, 'Tests')).toBe(true);
+		expect(quickAppendsEnter(undefined, 'Tests')).toBe(true);
 	});
 });
 

@@ -421,13 +421,23 @@ pub fn prune_stash(stash: &Path, keep: usize) {
   }
 }
 
+/// [`delete_for_good`] that keeps a copy first, so Undo can bring it back (VS Code's
+/// `DeleteOperation` reads a deleted file's contents for undo whether or not it goes to the Trash).
+pub fn delete_for_good_with_undo(root: &Path, rel: &str, stash: &Path) -> Result<Option<String>, String> {
+  delete_with_undo(root, rel, stash, remove_entry)
+}
+
+fn remove_entry(path: &Path) -> Result<(), String> {
+  let meta = path.symlink_metadata().map_err(|e| e.to_string())?;
+  let result = if meta.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+  result.map_err(|e| e.to_string())
+}
+
 /// Deletes `rel` for good, for when `files.enableTrash` is off (a symlink is removed, never what
 /// it points to).
 pub fn delete_for_good(root: &Path, rel: &str) -> Result<(), String> {
   let path = check_existing(root, rel)?;
-  let meta = path.symlink_metadata().map_err(|e| format!("{rel}: {e}"))?;
-  let result = if meta.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
-  result.map_err(|e| format!("{rel}: {e}"))
+  remove_entry(&path).map_err(|e| format!("{rel}: {e}"))
 }
 
 /// Shows `rel` selected in Finder (Explorer on Windows, the containing folder elsewhere).
@@ -468,8 +478,8 @@ mod tests {
     std::fs::create_dir_all(root.join("src/deep")).unwrap();
     std::fs::write(root.join("src/deep/a.ts"), "one").unwrap();
     let root = root.canonicalize().unwrap();
-    // Deleted outright rather than trashed, so the test leaves nothing in the user's Trash.
-    let token = delete_with_undo(&root, "src", &stash, |p| std::fs::remove_dir_all(p).map_err(|e| e.to_string())).unwrap();
+    // Deleted outright rather than trashed (files.enableTrash off), so the test leaves nothing in the user's Trash.
+    let token = delete_for_good_with_undo(&root, "src", &stash).unwrap();
     let token = token.expect("small folders get an undo copy");
     assert!(!root.join("src").exists());
     restore(&root, "src", &token, &stash).unwrap();

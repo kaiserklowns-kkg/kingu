@@ -2342,6 +2342,7 @@ dependencies = [
  "block2",
  "chardetng",
  "encoding_rs",
+ "flate2",
  "keyring",
  "kingu-cli",
  "kingu-ptyd",

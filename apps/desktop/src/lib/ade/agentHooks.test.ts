@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { applyHook, initialHookState, isQuestionTool, needsInput } from './agentHooks';
+import { applyHook, HOLD_BUDGET_MS, initialHookState, isQuestionTool, liveHold, needsInput } from './agentHooks';
 import { claudeResume, claudeStart } from './agentCli';
 import { setLocale } from '#lib/i18n/index.ts';
 
@@ -155,5 +155,53 @@ describe('claude subagents and hand-typed claude (Orca roster, managed user hook
 		const s = run([{ kingu_hook: 'claude', event: 'PermissionRequest', payload: { hook_event_name: 'PermissionRequest', tool_name: 'Bash', session_id: 'S' } }]);
 		expect(s).toMatchObject({ phase: 'waiting', permission: true, sessionId: 'S', hooks: true });
 		expect(needsInput(s)).toBe(true);
+	});
+});
+
+describe('the blocking PermissionRequest hold', () => {
+	test('a claude permission request carries its hold until the prompt closes', () => {
+		let h = applyHook(initialHookState(0), { hook_event_name: 'PermissionRequest', tool_name: 'Bash', kingu_hold: '1795160000-42' }, 1000);
+		expect(h.hold).toEqual({ id: '1795160000-42', since: 1000 });
+		expect(liveHold(h, 5000)?.id).toBe('1795160000-42');
+		// Claude's own notification about the same prompt keeps it.
+		h = applyHook(h, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }, 2000);
+		expect(h.hold?.id).toBe('1795160000-42');
+		// Past the 122 s budget the hook has answered `{}`: the reply falls back to keys.
+		expect(liveHold(h, 1000 + HOLD_BUDGET_MS)).toBeUndefined();
+		h = applyHook(h, { hook_event_name: 'PostToolUse', tool_name: 'Bash' }, 3000);
+		expect(h.hold).toBeUndefined();
+	});
+
+	test('a permission request without a hold (async or older settings) has none', () => {
+		const h = applyHook(initialHookState(0), { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }, 1000);
+		expect(h.permission).toBe(true);
+		expect(liveHold(h, 1000)).toBeUndefined();
+	});
+});
+
+describe("Orca's TeammateIdle and PostToolBatch", () => {
+	test('a batch end that lists the waiting call settles it; another one does not', () => {
+		let h = applyHook(initialHookState(0), { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_use_id: 'tu1' }, 1);
+		expect(h.waitingFor).toEqual({ toolUseId: 'tu1' });
+		expect(applyHook(h, { hook_event_name: 'PostToolBatch', tool_calls: [{ tool_use_id: 'other' }] }, 2).permission).toBe(true);
+		expect(applyHook(h, { hook_event_name: 'PostToolBatch', agent_id: 'sub', tool_calls: [{ tool_use_id: 'tu1' }] }, 2).permission).toBe(true);
+		h = applyHook(h, { hook_event_name: 'PostToolBatch', tool_calls: [{ tool_use_id: 'tu1' }] }, 3);
+		expect(h.permission).toBe(false);
+		expect(h.phase).toBe('working');
+		expect(h.waitingFor).toBeUndefined();
+	});
+
+	test('an idle teammate no longer keeps the lead working', () => {
+		let h = applyHook(initialHookState(0), { hook_event_name: 'SubagentStart', agent_id: 'areviewer-1', agent_type: 'reviewer' }, 1);
+		h = applyHook(h, { hook_event_name: 'SubagentStart', agent_id: 'atester-2', agent_type: 'tester' }, 2);
+		h = applyHook(h, { hook_event_name: 'Stop' }, 3);
+		expect(h.leadDone).toBe(true);
+		h = applyHook(h, { hook_event_name: 'TeammateIdle', teammate_name: 'reviewer' }, 4);
+		expect(Object.keys(h.subagents ?? {})).toEqual(['atester-2']);
+		// A name that only prefixes another id (`a<name>-x-y`) is not that teammate.
+		expect(applyHook(h, { hook_event_name: 'TeammateIdle', teammate_name: 'tes' }, 5).subagents).toEqual(h.subagents);
+		h = applyHook(h, { hook_event_name: 'TeammateIdle', teammate_name: 'tester' }, 6);
+		expect(h.phase).toBe('idle');
+		expect(h.subagents).toBeUndefined();
 	});
 });

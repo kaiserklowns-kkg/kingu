@@ -134,6 +134,12 @@ const EXCLUSIVE: [string, string][] = [
 	['workbench.action.terminal.resizePaneRight', 'workbench.action.moveEditorToNextGroup'],
 	// F6 pauses a running debug session, else focuses the next part (VS Code's keys, the debugger's when first).
 	['workbench.action.debug.pause', 'workbench.action.focusNextPart'],
+	// ⇧⌘] / ⇧⌘[ (Ctrl+PageDown / PageUp off macOS): the next / previous Debug Console with focus in
+	// the console (higher weight, VS Code's inDebugRepl), the terminal group in a focused terminal, the editor elsewhere.
+	['workbench.action.debug.nextConsole', 'workbench.action.terminal.focusNext'],
+	['workbench.action.debug.nextConsole', 'workbench.action.nextEditor'],
+	['workbench.action.debug.prevConsole', 'workbench.action.terminal.focusPrevious'],
+	['workbench.action.debug.prevConsole', 'workbench.action.previousEditor'],
 	// Escape with focus on a status bar item clears that focus (higher weight than hiding the toasts); the Problems filter box is elsewhere.
 	['workbench.statusBar.clearFocus', 'notifications.hideToasts'],
 	['workbench.statusBar.clearFocus', 'problems.action.clearFilterText']

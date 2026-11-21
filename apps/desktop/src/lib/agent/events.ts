@@ -47,6 +47,8 @@ export type PermissionRequest = {
 export type RuleSuggestion = { setting: string; keys: string[] };
 
 /** Why Kingu asked before a call, whatever the permission mode (agent-host guards/asks.ts). */
+/** Assisted permissions reviewed a call (agent-host assisted.ts): approved, or the prompt with `request_id` follows. */
+export type AssistedReview = { kind: 'assisted_review'; request_id: string | null; tool: string; tool_use_id: string | null; verdict: 'approved' | 'needs_you' | 'unavailable'; reason: string };
 export type GuardAsked = { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule'; paths: string[] };
 
 /** Added by Rust in place of a prompt the `chat.tools.*.autoApprove` rules approved (Rust answered it). */
@@ -123,6 +125,7 @@ export type AgentEvent =
 	| { kind: 'guard_blocked'; tool: string; tool_use_id: string | null; check: 'security' | 'repetition'; threats: string[]; detail: string }
 	/** Kingu's always-ask check stopped a call for the user (any permission mode); its `permission_request` follows. */
 	| GuardAsked
+	| AssistedReview
 	/** A tool call the user's auto-approve rules let run without a prompt; its row says by which rule. */
 	| ToolAutoApproved
 	/** The agent published an artifact (its `artifact_publish` tool): the chat shows a card that opens it. */

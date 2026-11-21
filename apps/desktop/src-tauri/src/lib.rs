@@ -590,9 +590,10 @@ async fn claude_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<sess
 /// Codex and Gemini sessions run in the open folder or its worktrees (Orca's session history
 /// beyond Claude: `$CODEX_HOME/sessions` rollouts, `~/.gemini/tmp/<hash>/chats`).
 #[tauri::command]
-async fn agent_cli_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
+async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
   let root = ws.root()?;
   let limit = limit.unwrap_or(250);
+  let account_dirs = app.state::<accounts::Accounts>().managed.opencode_data_dirs();
   blocking(move || {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no home folder")?;
     let codex_home = std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".codex"));
@@ -600,6 +601,26 @@ async fn agent_cli_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<s
     dirs.extend(std::fs::read_dir(root.join(".kingu").join("worktrees")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
     let mut all = sessions::list_codex(&root, &codex_home, limit);
     all.extend(sessions::list_gemini(&home.join(".gemini").join("tmp"), &dirs, limit));
+    let mut dbs = sessions::opencode_dbs(&home, std::env::var("XDG_DATA_HOME").ok().as_deref(), std::env::var("OPENCODE_DB").ok().as_deref());
+    dbs.extend(account_dirs.iter().flat_map(|d| sessions::opencode_dbs_in(d)).filter(|d| !dbs.contains(d)).collect::<Vec<_>>());
+    all.extend(sessions::list_opencode(&dbs, &root, limit));
+    // Copilot CLI (`$COPILOT_HOME`, else ~/.copilot; Orca's COPILOT_SESSIONS_DIR).
+    let copilot_home = std::env::var_os("COPILOT_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".copilot"));
+    all.extend(sessions::list_copilot(&root, &copilot_home.join("session-state"), limit));
+    // Cursor agent (~/.cursor: projects/*/agent-transcripts with chats/*/<id>/meta.json; Orca's scanners/cursor).
+    all.extend(sessions::list_cursor(&root, &home.join(".cursor"), limit));
+    // Qoder, CodeBuddy and Factory Droid (Orca's scanners/qoder, codebuddy, droid).
+    all.extend(sessions::list_qoder(&root, &home.join(".qoder").join("projects"), limit));
+    all.extend(sessions::list_codebuddy(&root, &home.join(".codebuddy").join("projects"), limit));
+    all.extend(sessions::list_droid(&root, &home.join(".factory"), limit));
+    all.extend(sessions::list_kiro(&root, &home.join(".kiro").join("sessions").join("cli"), limit));
+    // Cline (`$CLINE_SESSION_DATA_DIR`, else ~/.cline/data/sessions) and Kimi Code (`$KIMI_CODE_HOME`, else ~/.kimi-code; Orca's scanners/cline, kimi).
+    let cline_sessions = std::env::var_os("CLINE_SESSION_DATA_DIR").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".cline").join("data").join("sessions"));
+    all.extend(sessions::list_cline(&root, &cline_sessions, limit));
+    let kimi_home = std::env::var_os("KIMI_CODE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".kimi-code"));
+    all.extend(sessions::list_kimi(&root, &kimi_home.join("sessions"), limit));
+    // Devin (~/.local/share/devin/cli: transcripts and agent_logs, with sessions.db; Orca's scanners/devin).
+    all.extend(sessions::list_devin(&root, &home.join(".local").join("share").join("devin").join("cli"), limit));
     all.sort_by_key(|s| std::cmp::Reverse(s.updated));
     all.truncate(limit);
     Ok(all)
@@ -1311,9 +1332,10 @@ async fn fs_delete(ws: Workspace, app: AppHandle, rel: String, use_trash: Option
     log::info!("moved to the Trash: {rel}");
     token
   } else {
-    blocking(move || fileops::delete_for_good(&root, &r)).await?;
+    let stash = undo_stash(&app)?;
+    let token = blocking(move || fileops::delete_for_good_with_undo(&root, &r, &stash)).await?;
     log::info!("deleted {rel}");
-    None
+    token
   };
   Ok(token)
 }
@@ -1601,6 +1623,11 @@ pub fn run() {
       windows::window_new,
       windows::window_focus_folder,
       windows::window_count,
+      windows::board_popout_open,
+      windows::board_popout_owner,
+      windows::board_popout_publish,
+      windows::board_popout_request,
+      windows::board_popout_reveal,
       windows::workspace_storage_stale,
       window::window_close,
       window::window_close_cancelled,
@@ -1770,6 +1797,7 @@ pub fn run() {
       ssh_hosts::ssh_terminal_command,
       ssh_hosts::ssh_forwards_list,
       ssh_hosts::ssh_forward_add,
+      ssh_hosts::ssh_forward_for_browser,
       ssh_hosts::ssh_forward_remove,
       ssh_hosts::ssh_browse_dir,
       ssh_hosts::ssh_detected_ports,
@@ -1837,6 +1865,7 @@ pub fn run() {
       agent::status_hooks::agent_status_hooks_install,
       agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
+      agent::hooks::agent_permission_answer,
       agent::hooks::agent_hook_file,
       agent::hooks::agent_run_dir,
       agent::hooks::agent_run_files_write,
@@ -1980,6 +2009,16 @@ pub fn run() {
       linear::linear_issues_list,
       linear::linear_issue_view,
       linear::linear_issue_comment,
+      linear::linear_issue_states,
+      linear::linear_issue_set_state,
+      linear::linear_issue_assign,
+      linear::linear_issue_members,
+      linear::linear_issue_set_assignee,
+      linear::linear_issue_set_priority,
+      linear::linear_issue_labels,
+      linear::linear_issue_set_labels,
+      linear::linear_issue_set_estimate,
+      linear::linear_issue_set_due_date,
       linear::linear_issue_open,
       gitlab::gitlab_status,
       gitlab::gitlab_connect,
@@ -1987,6 +2026,11 @@ pub fn run() {
       gitlab::gitlab_issues_list,
       gitlab::gitlab_issue_view,
       gitlab::gitlab_issue_comment,
+      gitlab::gitlab_issue_set_state,
+      gitlab::gitlab_issue_assign,
+      gitlab::gitlab_issue_members,
+      gitlab::gitlab_issue_set_assignee,
+      gitlab::gitlab_issue_labels,
       gitlab::gitlab_issue_open,
       jira::jira_status,
       jira::jira_connect,
@@ -1994,6 +2038,14 @@ pub fn run() {
       jira::jira_issues_list,
       jira::jira_issue_view,
       jira::jira_issue_comment,
+      jira::jira_issue_transitions,
+      jira::jira_issue_transition,
+      jira::jira_issue_assign,
+      jira::jira_assignable_users,
+      jira::jira_issue_set_assignee,
+      jira::jira_issue_labels,
+      jira::jira_priorities,
+      jira::jira_issue_set_priority,
       jira::jira_issue_open,
       agent::gh_projects::gh_projects_list,
       agent::gh_projects::gh_project_items,

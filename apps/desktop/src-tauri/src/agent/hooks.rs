@@ -26,11 +26,15 @@ pub const EVENTS: &[&str] = &["SessionStart", "UserPromptSubmit", "PreToolUse", 
 pub const GATED_EVENTS: &[(&str, (u32, u32, u32))] = &[
   ("SubagentStart", (2, 0, 43)),
   ("SubagentStop", (2, 0, 43)),
+  // An agent team's teammate went idle: it no longer keeps the lead working (Orca's roster).
+  ("TeammateIdle", (2, 1, 33)),
   ("PostToolUseFailure", (2, 0, 56)),
   ("Elicitation", (2, 1, 63)),
   ("ElicitationResult", (2, 1, 63)),
   ("PostCompact", (2, 1, 76)),
   ("StopFailure", (2, 1, 78)),
+  // A batch end lists the calls it settled: a permission Claude denied itself (no Post* hook) ends (Orca).
+  ("PostToolBatch", (2, 1, 118)),
 ];
 
 /// The events a claude of `version` gets.
@@ -109,13 +113,95 @@ pub fn quotable_path(file: &Path) -> Result<&str, String> {
   Ok(path)
 }
 
-/// `--settings` JSON with a command hook per event that appends the payload to `file`.
-pub fn settings_json(file: &Path, events: &[&str]) -> Result<String, String> {
-  let path = quotable_path(file)?;
+/// A path as the hook's POSIX shell takes it. Claude Code on Windows runs hook commands in Git Bash,
+/// which takes `C:/Users/…` (forward slashes) as it does `/c/Users/…`; backslashes are left to MSYS's
+/// own conversion otherwise. Not yet checked on a Windows machine.
+pub fn shell_path(path: &str, windows: bool) -> String {
+  if windows { path.replace('\\', "/") } else { path.to_owned() }
+}
+
+/// Claude Code's PermissionRequest hook that waits for Kingu's answer (Orca's blocking hook,
+/// claude-hook-decision-script.ts + claude-permission-hook-hold.ts). It appends the request with a
+/// hold id, marks itself waiting (`<file>.<id>.wait`) and prints the answer Kingu writes to
+/// `<file>.<id>.answer`; after 122 s (past claude's own two minutes, inside the entry's 130 s
+/// timeout) or with no answer it prints `{}`, so claude asks as usual. Claude shows its dialog
+/// meanwhile, so the person can still answer in the terminal.
+pub const PERMISSION_HOLD_SCRIPT: &str = r#"#!/bin/sh
+# Managed by Kingu (agent hooks); Kingu rewrites this file, edits are lost.
+f="$1"
+payload=$(cat)
+one=$(printf '%s' "$payload" | tr '\r\n' '  ')
+id="$(date +%s)-$$"
+base="${f%.jsonl}"
+w="$base.$id.wait"
+a="$base.$id.answer"
+case "$one" in
+  '{}'|'{ }') printf '%s\n' "$one" >> "$f"; printf '{}\n'; exit 0 ;;
+  '{'*) ;;
+  *) printf '%s\n' "$one" >> "$f"; printf '{}\n'; exit 0 ;;
+esac
+trap 'rm -f "$w" "$a"' EXIT
+trap 'exit 0' HUP INT TERM
+: > "$w"
+printf '{"kingu_hold":"%s",%s\n' "$id" "${one#\{}" >> "$f"
+n=0
+while [ "$n" -lt 244 ]; do
+  if [ -s "$a" ]; then cat "$a"; exit 0; fi
+  sleep 0.5
+  n=$((n + 1))
+done
+printf '{}\n'
+"#;
+/// The hold's own budget is 122 s; the entry's timeout outlasts it (Orca: 130 s).
+pub const PERMISSION_HOLD_TIMEOUT_SECONDS: u64 = 130;
+const HOLD_SCRIPT_NAME: &str = "permission-hold.sh";
+
+/// `--settings` JSON with a command hook per event that appends the payload to `file`; with
+/// `hold_script`, PermissionRequest runs it instead and waits for Kingu's answer.
+pub fn settings_json(file: &Path, events: &[&str], hold_script: Option<&Path>) -> Result<String, String> {
+  let path = shell_path(quotable_path(file)?, cfg!(windows));
   let command = format!("{{ cat; echo; }} >> '{path}'");
   let entry = serde_json::json!([{ "hooks": [{ "type": "command", "command": command }] }]);
-  let hooks: serde_json::Map<String, serde_json::Value> = events.iter().map(|e| (e.to_string(), entry.clone())).collect();
+  let hold = match hold_script {
+    Some(script) => Some(serde_json::json!([{ "hooks": [{ "type": "command", "command": format!("/bin/sh '{}' '{path}'", shell_path(quotable_path(script)?, cfg!(windows))), "timeout": PERMISSION_HOLD_TIMEOUT_SECONDS }] }])),
+    None => None,
+  };
+  let hooks: serde_json::Map<String, serde_json::Value> = events
+    .iter()
+    .map(|e| (e.to_string(), if *e == "PermissionRequest" { hold.clone().unwrap_or_else(|| entry.clone()) } else { entry.clone() }))
+    .collect();
   Ok(serde_json::json!({ "hooks": hooks }).to_string())
+}
+
+/// A hold id the script made (`<unix seconds>-<pid>`).
+pub fn valid_hold(id: &str) -> bool {
+  (3..=40).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit() || b == b'-')
+}
+
+/// Claude's PermissionRequest decision (Orca `claudePermissionReply`; never `updatedPermissions`:
+/// an answer covers this one request only).
+pub fn permission_reply(allow: bool, message: &str) -> String {
+  let decision = if allow { serde_json::json!({ "behavior": "allow" }) } else { serde_json::json!({ "behavior": "deny", "message": message }) };
+  serde_json::json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
+}
+
+/// Hands the answer to a waiting hold of the session whose hook file is `file`. False when that
+/// hook no longer waits (it timed out, or claude moved on), so the caller answers another way.
+pub fn answer_hold(file: &Path, hold: &str, reply: &str) -> Result<bool, String> {
+  if !valid_hold(hold) {
+    return Err("invalid hold id".into());
+  }
+  let base = file.with_extension("");
+  let name = base.file_name().and_then(|n| n.to_str()).ok_or("bad hook file")?;
+  let at = |ext: &str| base.with_file_name(format!("{name}.{hold}.{ext}"));
+  if !at("wait").exists() {
+    return Ok(false);
+  }
+  // Written whole, then renamed: the script prints the file as soon as it is not empty.
+  let tmp = at("answer.tmp");
+  std::fs::write(&tmp, format!("{reply}\n")).map_err(|e| e.to_string())?;
+  std::fs::rename(&tmp, at("answer")).map_err(|e| e.to_string())?;
+  Ok(true)
 }
 
 #[derive(Debug, serde::Serialize, PartialEq)]
@@ -170,7 +256,18 @@ fn fresh_file(app: &AppHandle, token: &str) -> Result<PathBuf, String> {
 pub async fn agent_hook_settings(app: AppHandle, token: String, program: Option<String>) -> Result<String, String> {
   let program = program.filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "claude".into());
   let version = tauri::async_runtime::spawn_blocking(move || claude_version(&program)).await.map_err(|e| e.to_string())?;
-  settings_json(&fresh_file(&app, &token)?, &events_for(version))
+  let file = fresh_file(&app, &token)?;
+  let script = file.with_file_name(HOLD_SCRIPT_NAME);
+  // Kingu's own copy each launch (an edit or an older version never stays).
+  let hold = std::fs::write(&script, PERMISSION_HOLD_SCRIPT).map(|_| script.as_path()).map_err(|e| log::warn!("permission hold script: {e}")).ok();
+  settings_json(&file, &events_for(version), hold)
+}
+
+/// Answers the waiting PermissionRequest hook `hold` of a claude session (the task's quick reply).
+/// False when that hook no longer waits.
+#[tauri::command]
+pub fn agent_permission_answer(app: AppHandle, token: String, hold: String, allow: bool) -> Result<bool, String> {
+  answer_hold(&file_of(&app, &token)?, &hold, &permission_reply(allow, "Denied in Kingu."))
 }
 
 /// The hook file of a new session whose CLI appends to it itself (codex `notify`).
@@ -335,11 +432,11 @@ mod tests {
 
   #[test]
   fn settings_append_each_event_to_the_file() {
-    let json: serde_json::Value = serde_json::from_str(&settings_json(Path::new("/c/agent-hooks/t.jsonl"), EVENTS).unwrap()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&settings_json(Path::new("/c/agent-hooks/t.jsonl"), EVENTS, None).unwrap()).unwrap();
     for e in EVENTS {
       assert_eq!(json["hooks"][e][0]["hooks"][0]["command"], "{ cat; echo; } >> '/c/agent-hooks/t.jsonl'");
     }
-    assert!(settings_json(Path::new("/it's/t.jsonl"), EVENTS).is_err());
+    assert!(settings_json(Path::new("/it's/t.jsonl"), EVENTS, None).is_err());
     assert_eq!(quotable_path(Path::new("/c/agent-hooks/t.jsonl")).unwrap(), "/c/agent-hooks/t.jsonl");
     assert!(quotable_path(Path::new("/c/a\nb.jsonl")).is_err());
   }
@@ -406,5 +503,51 @@ mod tests {
     // A new run with the same token starts empty.
     let again = run_dir_in(base.path(), "abcd-1234").unwrap();
     assert!(std::fs::read_dir(again).unwrap().next().is_none());
+  }
+
+  #[test]
+  fn permission_request_waits_with_a_longer_timeout() {
+    let json: serde_json::Value = serde_json::from_str(&settings_json(Path::new("/c/agent-hooks/t.jsonl"), EVENTS, Some(Path::new("/c/agent-hooks/permission-hold.sh"))).unwrap()).unwrap();
+    let hold = &json["hooks"]["PermissionRequest"][0]["hooks"][0];
+    assert_eq!(hold["command"], "/bin/sh '/c/agent-hooks/permission-hold.sh' '/c/agent-hooks/t.jsonl'");
+    assert_eq!(hold["timeout"], 130);
+    assert_eq!(json["hooks"]["Stop"][0]["hooks"][0]["command"], "{ cat; echo; } >> '/c/agent-hooks/t.jsonl'");
+    let reply: serde_json::Value = serde_json::from_str(&permission_reply(false, "no")).unwrap();
+    assert_eq!(reply["hookSpecificOutput"]["decision"], serde_json::json!({ "behavior": "deny", "message": "no" }));
+    assert!(valid_hold("1795160000-4242") && !valid_hold("../x") && !valid_hold("1"));
+    assert_eq!(shell_path(r"C:\Users\a\AppData\Local\kingu\agent-hooks\t.jsonl", true), "C:/Users/a/AppData/Local/kingu/agent-hooks/t.jsonl");
+    assert_eq!(shell_path("/c/agent-hooks/t.jsonl", false), "/c/agent-hooks/t.jsonl");
+  }
+
+  /// The real script under /bin/sh: the request lands in the hook file with its hold id, Kingu's
+  /// answer comes out on stdout, and nothing is left behind.
+  #[cfg(unix)]
+  #[test]
+  fn the_hold_script_prints_kingus_answer() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("permission-hold.sh");
+    std::fs::write(&script, PERMISSION_HOLD_SCRIPT).unwrap();
+    let file = dir.path().join("tok12345.jsonl");
+    std::fs::write(&file, b"").unwrap();
+    let mut child = std::process::Command::new("/bin/sh").arg(&script).arg(&file).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash"}"#).unwrap();
+    let start = std::time::Instant::now();
+    let hold = loop {
+      let (events, _) = parse_lines(&std::fs::read(&file).unwrap());
+      if let Some(h) = events.first().and_then(|e| e["kingu_hold"].as_str().map(str::to_owned)) {
+        assert_eq!(events[0]["tool_name"], "Bash");
+        break h;
+      }
+      assert!(start.elapsed().as_secs() < 10, "the request never arrived");
+      std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    assert!(answer_hold(&file, &hold, &permission_reply(true, "")).unwrap());
+    let out = child.wait_with_output().unwrap();
+    let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(printed["hookSpecificOutput"]["decision"]["behavior"], "allow");
+    let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(left.len(), 2, "only the script and the hook file stay: {left:?}");
+    assert!(!answer_hold(&file, &hold, "{}").unwrap(), "a finished hold takes no answer");
   }
 }

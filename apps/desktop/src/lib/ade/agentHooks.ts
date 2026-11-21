@@ -14,6 +14,11 @@ export type HookState = {
 	message?: string;
 	/** Waiting on a permission answer in the terminal (counts as "needs input"). */
 	permission: boolean;
+	/** The waiting PermissionRequest hook (hooks.rs PERMISSION_HOLD_SCRIPT) the quick reply answers,
+	 * and since when (Unix ms); its budget is 122 s. Only a claude Kingu started has one. */
+	hold?: { id: string; since: number };
+	/** The tool call (and its agent) the permission prompt is for: PostToolBatch settles it only when it lists it (Orca). */
+	waitingFor?: { toolUseId: string; agentId?: string };
 	/** Waiting on the answer to a question the agent asked (AskUserQuestion, elicitation, …). */
 	question: boolean;
 	/** That question's options, when its tool input carried them (terminal quick reply). */
@@ -272,6 +277,28 @@ function claude(ev: HookEvent, prev: HookState): Patch | null {
 			return working(ev.tool_name ? t('ade.hooks.usingTool', { tool: ev.tool_name }) : t('ade.hooks.working'));
 		case 'PermissionRequest':
 			return isQuestionTool(ev.tool_name) ? question(ev.tool_input) : permission(ev.tool_name);
+		// Orca (claude-settled-permission-requests.ts): Claude can deny a request itself (a prompt
+		// timeout, a safety check) with no Post* hook; the owner's batch end lists the call. A batch
+		// that does not list the waiting call (a late one, another agent's) changes nothing.
+		case 'PostToolBatch': {
+			if (!prev.permission || prev.phase !== 'waiting' || !prev.waitingFor) return null;
+			if ((prev.waitingFor.agentId ?? undefined) !== agentId) return null;
+			const calls = Array.isArray((ev as Payload).tool_calls) ? ((ev as Payload).tool_calls as unknown[]) : [];
+			const listed = calls.some((c) => !!c && typeof c === 'object' && str((c as Payload).tool_use_id) === prev.waitingFor?.toolUseId);
+			return listed ? working() : null;
+		}
+		// Orca (claude-lifecycle-events.ts): an idle teammate (Claude agent teams) has ended its turn,
+		// not its life; it no longer keeps the lead working. Matched by its name in the roster id (`a<name>-<n>`).
+		case 'TeammateIdle': {
+			const name = str((ev as Payload).teammate_name);
+			if (!name || !prev.subagents) return null;
+			const prefix = `a${name}-`;
+			const rest = Object.fromEntries(Object.entries(prev.subagents).filter(([id]) => !(id.startsWith(prefix) && !id.slice(prefix.length).includes('-'))));
+			const n = Object.keys(rest).length;
+			if (n === Object.keys(prev.subagents).length) return null;
+			if (prev.leadDone) return n ? { subagents: rest, message: t('ade.hooks.subagentsRunning', { count: n }) } : { ...idle(), subagents: undefined };
+			return { subagents: n ? rest : undefined };
+		}
 		case 'PostToolUse':
 		case 'PostToolUseFailure':
 		case 'ElicitationResult':
@@ -325,8 +352,21 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 	}
 	const patch = claude(ev, state);
 	if (!patch) return state;
-	return { ...state, ...patch, hooks: true, at: now, sessionId: ev.session_id ?? state.sessionId };
+	// The hold lasts while the permission prompt does (a Notification about it keeps it).
+	const holdId = ev.hook_event_name === 'PermissionRequest' ? str((ev as Payload).kingu_hold) : undefined;
+	const next = { ...state, ...patch, hooks: true, at: now, sessionId: ev.session_id ?? state.sessionId };
+	next.hold = !next.permission ? undefined : holdId ? { id: holdId, since: now } : ev.hook_event_name === 'PermissionRequest' ? undefined : state.hold;
+	const toolUseId = str((ev as Payload).tool_use_id);
+	const agentId = str((ev as Payload).agent_id);
+	next.waitingFor = !next.permission ? undefined : ev.hook_event_name === 'PermissionRequest' ? (toolUseId ? { toolUseId, ...(agentId ? { agentId } : {}) } : undefined) : state.waitingFor;
+	return next;
 }
+
+/** Orca's hold budget (claude-permission-hook-hold.ts): past it the hook has printed `{}`. */
+export const HOLD_BUDGET_MS = 122_000;
+
+/** The hold the quick reply can answer now, if any. */
+export const liveHold = (h: HookState | undefined, now: number) => (h?.permission && h.phase === 'waiting' && h.hold && now - h.hold.since < HOLD_BUDGET_MS - 2_000 ? h.hold : undefined);
 
 /** Needs you: a permission answer or a question's answer. */
 export const needsInput = (h: HookState) => h.phase === 'waiting' && (h.permission || h.question);

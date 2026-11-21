@@ -1,6 +1,7 @@
 // Pure chord parsing and matching, kept free of runes so it is unit-testable.
 
 export const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
+export const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
 
 export type Chord = { meta: boolean; ctrl: boolean; shift: boolean; alt: boolean; key: string };
 
@@ -157,8 +158,8 @@ export function toAccelerator(keybinding: string, mac = isMac): string | null {
 }
 
 /** The keybinding on this platform: VS Code's `mac:` override, else `key`. */
-export function keyOf(binding: { key?: string; mac?: string }, mac = isMac): string | undefined {
-	return (mac ? binding.mac : undefined) ?? binding.key;
+export function keyOf(binding: { key?: string; mac?: string; win?: string }, mac = isMac, win = isWindows): string | undefined {
+	return (mac ? binding.mac : !mac && win ? binding.win : undefined) ?? binding.key;
 }
 
 /**

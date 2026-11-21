@@ -11,7 +11,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { killPty } from '#lib/terminal/pty.ts';
 import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName } from '#lib/terminal/sessions.ts';
 import { isWorking } from './agentCli';
-import { applyHook, initialHookState, type HookState } from './agentHooks';
+import { applyHook, initialHookState, liveHold, type HookState } from './agentHooks';
 import { checkLiveness, type Liveness, type PtyListing } from './agentPresence';
 import { applyTitle, type TitleTrack } from './agentTitle';
 import { pasteText, profileOf, promptDue } from '#lib/ade/agentProfiles.ts';
@@ -229,22 +229,27 @@ class CliSessions {
 	}
 
 	/**
-	 * Answers the permission prompt the task's CLI shows (its hooks said so): Enter takes the
+	 * Answers the permission prompt the task's CLI shows (its hooks said so). A claude Kingu started
+	 * waits in its PermissionRequest hook (Orca's blocking hook): the answer goes there, as Claude's
+	 * own allow / deny decision. Otherwise, or once that hook stopped waiting, Enter takes the
 	 * highlighted choice — "Yes"/"Allow once", the first option in claude, codex, gemini and cursor —
-	 * and Esc declines. Used by the phone (mobile.svelte.ts). False when no prompt is open.
+	 * and Esc declines. Used by the card and the phone (mobile.svelte.ts). False when no prompt is open.
 	 */
 	async answerPermission(slug: string, allow: boolean): Promise<boolean> {
 		const hook = this.hooks[slug];
 		const key = this.key(slug);
 		if (!key || !hook?.permission || hook.phase !== 'waiting') return false;
+		const hold = liveHold(hook, Date.now());
+		const token = this.sessions[slug]?.hookToken;
 		try {
-			await invoke('pty_write', { key, data: allow ? '\r' : '\x1b' });
+			const held = hold && token ? await invoke<boolean>('agent_permission_answer', { token, hold: hold.id, allow }).catch(() => false) : false;
+			if (!held) await invoke('pty_write', { key, data: allow ? '\r' : '\x1b' });
 		} catch (e) {
 			status.flash(t('ade.cli.answerFailed', { error: String(e) }), 8000);
 			return false;
 		}
 		const now = this.hooks[slug];
-		if (now?.permission) this.hooks[slug] = { ...now, phase: allow ? 'working' : 'idle', permission: false, message: t('ade.cli.answered'), at: Date.now() };
+		if (now?.permission) this.hooks[slug] = { ...now, phase: allow ? 'working' : 'idle', permission: false, hold: undefined, message: t('ade.cli.answered'), at: Date.now() };
 		this.#last[slug] = Date.now();
 		return true;
 	}

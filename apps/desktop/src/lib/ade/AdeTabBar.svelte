@@ -3,6 +3,9 @@
 	// session (or the new-task composer for the folder itself), its terminals, files and task diffs
 	// opened from the right side bar (italic while a preview, a dot while unsaved), and "+" for a
 	// new terminal in that worktree; "N รอคุณ" at the end. Tasks (the board) shows as its own tab.
+	// A split worktree has one of these per region (Orca's tab groups, adeSplit.ts): `group` limits it
+	// to that group's tabs, and only the strip with `extras` (the top right one) has the quick
+	// commands and the attention badge. Tabs drag within a strip to reorder and onto another strip to move.
 	import { untrack } from 'svelte';
 	import AgentIcon from '#lib/agent/AgentIcon.svelte';
 	import FileIcon from '#lib/workbench/FileIcon.svelte';
@@ -38,8 +41,10 @@
 	import { programLabel, withPercent } from './programStatus';
 	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
-	import { primaryQuickCommand, quickCommands, withoutQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
+	import { primaryQuickCommand, QUICK_INSERT_ID, quickAppendsEnter, quickCommands, withoutQuickCommand } from '#lib/terminal/adeTerminalOptions.ts';
 	import { ask } from '#lib/workbench/messageBox.ts';
+
+	let { group, extras = true }: { group?: string; extras?: boolean } = $props();
 
 	// Tab context menu, like the IDE's: close tabs, copy or reveal a file. The agent session and the
 	// composer stay (they are the worktree itself).
@@ -64,6 +69,7 @@
 			menuSeparator,
 			menuItem('splitRight', tr('ade.split.right'), { enabled: splittable(t.id) && tabs.length > 1 }),
 			menuItem('splitDown', tr('ade.split.down'), { enabled: splittable(t.id) && tabs.length > 1 }),
+			...(group ? [menuItem('closeRegion', tr('ade.split.closeGroup'))] : []),
 			menuItem('unsplit', tr('ade.split.close'), { enabled: !!adeLayout.treeOf(key) }),
 			menuSeparator,
 			menuItem('pin', adeLayout.isPinned(key, t.id) ? 'Unpin Tab' : 'Pin Tab', { enabled: closable(t) || adeLayout.isPinned(key, t.id) }),
@@ -105,7 +111,10 @@
 				return adeLayout.togglePin(key, t.id);
 			case 'splitRight':
 			case 'splitDown':
-				return adeLayout.splitTab(key, t.id, id === 'splitRight' ? 'right' : 'down');
+				// Into a new group beside the tab's own group.
+				return adeLayout.splitTab(key, t.id, id === 'splitRight' ? 'right' : 'down', t.id);
+			case 'closeRegion':
+				return group && adeLayout.closeRegion(key, group);
 			case 'unsplit':
 				return adeLayout.unsplit(key);
 		}
@@ -135,6 +144,8 @@
 		);
 	}
 	function runCreate(id: string) {
+		// A region's "+" opens the new tab in that region's group (new tabs join the active group).
+		if (group && shownTab !== activeTab) adeLayout.select(key, shownTab);
 		if (id === 'browser') adeLayout.newBrowser(key);
 		else if (id === 'markdown') adeLayout.newMarkdown(key);
 		else if (id === 'openMarkdown') void adeLayout.openMarkdown(key);
@@ -172,10 +183,10 @@
 		const n = adeLayout.quickMenuRequest;
 		if (n === seenQuickRequest) return;
 		seenQuickRequest = n;
-		untrack(toggleQuickMenu);
+		if (extras) untrack(toggleQuickMenu);
 	});
 	/** Edit Quick Command: the entry and the scope that keeps it (this project's store wins, like the merge). */
-	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo'; agent?: string } | null>(null);
+	let editingQuick = $state<{ kind: QuickKind; label: string; command: string; scope: 'user' | 'repo'; agent?: string; appendEnter?: boolean } | null>(null);
 	const AGENTS_ID = 'kingu.terminal.quickPromptAgents';
 	/** A prompt's own agent (kingu.terminal.quickPromptAgents), '' for kingu.agent.cli. */
 	const promptAgent = (label: string): string => {
@@ -194,6 +205,10 @@
 		await settings.set(id, withoutQuickCommand(layer, q.label), scope).catch((e) => status.error(String(e)));
 		const agents = (scope === 'repo' ? settings.repo.values : settings.user.values)[AGENTS_ID];
 		if (q.kind === 'prompt' && agents && typeof agents === 'object' && q.label in agents) await settings.set(AGENTS_ID, withoutQuickCommand(agents, q.label), scope).catch((e) => status.error(String(e)));
+		// Its Insert mode goes with it (a map of booleans, so not withoutQuickCommand's string filter).
+		const insert = (scope === 'repo' ? settings.repo.values : settings.user.values)[QUICK_INSERT_ID];
+		if (q.kind === 'command' && insert && typeof insert === 'object' && q.label in insert)
+			await settings.set(QUICK_INSERT_ID, Object.fromEntries(Object.entries(insert).filter(([k]) => k !== q.label)), scope).catch((e) => status.error(String(e)));
 	}
 	function readRecentQuick(): string | null {
 		try {
@@ -221,8 +236,10 @@
 	function runCommandLine(q: Quick) {
 		// A line past the tty's input limit (1024 bytes on macOS) typed before the shell is ready
 		// is cut; a long one goes through the daemon, which waits for the line editor (`sh -c`).
+		const enter = quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), q.label);
 		const long = new TextEncoder().encode(q.command).length > 900;
-		adeLayout.newTerminal(key, long ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command });
+		// Insert mode (Orca's appendEnter off) only types; a long line cannot run as `sh -c` then.
+		adeLayout.newTerminal(key, long && enter ? { title: q.label, run: ['sh', '-c', q.command] } : { title: q.label, type: q.command, typeEnter: enter });
 	}
 	// Orca's menu: a search over label and command text, the command used last first.
 	const quickItems = $derived<NewTabItem[]>([
@@ -232,7 +249,8 @@
 			.map(({ q, i }) => ({
 				id: `quick:${i}`,
 				label: q.label,
-				description: q.command.split('\n')[0],
+				// Orca's "Insert" hint on a command that is only typed (appendEnter off).
+				description: q.kind === 'command' && !quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), q.label) ? `${tr('legacyAde.quickCommand.insert')} · ${q.command.split('\n')[0]}` : q.command.split('\n')[0],
 				group: q.kind === 'prompt' ? tr('legacyAde.quickCommand.prompts') : tr('legacyAde.adeTabBar.quickCommands'),
 				actions: [
 					{ id: `quickEdit:${i}`, icon: 'edit' as const, label: tr('legacyAde.quickCommand.edit', { label: q.label }) },
@@ -248,7 +266,7 @@
 			const entry = quick[Number(action[2])];
 			if (!entry) return;
 			if (action[1] === 'quickDelete') return void deleteQuick(entry);
-			editingQuick = { ...entry, scope: quickScope(entry), agent: entry.kind === 'prompt' ? promptAgent(entry.label) : undefined };
+			editingQuick = { ...entry, scope: quickScope(entry), agent: entry.kind === 'prompt' ? promptAgent(entry.label) : undefined, appendEnter: entry.kind === 'command' ? quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), entry.label) : undefined };
 			return;
 		}
 		const q = quick[Number(id.slice(6))];
@@ -257,21 +275,23 @@
 
 	const key = $derived(adeLayout.key);
 	const view = $derived(key ? adeTasks.find(key) : undefined);
-	const tabs = $derived(adeLayout.tabs(key));
+	const tabs = $derived(group ? adeLayout.groupTabs(key, group) : adeLayout.tabs(key));
 	const activeTab = $derived(adeLayout.activeTab(key));
+	/** The tab this strip's region shows (Orca's group active tab); the accent line marks it only in the active group. */
+	const shownTab = $derived((group && adeLayout.groupsOf(key)?.shown[group]) || activeTab);
 	const attention = $derived(sessionsAttentionLabel(adeTasks.counts.needsInput));
 
-	// Orca's drag reorder: drop a tab on another to put it before it, on the strip to move it last.
-	let dragId = $state<string | null>(null);
+	// Orca's drag reorder: drop a tab on another to put it before it, on the strip to move it last; a
+	// tab from another region's strip moves into this group. The dragged tab is shared by every strip.
 	let dropId = $state<string | null>(null);
 	function dragStart(e: DragEvent, id: string) {
-		dragId = id;
 		// The center shows its split drop zones (Orca: drag a tab to a pane edge).
 		adeLayout.draggingTab = id;
 		e.dataTransfer?.setData('text/plain', id);
 		if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
 	}
 	function dragOver(e: DragEvent, id: string) {
+		const dragId = adeLayout.draggingTab;
 		if (!dragId || dragId === id) return;
 		e.preventDefault();
 		dropId = id;
@@ -279,14 +299,17 @@
 	function drop(e: DragEvent, id: string) {
 		e.preventDefault();
 		e.stopPropagation();
-		if (dragId && dragId !== id) adeLayout.moveTab(key, dragId, id);
-		dragId = null;
+		const dragId = adeLayout.draggingTab;
+		if (dragId && dragId !== id) adeLayout.moveTabTo(key, dragId, id, id);
+		adeLayout.draggingTab = null;
 		dropId = null;
 	}
 	function dropEnd(e: DragEvent) {
 		e.preventDefault();
-		if (dragId) adeLayout.moveTab(key, dragId, null);
-		dragId = null;
+		e.stopPropagation();
+		const dragId = adeLayout.draggingTab;
+		if (dragId) adeLayout.moveTabTo(key, dragId, shownTab, null);
+		adeLayout.draggingTab = null;
 		dropId = null;
 	}
 
@@ -297,8 +320,8 @@
 	const INACTIVE = 'text-(--vscode-tab-inactiveForeground) hover:bg-(--vscode-tab-hoverBackground)';
 </script>
 
-<div class="flex h-[35px] shrink-0 items-end gap-0.5 border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground) px-1">
-	{#if adeLayout.board}
+<div data-ade-strip class="flex h-[35px] shrink-0 items-end gap-0.5 border-b border-(--vscode-editorGroupHeader-tabsBorder,var(--vscode-widget-border)) bg-(--vscode-editorGroupHeader-tabsBackground) px-1">
+	{#if adeLayout.board && !group}
 		<div class={[TAB, ACTIVE]}>
 			<span class={ACCENT}></span>
 			{#if adeLayout.page === 'now'}<Icon name="agent" size={14} /> Now{:else if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else if adeLayout.page === 'issues'}<Icon name="bug" size={14} /> Issues{:else}<Icon name="tasks" size={14} /> Tasks{/if}
@@ -310,34 +333,39 @@
 			role="tablist"
 			tabindex="-1"
 			aria-label={tr('legacyAde.adeTabBar.worktreeTabs')}
-			ondragover={(e) => dragId && e.preventDefault()}
+			ondragover={(e) => adeLayout.draggingTab && e.preventDefault()}
 			ondrop={dropEnd}
 		>
 			{#each tabs as t (t.id)}
-				{@const active = t.id === activeTab}
+				{@const active = t.id === shownTab}
 				<div
 					role="tab"
 					tabindex="0"
 					aria-selected={active}
-					class={[TAB, active ? ACTIVE : INACTIVE, dropId === t.id && 'border-l-2 border-(--vscode-focusBorder)']}
+					class={[TAB, active ? ACTIVE : INACTIVE, dropId === t.id && adeLayout.draggingTab && 'border-l-2 border-(--vscode-focusBorder)']}
 					draggable="true"
 					ondragstart={(e) => dragStart(e, t.id)}
 					ondragover={(e) => dragOver(e, t.id)}
 					ondrop={(e) => drop(e, t.id)}
-					ondragend={() => ((dragId = null), (dropId = null), (adeLayout.draggingTab = null))}
+					ondragend={() => ((dropId = null), (adeLayout.draggingTab = null))}
 					onclick={() => adeLayout.select(key, t.id)}
 					onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), adeLayout.select(key, t.id))}
 					onauxclick={(e) => e.button === 1 && t.kind !== 'agent' && t.kind !== 'compose' && !adeLayout.isPinned(key, t.id) && adeLayout.close(key, t.id)}
 					ondblclick={() => (t.kind === 'file' || t.kind === 'diff' ? adeLayout.pin(key, t.key) : t.kind === 'terminal' && adeLayout.rename(key, t.id))}
 					oncontextmenu={(e) => (e.preventDefault(), (menu = { tab: t, x: e.clientX, y: e.clientY }))}
 				>
-					{#if active}<span class={ACCENT}></span>{/if}
+					{#if active && t.id === activeTab}<span class={ACCENT}></span>{/if}
 					{#if adeLayout.colorOf(key, t.id) ?? (t.kind === 'terminal' ? t.color : undefined)}
 						{@const dot = adeLayout.colorOf(key, t.id) ?? (t.kind === 'terminal' ? t.color : undefined)}
 						<span class="size-2 shrink-0 rounded-full" style:background={dot} aria-hidden="true"></span>
 					{/if}
 					{#if t.kind === 'agent' && view}
-						<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
+						{@const percent = paneProgram.taskProgress(view)}
+						{#if percent !== undefined}
+							<span class="grid size-3 shrink-0 place-items-center" title={withPercent(statusLabel(view), percent)}><ProgressRing {percent} tone={view.status === 'running' ? 'working' : 'attention'} label={withPercent(statusLabel(view), percent)} /></span>
+						{:else}
+							<span class={['size-2 shrink-0 rounded-full', statusDot(view)]} title={statusLabel(view)}></span>
+						{/if}
 						<AgentIcon agent={view.meta.agent || 'claude'} size={14} />
 						<span class="truncate" title={view.meta.title}>{view.meta.title}</span>
 					{:else if t.kind === 'browser'}
@@ -411,7 +439,7 @@
 		</button>
 	</div>
 	<span class="flex-1"></span>
-	{#if workspace.root}
+	{#if workspace.root && extras}
 		<div class="my-auto mr-1 flex h-[22px] items-stretch rounded-md text-xs">
 			{#if primaryQuick}
 				{@const q = primaryQuick}
@@ -431,7 +459,7 @@
 			>
 		</div>
 	{/if}
-	{#if attention}
+	{#if attention && extras}
 		<button
 			class="needs-input my-auto mr-2 flex h-[22px] items-center gap-1.5 rounded-md px-2 text-xs text-(--vscode-editorWarning-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
 			title={tr('legacyAde.adeTabBar.chooseSession', { attention })}
@@ -439,6 +467,15 @@
 		>
 			<span class="size-2 rounded-full bg-(--vscode-editorWarning-foreground)"></span>{attention}
 		</button>
+	{/if}
+	{#if group}
+		{@const g = group}
+		<button
+			class="my-auto mr-1 grid size-6 shrink-0 place-items-center rounded-md text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
+			aria-label={tr('ade.split.closeRegion')}
+			title={tr('ade.split.closeRegion')}
+			onclick={() => adeLayout.closeRegion(key, g)}><Icon name="close" size={13} /></button
+		>
 	{/if}
 </div>
 

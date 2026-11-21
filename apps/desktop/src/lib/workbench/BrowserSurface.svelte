@@ -6,7 +6,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { settings } from '#lib/settings/settings.svelte.ts';
-	import { BROWSER_ZOOMS, browserTitle, browserUrl, defaultBrowserZoom, isNewTabPage, readHistory, recordHistory, BROWSER_ACTION, type PickedElement } from './floating';
+	import { BROWSER_ZOOMS, browserTitle, browserUrl, defaultBrowserZoom, isNewTabPage, loopbackPort, onLocalPort, readHistory, recordHistory, BROWSER_ACTION, type PickedElement } from './floating';
 	import { notifications } from './notifications.svelte';
 	import { quick } from './quick.svelte';
 	import { status } from './status.svelte';
@@ -20,9 +20,11 @@
 		onNavigate,
 		onPick,
 		profile = '',
+		onProfile,
 		onNewTab,
 		frame = 'rounded border border-(--vscode-widget-border)',
-		padding = 'px-2 pb-2'
+		padding = 'px-2 pb-2',
+		route
 	}: {
 		label: string;
 		url?: string;
@@ -34,11 +36,28 @@
 		onPick?: (element: PickedElement) => void;
 		/** Orca's browser profile: its own cookies and storage (set when the tab's view opens). */
 		profile?: string;
+		/** Orca's toolbar profile picker; absent: no picker (the floating browser). */
+		onProfile?: () => void;
 		onNewTab?: () => void;
 		frame?: string;
 		padding?: string;
+		/** Pages on `localhost` come from a remote host (an SSH worktree): `forward` gives the local port that reaches its port. */
+		route?: { via: string; forward: (port: number) => Promise<number> };
 	} = $props();
+	/** The address to load: a loopback page of the remote host goes to its forward here; null when that failed. */
+	async function routed(raw: string): Promise<string | null> {
+		const url = browserUrl(raw, settings.get('kingu.browser.searchEngine'));
+		const port = route ? loopbackPort(url) : null;
+		if (!route || port === null) return url;
+		try {
+			return onLocalPort(url, await route.forward(port));
+		} catch (e) {
+			status.error(`Could not reach port ${port} on ${route.via}: ${e}`);
+			return null;
+		}
+	}
 	let address = $state(untrack(() => initial));
+	const viaHost = $derived(route && loopbackPort(browserUrl(address, settings.get('kingu.browser.searchEngine'))) !== null ? route.via : null);
 	let opened = $state(false);
 	/** Focused once on the new-tab page: the page load takes the keyboard after showing. */
 	let focusedOnce = false;
@@ -54,7 +73,10 @@
 			if (r.width < 1 || r.height < 1) return;
 			const at = { label, x: r.left, y: r.top, width: r.width, height: r.height };
 			const first = !opened;
-			const call = opened ? invoke('floating_browser_bounds', at) : invoke('floating_browser_open', { ...at, url: browserUrl(address, settings.get('kingu.browser.searchEngine')), profile: profile || null });
+			// A remote host's loopback page opens blank, then loads once its forward is up.
+			const later = !opened && !!route && loopbackPort(browserUrl(address, settings.get('kingu.browser.searchEngine'))) !== null;
+			const call = opened ? invoke('floating_browser_bounds', at) : invoke('floating_browser_open', { ...at, url: later ? 'about:blank' : browserUrl(address, settings.get('kingu.browser.searchEngine')), profile: profile || null });
+			if (later) void call.then(() => go());
 			opened = true;
 			// kingu.browser.defaultZoom (Orca's Default Zoom): a new page starts at it.
 			if (first && baseZoom !== 1) void call.then(() => setZoom(baseZoom));
@@ -103,7 +125,9 @@
 	});
 
 	function go() {
-		void invoke('floating_browser_navigate', { label, url: browserUrl(address, settings.get('kingu.browser.searchEngine')) }).catch((e) => status.error(String(e)));
+		void routed(address)
+			.then((url) => url && invoke('floating_browser_navigate', { label, url }))
+			.catch((e) => status.error(String(e)));
 	}
 	function step(back: boolean) {
 		void invoke('floating_browser_history', { label, back }).catch(() => {});
@@ -151,6 +175,8 @@
 			else if (d.action === 'devtools') devtools();
 			else if (d.action === 'address') bar?.focus();
 			else if (d.action === 'reload') reload();
+			else if (d.action === 'back') step(true);
+			else if (d.action === 'forward') step(false);
 		};
 		window.addEventListener(BROWSER_ACTION, on);
 		return () => window.removeEventListener(BROWSER_ACTION, on);
@@ -206,6 +232,9 @@
 		<button class={BTN} aria-label="Back" title="Back" onclick={() => step(true)}><Icon name="arrowLeft" size={14} /></button>
 		<button class={BTN} aria-label="Forward" title="Forward" onclick={() => step(false)}><Icon name="arrowRight" size={14} /></button>
 		<button class={BTN} aria-label="Reload" title="Reload" onclick={reload}><Icon name="refresh" size={14} /></button>
+		{#if onProfile}
+			<button class="h-6 max-w-28 shrink-0 truncate rounded px-1.5 text-[11px] text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground)" title={`Browser profile: ${profile || 'Default'} (its own cookies and storage)`} aria-label={`Browser profile: ${profile || 'Default'}`} onclick={onProfile}>{profile || 'Default'}</button>
+		{/if}
 		<div class="mx-1.5 flex h-7 min-w-0 flex-1 items-center gap-2 rounded-full border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) px-3 focus-within:border-(--vscode-focusBorder)">
 			<Icon name="globe" size={13} />
 			<input
@@ -214,6 +243,7 @@
 				bind:this={bar}
 				onfocus={(e) => e.currentTarget.select()}
 				placeholder="Search or enter URL"
+				title={viaHost ? `Connected via ${viaHost}` : undefined}
 				spellcheck="false"
 				bind:value={address}
 				onkeydown={(e) => {

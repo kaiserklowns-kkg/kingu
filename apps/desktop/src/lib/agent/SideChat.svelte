@@ -4,19 +4,28 @@
 	// chat (chats.fork with `side`, so the agent knows the whole conversation) and sends the excerpt
 	// as a quote with it; the fork stays out of the history. Keep as Chat moves it there and opens
 	// it; closing the drawer (or leaving the chat) discards it, stopped first if it runs.
-	import { onDestroy } from 'svelte';
+	// Another harness (VS Code 1.145's nested sessions with a different harness): the side chat is a
+	// new chat of that agent, with its own model and Manual permissions, told the quoted excerpt
+	// instead of the whole conversation (another agent cannot resume this one's session).
+	import { onDestroy, untrack } from 'svelte';
 	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatList from './ChatList.svelte';
 	import { chats } from './chats.svelte.ts';
 	import { turnBusy } from './chatInput.ts';
 	import { sideChatMessage } from './chatTranscript.ts';
+	import { agentRuntimes } from './runtimes.svelte.ts';
+	import { CLAUDE_RUNTIME, runtimeChoices } from './runtimes.ts';
+	import { ARKAI_RUNTIME, arkaiDefault } from './arkai.ts';
+	import { arkaiProviders } from './arkai.svelte.ts';
 
 	let {
 		parentId,
 		excerpt,
 		cwd = null,
 		root = null,
+		parentRuntime = CLAUDE_RUNTIME,
+		canFork = true,
 		onclose,
 		onkeep
 	}: {
@@ -24,6 +33,9 @@
 		excerpt: string;
 		cwd?: string | null;
 		root?: string | null;
+		/** The chat's own agent; `canFork`: it can fork the chat (rewind), so a same-agent side chat knows the whole conversation. */
+		parentRuntime?: string;
+		canFork?: boolean;
 		onclose: () => void;
 		/** Keep as Chat: the side chat is now a chat of the history; show it. */
 		onkeep: (id: string) => void;
@@ -34,17 +46,38 @@
 	let busy = $state(false);
 	const run = $derived(sideId ? chats.run(sideId) : undefined);
 	const running = $derived(turnBusy(run));
+	/** The side chat's agent, picked before its first question (VS Code's harness picker). */
+	let harness = $state(untrack(() => parentRuntime));
+	const harnesses = $derived(runtimeChoices(agentRuntimes.list, parentRuntime).filter((r) => !r.missing || r.id === parentRuntime));
+	const harnessName = (id: string) => harnesses.find((r) => r.id === id)?.name ?? id;
+	const forks = $derived(harness === parentRuntime && canFork);
+	/** The model a new chat of `runtime` starts with (as a new chat in the panel would). */
+	function modelFor(runtime: string): string | null {
+		if (runtime === CLAUDE_RUNTIME) return chats.defaults().model;
+		if (runtime === ARKAI_RUNTIME) return arkaiDefault(arkaiProviders.list, '') || null;
+		return null;
+	}
 
 	async function send() {
 		const question = text.trim();
 		if (!question || busy) return;
 		busy = true;
 		try {
-			if (!sideId) {
+			if (!sideId && forks) {
 				const id = await chats.fork(parentId, null, { side: true });
 				if (!id) return;
 				sideId = id;
 				if (await chats.send(id, { text: sideChatMessage(excerpt, question), images: [] })) text = '';
+				return;
+			}
+			if (!sideId) {
+				const parent = chats.get(parentId);
+				if (!parent) return;
+				const message = sideChatMessage(excerpt, question);
+				const id = await chats.create({ prompt: question, cwd: parent.cwd, model: modelFor(harness), permissionMode: 'default', message: { text: message, images: [] }, runtime: harness, sideOf: parentId });
+				if (!id) return;
+				sideId = id;
+				text = '';
 				return;
 			}
 			if ((await chats.submit(sideId, { text: question, images: [] }, question)) !== false) text = '';
@@ -96,7 +129,19 @@
 >
 	<header class="flex h-[30px] shrink-0 items-center gap-1 px-2">
 		<Codicon id="comment-discussion" size={13} />
-		<span class="min-w-0 flex-1 truncate font-medium">{t('chatTranscript.side.header')}</span>
+		<span class="min-w-0 flex-1 truncate font-medium" title={harness !== parentRuntime ? t('chatTranscript.side.harnessHint', { name: harnessName(harness) }) : undefined}
+			>{t('chatTranscript.side.header')}{#if harness !== parentRuntime}<span class="font-normal text-(--vscode-descriptionForeground)"> · {harnessName(harness)}</span>{/if}</span
+		>
+		{#if !sideId && harnesses.length > 1}
+			<select
+				class="h-[22px] max-w-40 rounded-sm border border-(--vscode-dropdown-border,transparent) bg-(--vscode-dropdown-background) px-1 text-xs text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
+				aria-label={t('chatTranscript.side.harness')}
+				title={t('chatTranscript.side.harness')}
+				bind:value={harness}
+			>
+				{#each harnesses as r (r.id)}<option value={r.id}>{r.id === parentRuntime && canFork ? t('chatTranscript.side.harnessFork', { name: r.name }) : r.name}</option>{/each}
+			</select>
+		{/if}
 		{#if sideId}
 			<button type="button" class="shrink-0 rounded px-1.5 py-0.5 text-xs text-(--vscode-textLink-foreground) hover:bg-(--vscode-toolbar-hoverBackground)" title={t('chatTranscript.side.keepHint')} onclick={keep}>{t('chatTranscript.side.keep')}</button>
 		{/if}

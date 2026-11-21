@@ -548,6 +548,15 @@ const CORE_SETTINGS: SettingSchema[] = [
 			'ข้อความที่ไม่ใช่ที่อยู่เว็บในช่อง address ของเบราว์เซอร์ในแอปจะค้นด้วย search engine นี้ (Orca: Default Search Engine) (Text that is not an address in the in-app browser address bar is searched with this engine.)'
 	},
 	{
+		id: 'kingu.browser.sshRouting',
+		group: 'Browser',
+		type: 'boolean',
+		default: true,
+		description:
+			"เมื่อเปิดงานบน SSH host แท็บเบราว์เซอร์ที่ไป localhost:<port> จะเปิดหน้าของเครื่องนั้นผ่าน port forward ที่ Kingu ตั้งให้ (ใกล้เคียง Orca: Browse through SSH workspace hosts แต่ส่งผ่านเฉพาะที่อยู่ localhost ที่อยู่อื่นยังออกจากเครื่องนี้) (With a worktree on an SSH host open, browser tabs going to localhost:<port> load that host's page through a port forward Kingu sets up; only localhost addresses go through the host.)",
+		scope: 'application'
+	},
+	{
 		id: 'kingu.browser.defaultZoom',
 		group: 'Browser',
 		type: 'number',

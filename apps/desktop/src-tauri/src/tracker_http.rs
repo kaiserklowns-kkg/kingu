@@ -12,6 +12,24 @@ use serde_json::Value;
 use crate::i18n::msg::TrackerMsg;
 use crate::tr;
 
+/// A state an issue can move to (Orca's status pickers: Linear's workflow states, Jira's
+/// transitions, GitLab's open / closed). `needs_fields`: Jira asks for more on that transition,
+/// which Kingu leaves to the browser.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct StateChoice {
+  pub id: String,
+  pub name: String,
+  pub current: bool,
+  pub needs_fields: bool,
+}
+
+/// A label typed in the drawer: trimmed, 1-100 characters, no control characters, and none of
+/// `forbidden` (Jira labels take no spaces, GitLab's label lists are comma-separated).
+pub fn clean_label(label: &str, forbidden: &[char]) -> Option<String> {
+  let l = label.trim();
+  (!l.is_empty() && l.chars().count() <= 100 && !l.chars().any(|c| c.is_control() || forbidden.contains(&c))).then(|| l.to_owned())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
   Get,

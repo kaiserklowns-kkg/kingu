@@ -5,6 +5,8 @@
 import { adeLayout } from './adeLayout.svelte';
 import { tabPanes } from './adeTabs';
 import { paneAgents } from './paneAgents.svelte';
+import { cliSessions } from './cliSessions.svelte';
+import { isQuestion, type TaskView } from './model';
 import { agentRingProgress, programIndicator, reduceProgram, type ProgramEvent, type ProgramFacet, type ProgramIndicator } from './programStatus';
 
 /** Staleness is 30 minutes, so a coarse clock is enough. */
@@ -56,10 +58,21 @@ class PaneProgram {
 		return agentRingProgress(rowState, this.facets[key], Math.max(this.now, paneAgents.now));
 	}
 
+	/**
+	 * The ring of a task's own agent (the main agent tab and its sidebar card, Orca's progress ring):
+	 * its CLI's OSC 7501 percentage while the task works or waits on you, else undefined.
+	 */
+	taskProgress(view: TaskView): number | undefined {
+		const s = cliSessions.sessions[view.meta.slug];
+		if (!s) return undefined;
+		const state = view.status === 'running' ? 'working' : view.status === 'waiting' ? (isQuestion(view) ? 'question' : 'permission') : 'idle';
+		return this.agentProgress(cliSessions.ptyKey(view.meta.slug, s.startedAt), state);
+	}
+
 	#tick() {
 		this.now = Date.now();
 		// Panes that were closed take their record along.
-		const open = new Set(adeLayout.ptyKeys());
+		const open = new Set([...adeLayout.ptyKeys(), ...Object.keys(cliSessions.sessions).map((slug) => cliSessions.ptyKey(slug, cliSessions.sessions[slug].startedAt))]);
 		for (const key of Object.keys(this.facets)) if (!open.has(key)) delete this.facets[key];
 	}
 

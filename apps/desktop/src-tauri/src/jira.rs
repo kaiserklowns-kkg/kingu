@@ -278,6 +278,140 @@ pub fn comment(t: &dyn Transport, key: &str, body: &str) -> Result<(), String> {
   call(t, Request::post(format!("/rest/api/3/issue/{key}/comment"), json!({ "body": text_to_adf(body) }))).map(|_| ())
 }
 
+/// The transitions open from the issue's status (Orca's `jira-issue-transition-control`): each is a
+/// choice named after the status it leads to; one that asks for fields is marked (Orca shows a form
+/// for those; Kingu sends that one to the browser).
+pub fn parse_transitions(v: &Value) -> Vec<crate::tracker_http::StateChoice> {
+  v["transitions"]
+    .as_array()
+    .map(Vec::as_slice)
+    .unwrap_or_default()
+    .iter()
+    .filter(|t| t["id"].as_str().is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit())))
+    .map(|t| {
+      let to = text(&t["to"], "name");
+      let needs_fields = t["fields"].as_object().is_some_and(|f| f.values().any(|x| x["required"].as_bool() == Some(true) && x["hasDefaultValue"].as_bool() != Some(true)));
+      crate::tracker_http::StateChoice { id: text(t, "id"), name: if to.is_empty() { text(t, "name") } else { to }, current: false, needs_fields }
+    })
+    .collect()
+}
+
+pub fn transitions(t: &dyn Transport, key: &str) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  key_or_err(key)?;
+  Ok(parse_transitions(&call(t, Request::get(format!("/rest/api/3/issue/{key}/transitions?expand=transitions.fields")))?))
+}
+
+pub fn transition(t: &dyn Transport, key: &str, id: &str) -> Result<(), String> {
+  key_or_err(key)?;
+  if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+    return Err(tr!(TrackerMsg::BadTransition));
+  }
+  call(t, Request::post(format!("/rest/api/3/issue/{key}/transitions"), json!({ "transition": { "id": id } }))).map(|_| ())
+}
+
+/// Assigns the issue to the signed-in user (`me`, its `accountId` from `/myself`), or unassigns it
+/// (Orca's `jira-issue-assignee-control`).
+pub fn assign(t: &dyn Transport, key: &str, me: bool) -> Result<(), String> {
+  key_or_err(key)?;
+  let account = if me {
+    let id = text(&call(t, Request::get("/rest/api/3/myself"))?, "accountId");
+    if !valid_account(&id) {
+      return Err(tr!(TrackerMsg::NoViewer, service = SERVICE));
+    }
+    Value::String(id)
+  } else {
+    Value::Null
+  };
+  call(t, Request::put(format!("/rest/api/3/issue/{key}/assignee"), json!({ "accountId": account }))).map(|_| ())
+}
+
+/// An Atlassian `accountId` (`5b10ac8d82e05b22cc7d4ef5`, `557058:f58131cb-…`): bounded, no separators.
+pub fn valid_account(id: &str) -> bool {
+  !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || ":-_".contains(c))
+}
+
+/// Longest search text sent to `user/assignable/search`, and Orca's `maxResults`.
+const MAX_USER_QUERY: usize = 100;
+const ASSIGNABLE_RESULTS: u32 = 50;
+
+/// The users who may be assigned this issue, matching `query` (Orca's `listAssignableUsers`:
+/// `user/assignable/search?issueKey=…&maxResults=50&query=…`, Cloud's `query`): `id` is the
+/// `accountId`, `name` the display name, sorted by name.
+pub fn assignable_users(t: &dyn Transport, key: &str, query: &str) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  key_or_err(key)?;
+  let q: String = query.trim().chars().filter(|c| !c.is_control()).take(MAX_USER_QUERY).collect();
+  let mut params = url::form_urlencoded::Serializer::new(String::new());
+  params.append_pair("issueKey", key).append_pair("maxResults", &ASSIGNABLE_RESULTS.to_string());
+  if !q.is_empty() {
+    params.append_pair("query", &q);
+  }
+  let v = call(t, Request::get(format!("/rest/api/3/user/assignable/search?{}", params.finish())))?;
+  let mut out: Vec<crate::tracker_http::StateChoice> = v
+    .as_array()
+    .map(Vec::as_slice)
+    .unwrap_or_default()
+    .iter()
+    .filter(|u| valid_account(u["accountId"].as_str().unwrap_or("")))
+    .take(ASSIGNABLE_RESULTS as usize)
+    .map(|u| {
+      let id = text(u, "accountId");
+      let name = text(u, "displayName");
+      crate::tracker_http::StateChoice { name: if name.is_empty() { id.clone() } else { name }, id, current: false, needs_fields: false }
+    })
+    .collect();
+  out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+  Ok(out)
+}
+
+/// Assigns the issue to `account_id`, or unassigns it (Orca's `assigneeAccountId`, null to unassign).
+pub fn set_assignee(t: &dyn Transport, key: &str, account_id: Option<&str>) -> Result<(), String> {
+  key_or_err(key)?;
+  if let Some(a) = account_id.filter(|a| !valid_account(a)) {
+    return Err(tr!(TrackerMsg::BadUser, service = SERVICE, user = a.chars().take(64).collect::<String>()));
+  }
+  call(t, Request::put(format!("/rest/api/3/issue/{key}/assignee"), json!({ "accountId": account_id }))).map(|_| ())
+}
+
+/// Adds and removes labels (Orca's `labelOperations`: one `update.labels` list of add / remove).
+pub fn edit_labels(t: &dyn Transport, key: &str, add: &[String], remove: &[String]) -> Result<(), String> {
+  key_or_err(key)?;
+  let clean = |l: &String| crate::tracker_http::clean_label(l, &[' ']).ok_or_else(|| tr!(TrackerMsg::BadLabel, label = l.clone()));
+  let mut ops: Vec<Value> = Vec::new();
+  for l in add {
+    ops.push(json!({ "add": clean(l)? }));
+  }
+  for l in remove {
+    ops.push(json!({ "remove": clean(l)? }));
+  }
+  if ops.is_empty() {
+    return Ok(());
+  }
+  call(t, Request::put(format!("/rest/api/3/issue/{key}"), json!({ "update": { "labels": ops } }))).map(|_| ())
+}
+
+/// The site's priorities (Orca's `listPriorities`, `/priority`), by id.
+pub fn priorities(t: &dyn Transport) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  let v = call(t, Request::get("/rest/api/3/priority"))?;
+  Ok(
+    v.as_array()
+      .map(Vec::as_slice)
+      .unwrap_or_default()
+      .iter()
+      .filter(|p| p["id"].as_str().is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_digit())))
+      .map(|p| crate::tracker_http::StateChoice { id: text(p, "id"), name: text(p, "name"), current: false, needs_fields: false })
+      .collect(),
+  )
+}
+
+/// Sets the issue's priority (Orca's `priorityId`: `fields.priority`).
+pub fn set_priority(t: &dyn Transport, key: &str, id: &str) -> Result<(), String> {
+  key_or_err(key)?;
+  if id.is_empty() || !id.chars().all(|c| c.is_ascii_digit()) {
+    return Err(tr!(TrackerMsg::BadTransition));
+  }
+  call(t, Request::put(format!("/rest/api/3/issue/{key}"), json!({ "fields": { "priority": { "id": id } } }))).map(|_| ())
+}
+
 /// Plain text as an ADF document: one paragraph per line, URLs left as text (Jira links them).
 pub fn text_to_adf(s: &str) -> Value {
   let content: Vec<Value> = s.lines().map(|l| if l.is_empty() { json!({ "type": "paragraph", "content": [] }) } else { json!({ "type": "paragraph", "content": [{ "type": "text", "text": l }] }) }).collect();
@@ -521,6 +655,51 @@ pub async fn jira_issue_comment(key: String, body: String) -> Result<(), String>
 }
 
 #[tauri::command]
+pub async fn jira_issue_transitions(key: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || transitions(&connected()?.0, &key)).await
+}
+
+#[tauri::command]
+pub async fn jira_issue_transition(key: String, id: String) -> Result<(), String> {
+  blocking(move || {
+    transition(&connected()?.0, &key, &id)?;
+    log::info!("moved jira issue {key}");
+    Ok(())
+  })
+  .await
+}
+
+#[tauri::command]
+pub async fn jira_issue_assign(key: String, me: bool) -> Result<(), String> {
+  blocking(move || assign(&connected()?.0, &key, me)).await
+}
+
+#[tauri::command]
+pub async fn jira_assignable_users(key: String, query: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || assignable_users(&connected()?.0, &key, &query)).await
+}
+
+#[tauri::command]
+pub async fn jira_issue_set_assignee(key: String, account_id: Option<String>) -> Result<(), String> {
+  blocking(move || set_assignee(&connected()?.0, &key, account_id.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn jira_issue_labels(key: String, add: Vec<String>, remove: Vec<String>) -> Result<(), String> {
+  blocking(move || edit_labels(&connected()?.0, &key, &add, &remove)).await
+}
+
+#[tauri::command]
+pub async fn jira_priorities() -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || priorities(&connected()?.0)).await
+}
+
+#[tauri::command]
+pub async fn jira_issue_set_priority(key: String, id: String) -> Result<(), String> {
+  blocking(move || set_priority(&connected()?.0, &key, &id)).await
+}
+
+#[tauri::command]
 pub fn jira_issue_open(url: String) -> Result<(), String> {
   let site = stored().ok_or_else(|| tr!(TrackerMsg::JiraNotConnected))?.site;
   crate::system::open_web_url(jira_url(&url, &site)?.as_str())
@@ -645,5 +824,78 @@ mod tests {
     assert!(jira_url("https://acme.atlassian.net/browse/ENG-1", SITE).is_ok());
     assert!(jira_url("https://acme.atlassian.net.evil.dev/browse/ENG-1", SITE).is_err());
     assert_eq!(jql_string(r#"a"b\c"#), r#""a\"b\\c""#);
+  }
+
+  #[test]
+  fn transitions_name_their_status_and_mark_the_ones_that_need_fields() {
+    let t = Fake::new(&[
+      (200, json!({ "transitions": [
+        { "id": "21", "name": "Start", "to": { "name": "In Progress" } },
+        { "id": "31", "name": "Resolve", "to": { "name": "Done" }, "fields": { "resolution": { "required": true } } },
+        { "id": "41", "name": "Close", "to": { "name": "Closed" }, "fields": { "resolution": { "required": true, "hasDefaultValue": true } } },
+        { "id": "x", "name": "Bad" }
+      ] })),
+      (204, json!(null)),
+    ]);
+    let list = transitions(&t, "ENG-1").unwrap();
+    assert_eq!(list.iter().map(|c| (c.name.as_str(), c.needs_fields)).collect::<Vec<_>>(), [("In Progress", false), ("Done", true), ("Closed", false)]);
+    transition(&t, "ENG-1", "21").unwrap();
+    let seen = t.requests();
+    assert!(seen[0].path.starts_with("/rest/api/3/issue/ENG-1/transitions"));
+    assert_eq!((seen[1].method, seen[1].body.clone()), (Method::Post, Some(json!({ "transition": { "id": "21" } }))));
+    assert!(transition(&t, "ENG-1", "21; x").is_err() && transitions(&t, "../x").is_err());
+  }
+
+  #[test]
+  fn assigns_to_me_by_account_id_or_unassigns() {
+    let t = Fake::new(&[(200, json!({ "accountId": "5b10:abc-1", "displayName": "K" })), (204, json!(null)), (204, json!(null))]);
+    assign(&t, "ENG-1", true).unwrap();
+    assign(&t, "ENG-1", false).unwrap();
+    let seen = t.requests();
+    assert_eq!((seen[1].method, seen[1].path.as_str(), seen[1].body.clone()), (Method::Put, "/rest/api/3/issue/ENG-1/assignee", Some(json!({ "accountId": "5b10:abc-1" }))));
+    assert_eq!(seen[2].body, Some(json!({ "accountId": null })));
+  }
+
+  #[test]
+  fn searches_assignable_users_and_assigns_one_by_account_id() {
+    let t = Fake::new(&[
+      (200, json!([{ "accountId": "5b10:zz-2", "displayName": "zoe" }, { "accountId": "5b10:aa-1", "displayName": "Ann" }, { "accountId": "a/b", "displayName": "Bad" }, { "displayName": "No id" }])),
+      (200, json!([])),
+      (204, json!(null)),
+      (204, json!(null)),
+    ]);
+    let found = assignable_users(&t, "ENG-1", " ann lee&x ").unwrap();
+    assert_eq!(found.iter().map(|u| (u.id.as_str(), u.name.as_str())).collect::<Vec<_>>(), [("5b10:aa-1", "Ann"), ("5b10:zz-2", "zoe")]);
+    assignable_users(&t, "ENG-1", "").unwrap();
+    set_assignee(&t, "ENG-1", Some("5b10:aa-1")).unwrap();
+    set_assignee(&t, "ENG-1", None).unwrap();
+    let seen = t.requests();
+    assert_eq!(seen[0].path, "/rest/api/3/user/assignable/search?issueKey=ENG-1&maxResults=50&query=ann+lee%26x");
+    assert_eq!(seen[1].path, "/rest/api/3/user/assignable/search?issueKey=ENG-1&maxResults=50");
+    assert_eq!((seen[2].method, seen[2].path.as_str(), seen[2].body.clone()), (Method::Put, "/rest/api/3/issue/ENG-1/assignee", Some(json!({ "accountId": "5b10:aa-1" }))));
+    assert_eq!(seen[3].body, Some(json!({ "accountId": null })));
+    assert!(set_assignee(&t, "ENG-1", Some("../x")).is_err() && set_assignee(&t, "ENG-1", Some("")).is_err());
+    assert!(assignable_users(&t, "../x", "a").is_err());
+    assert_eq!(t.requests().len(), 4, "bad input sends nothing");
+    assert!(valid_account("557058:f58131cb-b67d-43c7-b30d-6b58d40bd077") && !valid_account(&"a".repeat(129)));
+  }
+
+  #[test]
+  fn edits_labels_with_add_and_remove_operations() {
+    let t = Fake::new(&[(204, json!(null))]);
+    edit_labels(&t, "ENG-1", &["ux".into()], &["old".into()]).unwrap();
+    assert_eq!(t.requests()[0].body, Some(json!({ "update": { "labels": [{ "add": "ux" }, { "remove": "old" }] } })));
+    assert!(edit_labels(&t, "ENG-1", &["two words".into()], &[]).is_err(), "Jira labels take no spaces");
+    edit_labels(&t, "ENG-1", &[], &[]).unwrap();
+    assert_eq!(t.requests().len(), 1, "nothing to change sends nothing");
+  }
+
+  #[test]
+  fn lists_priorities_and_sets_one() {
+    let t = Fake::new(&[(200, json!([{ "id": "1", "name": "Highest" }, { "id": "3", "name": "Medium" }, { "id": "x", "name": "Bad" }])), (204, json!(null))]);
+    assert_eq!(priorities(&t).unwrap().iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Highest", "Medium"]);
+    set_priority(&t, "ENG-1", "3").unwrap();
+    assert_eq!(t.requests()[1].body, Some(json!({ "fields": { "priority": { "id": "3" } } })));
+    assert!(set_priority(&t, "ENG-1", "3 OR 1").is_err());
   }
 }

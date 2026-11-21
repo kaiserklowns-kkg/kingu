@@ -103,6 +103,7 @@
 	import LinearConnect from '#lib/ade/LinearConnect.svelte';
 	import { installTaskSources } from '#lib/ade/taskSources.svelte.ts';
 	import TrackerConnect from '#lib/ade/TrackerConnect.svelte';
+	import { boardPopout } from '#lib/ade/boardPopout.svelte.ts';
 	import { installSnaps } from '#lib/snaps/snaps.svelte.ts';
 	import { installMcp } from '#lib/mcp/mcp.svelte.ts';
 	import { installSkills } from '#lib/skills/skills.svelte.ts';
@@ -154,6 +155,8 @@
 	onMount(() => {
 		void workspace.init().then(() => invoke<string | null>('git_branch').then((b) => (status.branch = b)));
 		welcome.maybeShow();
+		// A board pop-out left open while this window reloaded goes on getting this window's board.
+		void boardPopout.resume();
 		const unregister = [
 			installSignals(),
 			installAutoCleanup(),

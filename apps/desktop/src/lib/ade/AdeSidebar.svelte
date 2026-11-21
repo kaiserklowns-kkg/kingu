@@ -28,7 +28,10 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { adeLayout, PRIMARY } from './adeLayout.svelte';
 	import { worktreeDir } from './keys';
-	import { COLUMNS, MAX_TITLE, STATUS_LABEL, type TaskView } from './model';
+	import { COLUMNS, MAX_TITLE, STATUS_LABEL, statusLabel, type TaskView } from './model';
+	import ProgressRing from './ProgressRing.svelte';
+	import { paneProgram } from './paneProgram.svelte';
+	import { withPercent } from './programStatus';
 	import { automations } from './automations.svelte.ts';
 	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
@@ -628,8 +631,14 @@
 
 <svelte:window onkeydown={onKey} onkeyup={onKey} onblur={() => (altHeld = false)} />
 
-{#snippet statusDot(s: CardStatus, size = 'size-2')}
-	<CardStatusDot status={s} {size} />
+{#snippet statusDot(s: CardStatus, size = 'size-2', view?: TaskView)}
+	<!-- Orca's progress ring on the card: the task agent's OSC 7501 percentage while it works or waits. -->
+	{@const percent = view ? paneProgram.taskProgress(view) : undefined}
+	{#if percent !== undefined && view}
+		<ProgressRing {percent} tone={view.status === 'running' ? 'working' : 'attention'} label={withPercent(statusLabel(view), percent)} />
+	{:else}
+		<CardStatusDot status={s} {size} />
+	{/if}
 {/snippet}
 
 {#snippet card(r: Row, groupId: string)}
@@ -675,7 +684,7 @@
 					{#if unread}
 						<span class="text-amber-400 drop-shadow-sm"><Icon name="bell" size={13} filled /></span>
 					{:else}
-						<span class="grid place-items-center group-hover/status:hidden">{#if props.has('status')}{@render statusDot(s)}{/if}</span>
+						<span class="grid place-items-center group-hover/status:hidden">{#if props.has('status')}{@render statusDot(s, 'size-2', r.view)}{/if}</span>
 						<span class="hidden text-(--vscode-descriptionForeground)/40 group-hover/status:block"><Icon name="bell" size={12} /></span>
 					{/if}
 				</button>
@@ -804,7 +813,7 @@
 		>
 			<span class="flex w-full min-w-0 items-center gap-1.5">
 				<span class="grid size-4 shrink-0 place-items-center">
-					{#if unread}<span class="text-amber-400 drop-shadow-sm"><Icon name="bell" size={13} filled /></span>{:else if props.has('status')}{@render statusDot(s)}{/if}
+					{#if unread}<span class="text-amber-400 drop-shadow-sm"><Icon name="bell" size={13} filled /></span>{:else if props.has('status')}{@render statusDot(s, 'size-2', r.view)}{/if}
 				</span>
 				<span class={['min-w-0 flex-1 truncate text-[13px] leading-5 text-(--vscode-foreground)', unread ? 'font-semibold' : 'font-normal']}>{r.title}</span>
 			</span>

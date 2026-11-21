@@ -115,6 +115,10 @@ class Chats {
 	 * chats.json is in the folder, so a repository could ship one that turns every prompt off.
 	 */
 	allowAll = $state<Record<string, true>>({});
+	/** Chats in "Assisted permissions" until the app quits, by run key; never saved, like `allowAll`. */
+	assisted = $state<Record<string, true>>({});
+	/** The user confirmed "Assisted permissions" once in this app session. */
+	assistedConfirmed = false;
 	/** The user confirmed "Allow all" once in this app session. */
 	allowAllConfirmed = false;
 
@@ -230,6 +234,8 @@ class Chats {
 		model: string | null;
 		permissionMode: RunPermissionMode;
 		message: OutgoingMessage;
+		/** A side chat of chat `sideOf` (VS Code's nested session with another harness): kept out of the history like a forked one. */
+		sideOf?: string;
 		runtime?: string;
 		agent?: string | null;
 		effort?: Effort | null;
@@ -238,11 +244,14 @@ class Chats {
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
+		const assisted = input.permissionMode === 'assisted';
 		const meta = newChat(
-			{ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent, effort: input.effort },
+			{ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll || assisted ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent, effort: input.effort },
 			Date.now()
 		);
+		if (input.sideOf) meta.side_of = input.sideOf;
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
+		if (assisted) this.assisted[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
 		this.#lastImages.set(runKey(root, meta.id), input.message);
@@ -323,7 +332,7 @@ class Chats {
 				prompt,
 				// Another agent picks its own model (no model picker for it: runtimes.ts).
 				model: runtimeOf(meta) === CLAUDE_RUNTIME ? meta.model : null,
-				permissionMode: this.allowAll[key] ? 'bypassPermissions' : meta.permission_mode,
+				permissionMode: this.allowAll[key] ? 'bypassPermissions' : this.assisted[key] ? 'assisted' : meta.permission_mode,
 				resume,
 				resumeAt,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
@@ -605,13 +614,16 @@ class Chats {
 		const meta = this.get(id);
 		if (!this.root || !meta) return null;
 		const key = runKey(this.root, id);
-		if (mode === 'bypassPermissions') {
+		if (mode === 'bypassPermissions' || mode === 'assisted') {
 			const when = await this.#setOption(id, { permission_mode: meta.permission_mode === 'plan' ? 'default' : meta.permission_mode }, { permissionMode: mode });
-			if (when) this.allowAll[key] = true;
+			if (when) {
+				if (mode === 'bypassPermissions') (this.allowAll[key] = true), delete this.assisted[key];
+				else (this.assisted[key] = true), delete this.allowAll[key];
+			}
 			return when;
 		}
 		const when = await this.#setOption(id, { permission_mode: mode }, { permissionMode: mode });
-		if (when) delete this.allowAll[key];
+		if (when) delete this.allowAll[key], delete this.assisted[key];
 		return when;
 	}
 
@@ -651,6 +663,11 @@ class Chats {
 	/** The chat runs with "Allow all". */
 	isAllowAll(id: string): boolean {
 		return !!this.root && !!this.allowAll[runKey(this.root, id)];
+	}
+
+	/** The chat runs with "Assisted permissions". */
+	isAssisted(id: string): boolean {
+		return !!this.root && !!this.assisted[runKey(this.root, id)];
 	}
 
 	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode; effort?: Effort }): Promise<'live' | 'next' | null> {
@@ -723,6 +740,7 @@ class Chats {
 		delete this.runs[runKey(root, id)];
 		delete this.queues[runKey(root, id)];
 		delete this.allowAll[runKey(root, id)];
+		delete this.assisted[runKey(root, id)];
 		this.#save(removeChat(this.list, id), root);
 		return true;
 	}

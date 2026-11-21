@@ -57,6 +57,9 @@ chardetng = "=1.0.0"
 yaml-rust2 = { version = "=0.13.0", default-features = false }
 # Skills hub (src/skill_hub): .skill / .zip archives in and out, deflate through flate2 only.
 zip = { version = "=4.6.1", default-features = false, features = ["deflate-flate2"] }
+# zip's deflate-flate2 picks no zlib backend. On macOS another dependency happened to enable
+# flate2's default (pure-Rust miniz_oxide) backend; on Windows nothing does, so name it here.
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
 # Mobile pairing QR code (src/mobile.rs): SVG output only, no image crates.
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
 

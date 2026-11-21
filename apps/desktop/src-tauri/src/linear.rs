@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::i18n::msg::LinearMsg;
+use crate::i18n::msg::{LinearMsg, TrackerMsg};
 use crate::tr;
 use crate::agent::issues::{truncate, IssueComment, IssueLabel, MAX_BODY, MAX_COMMENT, MAX_COMMENTS, MAX_LIMIT};
 
@@ -20,7 +20,7 @@ const MAX_COMMENT_POST: usize = 16 * 1024;
 /// Comments fetched per issue; the latest `MAX_COMMENTS` are kept.
 const COMMENTS_FETCHED: usize = 100;
 
-const ISSUE_FIELDS: &str = "id identifier number title url branchName description priority priorityLabel updatedAt
+const ISSUE_FIELDS: &str = "id identifier number title url branchName description priority priorityLabel estimate dueDate updatedAt
   state { name type color } team { key } assignee { displayName } labels(first: 50) { nodes { name color } }";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -46,6 +46,10 @@ pub struct LinearIssue {
   /// 0 none, 1 urgent … 4 low.
   pub priority: u8,
   pub priority_label: String,
+  /// The team's estimate points, when set (Linear's `estimate`, an Int).
+  pub estimate: Option<u32>,
+  /// `YYYY-MM-DD`, when set.
+  pub due_date: Option<String>,
   pub team: String,
   pub assignee: Option<String>,
   /// Colours without `#`, like GitHub's.
@@ -216,6 +220,8 @@ pub fn parse_issue(v: &Value) -> Result<LinearIssue, String> {
     state_color: text(&v["state"], "color").trim_start_matches('#').to_owned(),
     priority: v["priority"].as_u64().map_or(0, |p| p.min(4) as u8),
     priority_label: text(v, "priorityLabel"),
+    estimate: v["estimate"].as_f64().filter(|e| *e >= 0.0 && *e <= 1000.0).map(|e| e.round() as u32),
+    due_date: v["dueDate"].as_str().filter(|d| valid_date(d)).map(str::to_owned),
     team: text(&v["team"], "key"),
     assignee: v["assignee"]["displayName"].as_str().filter(|s| !s.is_empty()).map(str::to_owned),
     labels,
@@ -321,18 +327,142 @@ pub fn view(t: &dyn Transport, key: &str, id: &str) -> Result<LinearIssueDetail,
   parse_view(&request(t, key, &query, json!({ "id": id, "comments": COMMENTS_FETCHED }))?)
 }
 
+/// Tasks keep the identifier (`ENG-12`); Linear's mutations are given the issue's UUID.
+fn issue_uuid(t: &dyn Transport, key: &str, id: &str) -> Result<String, String> {
+  if valid_uuid(id) {
+    return Ok(id.to_owned());
+  }
+  let data = request(t, key, "query KinguLinearIssueId($id: String!) { issue(id: $id) { id } }", json!({ "id": id }))?;
+  data["issue"]["id"].as_str().filter(|u| valid_uuid(u)).map(str::to_owned).ok_or_else(|| tr!(LinearMsg::IssueNotFound))
+}
+
+/// One `issueUpdate` (Orca's `linearUpdateIssue`) with `input`.
+fn update(t: &dyn Transport, key: &str, id: &str, input: Value) -> Result<(), String> {
+  let uuid = issue_uuid(t, key, id)?;
+  let data = request(t, key, "mutation KinguLinearUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }", json!({ "id": uuid, "input": input }))?;
+  if data["issueUpdate"]["success"].as_bool() == Some(true) { Ok(()) } else { Err(tr!(LinearMsg::StateNotSaved)) }
+}
+
+/// Assigns the issue to the signed-in user (`me`), or clears its assignee.
+pub fn assign(t: &dyn Transport, key: &str, id: &str, me: bool) -> Result<(), String> {
+  issue_ref(id)?;
+  let assignee = if me {
+    let data = request(t, key, "query KinguLinearMe { viewer { id } }", json!({}))?;
+    Value::String(data["viewer"]["id"].as_str().filter(|u| valid_uuid(u)).ok_or_else(|| tr!(LinearMsg::IssueNotFound))?.to_owned())
+  } else {
+    Value::Null
+  };
+  update(t, key, id, json!({ "assigneeId": assignee }))
+}
+
+/// The members of the issue's team with its assignee marked (Orca's Linear assignee chip lists
+/// `team.members`, `getTeamMembers`): `id` is the user's, `name` their display name. Orca pages
+/// through every member; Kingu reads Linear's largest page (250).
+pub fn members(t: &dyn Transport, key: &str, id: &str) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  issue_ref(id)?;
+  let data = request(t, key, "query KinguLinearMembers($id: String!) { issue(id: $id) { assignee { id } team { members(first: 250) { nodes { id name displayName } } } } }", json!({ "id": id }))?;
+  let v = &data["issue"];
+  if v.is_null() {
+    return Err(tr!(LinearMsg::IssueNotFound));
+  }
+  let current = text(&v["assignee"], "id");
+  let mut out: Vec<crate::tracker_http::StateChoice> = v["team"]["members"]["nodes"]
+    .as_array()
+    .map(Vec::as_slice)
+    .unwrap_or_default()
+    .iter()
+    .filter(|n| valid_uuid(n["id"].as_str().unwrap_or("")))
+    .map(|n| {
+      let name = [text(n, "displayName"), text(n, "name")].into_iter().find(|s| !s.is_empty()).unwrap_or_default();
+      crate::tracker_http::StateChoice { id: text(n, "id"), name, current: text(n, "id") == current, needs_fields: false }
+    })
+    .collect();
+  out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
+  Ok(out)
+}
+
+/// Assigns the issue to user `user_id`, or clears its assignee (Orca's `assigneeId`, null to unassign).
+pub fn set_assignee(t: &dyn Transport, key: &str, id: &str, user_id: Option<&str>) -> Result<(), String> {
+  issue_ref(id)?;
+  if let Some(u) = user_id.filter(|u| !valid_uuid(u)) {
+    return Err(tr!(TrackerMsg::BadUser, service = "Linear", user = u.chars().take(64).collect::<String>()));
+  }
+  update(t, key, id, json!({ "assigneeId": user_id }))
+}
+
+/// The team's labels with the issue's own marked (Orca's Linear label chips): `id` is the label's.
+pub fn labels(t: &dyn Transport, key: &str, id: &str) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  issue_ref(id)?;
+  let data = request(t, key, "query KinguLinearLabels($id: String!) { issue(id: $id) { labels(first: 100) { nodes { id } } team { labels(first: 250) { nodes { id name } } } } }", json!({ "id": id }))?;
+  let v = &data["issue"];
+  if v.is_null() {
+    return Err(tr!(LinearMsg::IssueNotFound));
+  }
+  let mine: Vec<String> = v["labels"]["nodes"].as_array().map(Vec::as_slice).unwrap_or_default().iter().map(|n| text(n, "id")).collect();
+  let mut out: Vec<crate::tracker_http::StateChoice> = v["team"]["labels"]["nodes"]
+    .as_array()
+    .map(Vec::as_slice)
+    .unwrap_or_default()
+    .iter()
+    .filter(|n| valid_uuid(n["id"].as_str().unwrap_or("")))
+    .map(|n| crate::tracker_http::StateChoice { id: text(n, "id"), name: text(n, "name"), current: mine.contains(&text(n, "id")), needs_fields: false })
+    .collect();
+  out.sort_by_key(|c| c.name.to_lowercase());
+  Ok(out)
+}
+
+/// Sets the issue's labels to `label_ids` (Linear's `labelIds` replaces the whole set).
+pub fn set_labels(t: &dyn Transport, key: &str, id: &str, label_ids: &[String]) -> Result<(), String> {
+  issue_ref(id)?;
+  if label_ids.len() > 100 || label_ids.iter().any(|l| !valid_uuid(l)) {
+    return Err(tr!(LinearMsg::BadIssueId, id = label_ids.join(",")));
+  }
+  update(t, key, id, json!({ "labelIds": label_ids }))
+}
+
+/// A calendar date as Linear's `TimelessDate`: `YYYY-MM-DD` with a real month and day.
+pub fn valid_date(d: &str) -> bool {
+  let b = d.as_bytes();
+  if b.len() != 10 || b[4] != b'-' || b[7] != b'-' || !d.chars().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) {
+    return false;
+  }
+  let (m, day): (u32, u32) = (d[5..7].parse().unwrap_or(0), d[8..10].parse().unwrap_or(0));
+  (1..=12).contains(&m) && (1..=31).contains(&day)
+}
+
+/// Sets or clears the estimate (Orca's estimate chip; the team's scale decides what makes sense).
+pub fn set_estimate(t: &dyn Transport, key: &str, id: &str, estimate: Option<u32>) -> Result<(), String> {
+  issue_ref(id)?;
+  if estimate.is_some_and(|e| e > 1000) {
+    return Err(tr!(LinearMsg::StateNotSaved));
+  }
+  update(t, key, id, json!({ "estimate": estimate }))
+}
+
+/// Sets or clears the due date (`YYYY-MM-DD`).
+pub fn set_due_date(t: &dyn Transport, key: &str, id: &str, date: Option<&str>) -> Result<(), String> {
+  issue_ref(id)?;
+  if date.is_some_and(|d| !valid_date(d)) {
+    return Err(tr!(LinearMsg::StateNotSaved));
+  }
+  update(t, key, id, json!({ "dueDate": date }))
+}
+
+/// Linear's priority: 0 none, 1 urgent, 2 high, 3 medium, 4 low.
+pub fn set_priority(t: &dyn Transport, key: &str, id: &str, priority: u8) -> Result<(), String> {
+  issue_ref(id)?;
+  if priority > 4 {
+    return Err(tr!(LinearMsg::StateNotSaved));
+  }
+  update(t, key, id, json!({ "priority": priority }))
+}
+
 pub fn comment(t: &dyn Transport, key: &str, id: &str, body: &str) -> Result<(), String> {
   issue_ref(id)?;
   if body.trim().is_empty() || body.len() > MAX_COMMENT_POST {
     return Err(tr!(LinearMsg::CommentLength, max = MAX_COMMENT_POST));
   }
-  // Tasks keep the identifier; commentCreate is given the issue's UUID.
-  let uuid = if valid_uuid(id) {
-    id.to_owned()
-  } else {
-    let data = request(t, key, "query KinguLinearIssueId($id: String!) { issue(id: $id) { id } }", json!({ "id": id }))?;
-    data["issue"]["id"].as_str().filter(|u| valid_uuid(u)).ok_or_else(|| tr!(LinearMsg::IssueNotFound))?.to_owned()
-  };
+  let uuid = issue_uuid(t, key, id)?;
   let data = request(
     t,
     key,
@@ -340,6 +470,40 @@ pub fn comment(t: &dyn Transport, key: &str, id: &str, body: &str) -> Result<(),
     json!({ "input": { "issueId": uuid, "body": body } }),
   )?;
   if data["commentCreate"]["success"].as_bool() == Some(true) { Ok(()) } else { Err(tr!(LinearMsg::CommentNotSaved)) }
+}
+
+/// The issue's team workflow states in board order (Orca's Linear status control), the current one marked.
+pub fn parse_states(data: &Value) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  let v = &data["issue"];
+  if v.is_null() {
+    return Err(tr!(LinearMsg::IssueNotFound));
+  }
+  let current = text(&v["state"], "id");
+  // Linear's order: backlog, unstarted, started, completed, canceled, then position within each.
+  let rank = |t: &str| ["triage", "backlog", "unstarted", "started", "completed", "canceled"].iter().position(|x| *x == t).unwrap_or(9);
+  let mut nodes: Vec<&Value> = v["team"]["states"]["nodes"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+  nodes.sort_by(|a, b| rank(a["type"].as_str().unwrap_or("")).cmp(&rank(b["type"].as_str().unwrap_or(""))).then(a["position"].as_f64().unwrap_or(0.0).total_cmp(&b["position"].as_f64().unwrap_or(0.0))));
+  Ok(
+    nodes
+      .into_iter()
+      .filter(|n| valid_uuid(n["id"].as_str().unwrap_or("")))
+      .map(|n| crate::tracker_http::StateChoice { id: text(n, "id"), name: text(n, "name"), current: text(n, "id") == current, needs_fields: false })
+      .collect(),
+  )
+}
+
+pub fn states(t: &dyn Transport, key: &str, id: &str) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  issue_ref(id)?;
+  parse_states(&request(t, key, "query KinguLinearStates($id: String!) { issue(id: $id) { state { id } team { states { nodes { id name type position } } } } }", json!({ "id": id }))?)
+}
+
+/// Moves the issue to workflow state `state_id` (Orca's `linearUpdateIssue` with `stateId`).
+pub fn set_state(t: &dyn Transport, key: &str, id: &str, state_id: &str) -> Result<(), String> {
+  issue_ref(id)?;
+  if !valid_uuid(state_id) {
+    return Err(tr!(LinearMsg::BadIssueId, id = state_id));
+  }
+  update(t, key, id, json!({ "stateId": state_id }))
 }
 
 /// Only a Linear page opens from a task's Linear link.
@@ -425,6 +589,61 @@ pub async fn linear_issue_comment(id: String, body: String) -> Result<(), String
     Ok(())
   })
   .await
+}
+
+#[tauri::command]
+pub async fn linear_issue_states(id: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || states(&Http::new()?, &key_or_err()?, &id)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_state(id: String, state_id: String) -> Result<(), String> {
+  blocking(move || {
+    set_state(&Http::new()?, &key_or_err()?, &id, &state_id)?;
+    log::info!("moved linear issue {id}");
+    Ok(())
+  })
+  .await
+}
+
+#[tauri::command]
+pub async fn linear_issue_assign(id: String, me: bool) -> Result<(), String> {
+  blocking(move || assign(&Http::new()?, &key_or_err()?, &id, me)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_members(id: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || members(&Http::new()?, &key_or_err()?, &id)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_assignee(id: String, user_id: Option<String>) -> Result<(), String> {
+  blocking(move || set_assignee(&Http::new()?, &key_or_err()?, &id, user_id.as_deref())).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_priority(id: String, priority: u8) -> Result<(), String> {
+  blocking(move || set_priority(&Http::new()?, &key_or_err()?, &id, priority)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_labels(id: String) -> Result<Vec<crate::tracker_http::StateChoice>, String> {
+  blocking(move || labels(&Http::new()?, &key_or_err()?, &id)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_labels(id: String, label_ids: Vec<String>) -> Result<(), String> {
+  blocking(move || set_labels(&Http::new()?, &key_or_err()?, &id, &label_ids)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_estimate(id: String, estimate: Option<u32>) -> Result<(), String> {
+  blocking(move || set_estimate(&Http::new()?, &key_or_err()?, &id, estimate)).await
+}
+
+#[tauri::command]
+pub async fn linear_issue_set_due_date(id: String, date: Option<String>) -> Result<(), String> {
+  blocking(move || set_due_date(&Http::new()?, &key_or_err()?, &id, date.as_deref())).await
 }
 
 #[tauri::command]
@@ -598,5 +817,98 @@ mod tests {
     let (request_line, auth, body) = server.join().unwrap();
     assert_eq!((request_line.as_str(), auth.as_str()), ("POST /graphql HTTP/1.1", "lin_api_secret"));
     assert!(serde_json::from_str::<Value>(&body).unwrap()["query"].as_str().unwrap().contains("viewer"));
+  }
+
+  #[test]
+  fn lists_workflow_states_in_board_order_and_moves_the_issue() {
+    let s = |id: &str, name: &str, ty: &str, pos: f64| json!({ "id": id, "name": name, "type": ty, "position": pos });
+    let done = "0b7c5e0e-1111-4222-8333-000000000003";
+    let t = Fake::new(&[
+      (200, json!({ "data": { "issue": { "state": { "id": UUID }, "team": { "states": { "nodes": [
+        s(done, "Done", "completed", 0.0),
+        s(UUID, "In Progress", "started", 1.0),
+        s("0b7c5e0e-1111-4222-8333-000000000001", "Todo", "unstarted", 0.0),
+        s("not-a-uuid", "Broken", "started", 2.0)
+      ] } } } } })),
+      (200, json!({ "data": { "issue": { "id": UUID } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": false } } })),
+      (200, json!({ "data": { "viewer": { "id": done } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+    ]);
+    let list = states(&t, "k", "ENG-1").unwrap();
+    assert_eq!(list.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Todo", "In Progress", "Done"]);
+    assert!(list[1].current && !list[0].current);
+    set_state(&t, "k", "ENG-1", done).unwrap();
+    assert_eq!(t.seen.lock().unwrap()[2].1["variables"], json!({ "id": UUID, "input": { "stateId": done } }), "mutations get the issue's UUID");
+    assert!(set_state(&t, "k", UUID, done).is_err(), "success false is an error");
+    assert!(set_state(&t, "k", "ENG-1", "x").is_err());
+    assign(&t, "k", UUID, true).unwrap();
+    assign(&t, "k", UUID, false).unwrap();
+    set_priority(&t, "k", UUID, 1).unwrap();
+    let seen = t.seen.lock().unwrap();
+    assert_eq!(seen[5].1["variables"]["input"], json!({ "assigneeId": done }));
+    assert_eq!(seen[6].1["variables"]["input"], json!({ "assigneeId": null }));
+    assert_eq!(seen[7].1["variables"]["input"], json!({ "priority": 1 }));
+    drop(seen);
+    assert!(set_priority(&t, "k", UUID, 5).is_err());
+  }
+
+  #[test]
+  fn lists_team_labels_with_the_issues_own_and_replaces_the_set() {
+    let bug = "0b7c5e0e-1111-4222-8333-0000000000b1";
+    let ux = "0b7c5e0e-1111-4222-8333-0000000000b2";
+    let t = Fake::new(&[
+      (200, json!({ "data": { "issue": { "labels": { "nodes": [{ "id": ux }] }, "team": { "labels": { "nodes": [{ "id": ux, "name": "ux" }, { "id": bug, "name": "Bug" }, { "id": "nope", "name": "x" }] } } } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+    ]);
+    let list = labels(&t, "k", UUID).unwrap();
+    assert_eq!(list.iter().map(|c| (c.name.as_str(), c.current)).collect::<Vec<_>>(), [("Bug", false), ("ux", true)]);
+    set_labels(&t, "k", UUID, &[bug.into(), ux.into()]).unwrap();
+    assert_eq!(t.seen.lock().unwrap()[1].1["variables"]["input"], json!({ "labelIds": [bug, ux] }));
+    assert!(set_labels(&t, "k", UUID, &["x".into()]).is_err());
+  }
+
+  #[test]
+  fn lists_team_members_with_the_assignee_marked_and_assigns_one() {
+    let ann = "0b7c5e0e-1111-4222-8333-0000000000a1";
+    let bo = "0b7c5e0e-1111-4222-8333-0000000000a2";
+    let t = Fake::new(&[
+      (200, json!({ "data": { "issue": { "assignee": { "id": bo }, "team": { "members": { "nodes": [{ "id": bo, "name": "Bo Lee", "displayName": "bo" }, { "id": ann, "name": "Ann", "displayName": "" }, { "id": "x", "name": "Bad" }] } } } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+      (200, json!({ "data": { "issueUpdate": { "success": true } } })),
+    ]);
+    let list = members(&t, "k", UUID).unwrap();
+    assert_eq!(list.iter().map(|c| (c.id.as_str(), c.name.as_str(), c.current)).collect::<Vec<_>>(), [(ann, "Ann", false), (bo, "bo", true)]);
+    assert!(t.seen.lock().unwrap()[0].1["query"].as_str().unwrap().contains("members(first: 250)"));
+    set_assignee(&t, "k", UUID, Some(ann)).unwrap();
+    set_assignee(&t, "k", UUID, None).unwrap();
+    let seen = t.seen.lock().unwrap();
+    assert_eq!(seen[1].1["variables"], json!({ "id": UUID, "input": { "assigneeId": ann } }));
+    assert_eq!(seen[2].1["variables"]["input"], json!({ "assigneeId": null }));
+    drop(seen);
+    assert!(set_assignee(&t, "k", UUID, Some("not-a-user")).is_err());
+    assert!(members(&t, "k", "../x").is_err());
+    assert_eq!(t.seen.lock().unwrap().len(), 3, "bad ids send nothing");
+  }
+
+  #[test]
+  fn estimate_and_due_date() {
+    assert!(valid_date("2026-12-31") && !valid_date("2026-13-01") && !valid_date("2026-1-01") && !valid_date("20261201xx"));
+    let mut n = node("ENG-1", "started");
+    n["estimate"] = json!(3.0);
+    n["dueDate"] = json!("2026-12-01");
+    let i = parse_issue(&n).unwrap();
+    assert_eq!((i.estimate, i.due_date.as_deref()), (Some(3), Some("2026-12-01")));
+    let t = Fake::new(&[(200, json!({ "data": { "issueUpdate": { "success": true } } })), (200, json!({ "data": { "issueUpdate": { "success": true } } }))]);
+    set_estimate(&t, "k", UUID, None).unwrap();
+    set_due_date(&t, "k", UUID, Some("2026-12-01")).unwrap();
+    let seen = t.seen.lock().unwrap();
+    assert_eq!(seen[0].1["variables"]["input"], json!({ "estimate": null }));
+    assert_eq!(seen[1].1["variables"]["input"], json!({ "dueDate": "2026-12-01" }));
+    drop(seen);
+    assert!(set_due_date(&t, "k", UUID, Some("tomorrow")).is_err());
   }
 }

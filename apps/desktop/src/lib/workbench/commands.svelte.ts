@@ -12,7 +12,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { terminalStartsChord, workbenchTakesKey } from '#lib/terminal/behaviour.ts';
 import { t } from '#lib/i18n/index.ts';
 
-type Keyed = { id: string; key?: string; mac?: string; scope?: KeyScope };
+type Keyed = { id: string; key?: string; mac?: string; win?: string; scope?: KeyScope };
 
 /** Every key bound to `cmd` on this platform: keybindings.json's first, then the default unless removed. */
 export function keysOf(cmd: Keyed, mac = isMac): string[] {
@@ -42,6 +42,8 @@ export type Command = {
 	key?: string;
 	/** macOS keybinding when it differs from `key` (VS Code's `mac:`), e.g. Go Back `ctrl+-` vs `alt+left`. */
 	mac?: string;
+	/** Windows keybinding when it differs from `key` (VS Code's `win:`), e.g. Save without Formatting. */
+	win?: string;
 	/** Listed in the command palette (VS Code's `f1: true`). Defaults to true. */
 	palette?: boolean;
 	when?: () => boolean;

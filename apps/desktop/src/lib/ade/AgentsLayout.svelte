@@ -7,7 +7,7 @@
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import AgentPick from './AgentPick.svelte';
-	import { dropTarget, rectStyle, splittable, type SplitDir } from './adeSplit';
+	import { dropTarget, groupOf, rectStyle, splittable, stripStyle, type DropDir } from './adeSplit';
 	import { dividers, leaves, paneRects, type Divider, type Rect } from '#lib/terminal/paneLayout.ts';
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
@@ -100,30 +100,50 @@
 		return true;
 	}
 
-	// Orca's tab groups: the center splits into regions (adeSplit.ts), each showing one tab; the
-	// active tab is one of them. Views move by style only, so nothing is remounted.
+	// Orca's tab groups: the center splits into regions (adeSplit.ts), each a group with its own tab
+	// strip (AdeTabBar with `group`) showing one of its tabs; the active tab is in one of them. Views
+	// move by style only, so nothing is remounted.
+	const groups = $derived(adeLayout.board ? null : adeLayout.groupsOf(key));
 	const tree = $derived(adeLayout.board ? null : adeLayout.treeOf(key));
 	const rects = $derived(tree ? paneRects(tree) : null);
+	/** Height of a region's tab strip (AdeTabBar's row). */
+	const STRIP = 35;
+	/** Each region's group, the tab it shows and its place; the top right one has the quick commands. */
+	const strips = $derived.by(() => {
+		if (!groups || !rects) return [];
+		const list = leaves(groups.tree).flatMap((g) => {
+			const r = rects.get(groups.shown[g]);
+			return r ? [{ group: g, rect: r }] : [];
+		});
+		const topRight = list.filter((x) => x.rect.y < 0.001).toSorted((a, b) => b.rect.x - a.rect.x)[0]?.group;
+		return list.map((x) => ({ ...x, extras: x.group === topRight }));
+	});
 	const regionOf = (k: string, id: string): Rect | 'full' | null => (adeLayout.board || k !== key ? null : rects ? (rects.get(id) ?? null) : id === activeTab ? 'full' : null);
-	const place = (r: Rect | 'full' | null) => (r && r !== 'full' ? rectStyle(r) : undefined);
+	/** A view's place: its region below the region's tab strip. */
+	const place = (r: Rect | 'full' | null) => (r && r !== 'full' ? rectStyle(r, STRIP) : undefined);
 	/** File and diff tabs shown in a region other than the active one (the active one uses the editor below). */
 	const sideFiles = $derived(tree ? leaves(tree).filter((id) => id !== activeTab && keyOfTabId(id) !== null) : []);
 	let center: HTMLDivElement | undefined = $state();
-	let dropAt = $state<{ id: string; dir: SplitDir; rect: Rect } | null>(null);
+	let dropAt = $state<{ id: string; dir: DropDir; rect: Rect } | null>(null);
 	function onCenterDragOver(e: DragEvent) {
 		const id = adeLayout.draggingTab;
 		if (!id || !splittable(id) || !center) return;
+		// Over a region's tab strip the strip takes the drop (reorder, or move into its group).
+		if ((e.target as HTMLElement | null)?.closest?.('[data-ade-strip]')) return void (dropAt = null);
 		const r = center.getBoundingClientRect();
 		const all = rects ?? new Map([[activeTab, { x: 0, y: 0, w: 1, h: 1 }]]);
-		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-		dropAt = hit ? { ...hit, rect: all.get(hit.id)! } : null;
+		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, !!groups);
+		// The middle of the tab's own region changes nothing.
+		const own = hit?.dir === 'center' && groups && groupOf(groups, hit.id) === groupOf(groups, id);
+		dropAt = hit && !own ? { ...hit, rect: all.get(hit.id)! } : null;
 		if (dropAt) e.preventDefault();
 	}
 	function onCenterDrop(e: DragEvent) {
 		const id = adeLayout.draggingTab;
 		if (id && dropAt) {
 			e.preventDefault();
-			adeLayout.splitTab(key, id, dropAt.dir, dropAt.id);
+			if (dropAt.dir === 'center') adeLayout.moveTabTo(key, id, dropAt.id, null);
+			else adeLayout.splitTab(key, id, dropAt.dir, dropAt.id);
 		}
 		dropAt = null;
 		adeLayout.draggingTab = null;
@@ -304,7 +324,7 @@
 	{/if}
 
 	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
-		<AdeTabBar />
+		{#if !strips.length}<AdeTabBar />{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="relative min-h-0 flex-1" bind:this={center} ondragover={onCenterDragOver} ondragleave={(e) => e.currentTarget === e.target && (dropAt = null)} ondrop={onCenterDrop}>
 		<RecentTabSwitcher />
@@ -471,6 +491,7 @@
 					onoutput={() => cliSessions.output(s)}
 					ontitle={(title) => cliSessions.title(s, title)}
 					onbell={() => terminalBells.ring(s, 'main')}
+					onprogram={(e) => paneProgram.apply(cliSessions.ptyKey(s, sess.startedAt), e)}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 					onopenurl={(url, system) => openLinkInApp(s, url, system)}
 				/>
@@ -500,6 +521,7 @@
 								slug={k || undefined}
 								run={p === t.id ? t.run : undefined}
 								type={p === t.id ? t.type : undefined}
+								typeEnter={t.typeEnter !== false}
 								cwdFrom={adeLayout.cwdFrom(k, p)}
 								flavor="ade"
 								keyLabels={PANE_KEYS}
@@ -547,22 +569,21 @@
 			{/each}
 			{#each [...rects] as [id, r] (id)}
 				{#if id === activeTab}<div class="pointer-events-none absolute z-10 rounded-sm border border-(--vscode-focusBorder)/60" style={rectStyle(r)}></div>{/if}
-				<button
-					class="absolute z-10 grid size-5 place-items-center rounded bg-(--vscode-editor-background)/80 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
-					style={`top:calc(${pct(r.y)} + 4px);left:calc(${pct(r.x + r.w)} - 26px)`}
-					aria-label={t('ade.split.closeRegion')}
-					title={t('ade.split.closeRegion')}
-					onclick={() => adeLayout.closeRegion(key, id)}><Icon name="close" size={12} /></button
-				>
+			{/each}
+			<!-- Each region's own tab strip (Orca's tab group header); keyed by group, so a strip stays as its tabs change. -->
+			{#each strips as s (s.group)}
+				<div class="absolute z-10 overflow-hidden" style={stripStyle(s.rect, STRIP)}>
+					<AdeTabBar group={s.group} extras={s.extras} />
+				</div>
 			{/each}
 		{/if}
 		{#if adeLayout.draggingTab && dropAt}
 			{@const r = dropAt.rect}
 			<div
 				class="pointer-events-none absolute z-20 rounded border-2 border-(--vscode-focusBorder) bg-(--vscode-focusBorder)/15"
-				style={dropAt.dir === 'right' ? rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 }) : rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 })}
+				style={dropAt.dir === 'right' ? rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 }) : dropAt.dir === 'down' ? rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 }) : rectStyle(r)}
 			>
-				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{dropAt.dir === 'right' ? t('ade.split.dropRight') : t('ade.split.dropDown')}</span>
+				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{dropAt.dir === 'right' ? t('ade.split.dropRight') : dropAt.dir === 'down' ? t('ade.split.dropDown') : t('ade.split.dropHere')}</span>
 			</div>
 		{/if}
 		</div>

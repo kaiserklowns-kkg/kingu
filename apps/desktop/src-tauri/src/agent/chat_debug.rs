@@ -216,6 +216,7 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
         Some(r)
       }
       AgentEvent::GuardAsked { tool, check, paths, .. } => Some(row("guard", format!("Always ask: {check}"), one_line(&format!("{tool} {}", paths.join(", ")), MAX_DETAIL), None)),
+      AgentEvent::AssistedReview { tool, verdict, reason, .. } => Some(row("guard", format!("Assisted: {verdict}"), one_line(&format!("{tool}: {reason}"), MAX_DETAIL), None)),
       AgentEvent::HookRun { name, event, outcome, exit_code, output, .. } => {
         totals.hooks += 1;
         let code = exit_code.map(|c| format!(" (exit {c})")).unwrap_or_default();

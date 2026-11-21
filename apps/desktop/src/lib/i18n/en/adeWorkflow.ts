@@ -11,6 +11,13 @@ export const adeWorkflow = {
 	'adeWorkflow.board.title': 'Task Board',
 	'adeWorkflow.board.prFilter': 'PR status',
 	'adeWorkflow.board.prAll': 'All PRs',
+	'adeWorkflow.board.otherProject': 'In {project}: opens that project, then this task',
+	'adeWorkflow.board.projectsAll': 'All projects',
+	'adeWorkflow.board.projectsChosen': '{count|# project|# projects}',
+	'adeWorkflow.board.projectFilter': 'Filter by project',
+	'adeWorkflow.board.openProject': 'open',
+	'adeWorkflow.board.clearFilters': 'Clear all filters',
+	'adeWorkflow.board.removeFilter': 'Remove filter {name}',
 	'adeWorkflow.board.idle': 'Idle',
 	'adeWorkflow.board.idleHint': 'Finished tasks you have already seen',
 	'adeWorkflow.board.showIdle': 'Show idle',
@@ -29,6 +36,13 @@ export const adeWorkflow = {
 	'adeWorkflow.board.byAgent': 'Agent status',
 	'adeWorkflow.board.byAgentTitle': 'Columns from what the agent is doing: needs you, working, done',
 	'adeWorkflow.board.cardTitle': '{title}: drag to another column to change its status',
+	// BoardPopoutWindow.svelte / boardPopout.svelte.ts: the board's pop-out window
+	'adeWorkflow.board.popOut': 'Pop Out',
+	'adeWorkflow.board.popOutTitle': "Open the agent board in its own window (Orca's Open as Pop-out); it follows this window",
+	'adeWorkflow.popout.windowTitle': 'Kingu Agent Board',
+	'adeWorkflow.popout.title': 'Agent Board',
+	'adeWorkflow.popout.waiting': 'Waiting for the board of the window that opened this one…',
+	'adeWorkflow.popout.openTask': '{title}: opens it in the Kingu window',
 	// AdeSidebar.svelte: Group by
 	'adeWorkflow.groupBy': 'Workflow',
 	// worktreeActions.ts / worktreeMenu.svelte.ts

@@ -1001,7 +1001,17 @@ pub async fn ssh_forward_add(
   label: Option<String>,
 ) -> Result<Forward, String> {
   let t = targets.get(&target_id)?;
-  let args = forward_args(&t, local_port, &remote_host, remote_port)?;
+  let f = start_forward(&t, &forwards, target_id, local_port, remote_host, remote_port, label).await?;
+  // Kept for Restore after a restart (Orca's saved port forwards).
+  if let Err(e) = saved.remember(SavedForward { target_id: f.target_id.clone(), local_port, remote_host: f.remote_host.clone(), remote_port, label: f.label.clone() }) {
+    log::warn!("ssh forwards: {e}");
+  }
+  Ok(f)
+}
+
+/// Starts `ssh -L` and keeps it in `forwards` (it ends with Kingu).
+async fn start_forward(t: &Target, forwards: &Forwards, target_id: String, local_port: u16, remote_host: String, remote_port: u16, label: Option<String>) -> Result<Forward, String> {
+  let args = forward_args(t, local_port, &remote_host, remote_port)?;
   if forwards.0.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(f, _)| f.local_port == local_port) {
     return Err(format!("Local port {local_port} is already forwarded."));
   }
@@ -1025,13 +1035,46 @@ pub async fn ssh_forward_add(
     return Err(e);
   }
   let f = Forward { id: format!("fw-{target_id}-{local_port}"), target_id, local_port, remote_host: remote_host.trim().to_string(), remote_port, label, running: true };
-  // Kept for Restore after a restart (Orca's saved port forwards).
-  if let Err(e) = saved.remember(SavedForward { target_id: f.target_id.clone(), local_port, remote_host: f.remote_host.clone(), remote_port, label: f.label.clone() }) {
-    log::warn!("ssh forwards: {e}");
-  }
   forwards.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|(x, _)| x.local_port != local_port);
   forwards.0.lock().unwrap_or_else(|e| e.into_inner()).push((f.clone(), child));
   Ok(f)
+}
+
+/// The host's own `localhost` / `127.0.0.1` / `::1`, as a forward's remote host.
+pub fn is_loopback_name(h: &str) -> bool {
+  matches!(h.trim().trim_matches(['[', ']']), "localhost" | "127.0.0.1" | "::1")
+}
+
+/// A free local port for a browser forward: `want` when nothing on this computer listens on it
+/// (the page keeps its port), else one the system picks.
+pub fn free_local_port(want: u16, taken: &[u16]) -> Result<u16, String> {
+  let bindable = |p: u16| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok();
+  if want != 0 && !taken.contains(&want) && bindable(want) {
+    return Ok(want);
+  }
+  let l = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("no free local port: {e}"))?;
+  l.local_addr().map(|a| a.port()).map_err(|e| e.to_string())
+}
+
+/// The local port that reaches `remote_port` on the host's loopback (VS Code 1.145's "browse over
+/// remote agent host connections", Orca's "Browse through SSH workspace hosts", for the pages a dev
+/// server on the host serves): a running forward is reused, else one is started on the same port
+/// when it is free here, or on a free one. Not remembered for Restore: the browser asks again.
+#[tauri::command]
+pub async fn ssh_forward_for_browser(targets: State<'_, Targets>, forwards: State<'_, Forwards>, target_id: String, remote_port: u16) -> Result<u16, String> {
+  let t = targets.get(&target_id)?;
+  let (reuse, taken) = {
+    let mut g = forwards.0.lock().unwrap_or_else(|e| e.into_inner());
+    // Only a live ssh still forwards (one that ended, the host gone, is left for the Ports list to show).
+    let reuse = g.iter_mut().find_map(|(f, c)| (f.target_id == target_id && f.remote_port == remote_port && is_loopback_name(&f.remote_host) && matches!(c.try_wait(), Ok(None))).then_some(f.local_port));
+    (reuse, g.iter().map(|(f, _)| f.local_port).collect::<Vec<_>>())
+  };
+  if let Some(p) = reuse {
+    return Ok(p);
+  }
+  let local = free_local_port(remote_port, &taken)?;
+  let f = start_forward(&t, &forwards, target_id, local, "localhost".into(), remote_port, Some("Browser".into())).await?;
+  Ok(f.local_port)
 }
 
 /// Stops a forward; the user stopping it also forgets it (no Restore offered for it later).
@@ -1049,6 +1092,20 @@ pub fn ssh_forward_remove(forwards: State<'_, Forwards>, saved: State<'_, SavedF
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn browser_forwards_keep_a_free_port_and_know_loopback_names() {
+    assert!(super::is_loopback_name("localhost") && super::is_loopback_name("[::1]") && super::is_loopback_name("127.0.0.1"));
+    assert!(!super::is_loopback_name("db.internal"));
+    let busy = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = busy.local_addr().unwrap().port();
+    let other = super::free_local_port(port, &[]).unwrap();
+    assert_ne!(other, port, "a port in use here is not reused");
+    drop(busy);
+    let free = super::free_local_port(0, &[]).unwrap();
+    assert_ne!(free, 0);
+    assert_ne!(super::free_local_port(free, &[free]).unwrap(), free, "a port Kingu already forwards is skipped");
+  }
+
   use super::*;
 
   fn target() -> Target {

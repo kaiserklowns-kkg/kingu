@@ -42,6 +42,8 @@ export const composer = {
 	'composer.run.editsHint': 'แก้ไฟล์โดยไม่ถาม และถามก่อนใช้เครื่องมืออื่น',
 	'composer.run.all': 'อนุญาตทั้งหมด',
 	'composer.run.allHint': 'รันเครื่องมือทุกครั้งโดยไม่ถาม',
+	'composer.run.assisted': 'Assisted permissions',
+	'composer.run.assistedHint': 'ให้โมเดลตรวจสอบปล่อย tool call ที่เสี่ยงต่ำให้รันเอง ที่เหลือถามคุณ (เฉพาะ Claude agent)',
 	'composer.run.global': 'เปิดอนุมัติอัตโนมัติทั้งหมดอยู่',
 
 	'composer.menu.search': 'ค้นหา',

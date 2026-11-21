@@ -717,9 +717,18 @@
 		return ok;
 	}
 
-	/** The run mode (kingu-old's permission picker over Kingu's approvals); Allow all asks first. */
+	/** "Assisted permissions" asks once per app session too (VS Code warns before any elevated level). */
+	async function confirmAssisted(): Promise<boolean> {
+		if (chats.assistedConfirmed) return true;
+		const ok = await ask(t('chatInput.assistedConfirm'), { kind: 'warning', okLabel: t('composer.run.assisted') });
+		if (ok) chats.assistedConfirmed = true;
+		return ok;
+	}
+
+	/** The run mode (kingu-old's permission picker over Kingu's approvals); the elevated levels ask first. */
 	async function pickApproval(next: AgentApproval) {
 		if (next === 'bypassPermissions' && !(await confirmAllowAll())) return;
+		if (next === 'assisted' && !(await confirmAssisted())) return;
 		await setMode('agent', next);
 	}
 
@@ -955,7 +964,7 @@
 			chatMeta ? chatMeta.effort : newEffort
 		)
 	);
-	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
+	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta && chats.isAssisted(chatMeta.id) ? 'assisted' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
 	const globalAutoApprove = $derived(settings.get<boolean>('chat.tools.global.autoApprove') === true);
 	/** Where a new chat runs (the header's ⋯): this folder or a task's worktree. */
 	const whereRows = $derived<MenuRow[]>(
@@ -975,7 +984,8 @@
 			codicon: PERMISSION_CODICON[a],
 			checked: !globalAutoApprove && a === currentApproval,
 			warn: a === 'bypassPermissions',
-			disabled: globalAutoApprove
+			// Kingu's reviewer runs in the Claude runtime only (agent-host assisted.ts).
+			disabled: globalAutoApprove || (a === 'assisted' && runtimeId !== CLAUDE_RUNTIME)
 		}))
 	);
 	const permissionPicker = $derived({
@@ -1508,11 +1518,11 @@
 					input = withQuote(input, text);
 					queueMicrotask(() => composer?.focus());
 				}}
-				onside={features.rewind ? (text) => chatMeta && (chatTips.record('sideChat'), (side = { parent: chatMeta.id, excerpt: text })) : undefined}
+				onside={(text) => chatMeta && (chatTips.record('sideChat'), (side = { parent: chatMeta.id, excerpt: text }))}
 			/>
 			{#if side && side.parent === chatMeta.id}
 				{#key side}
-					<SideChat parentId={side.parent} excerpt={side.excerpt} {cwd} root={workspace.root} onclose={() => (side = null)} onkeep={(id) => ((side = null), select(id))} />
+					<SideChat parentId={side.parent} excerpt={side.excerpt} {cwd} root={workspace.root} parentRuntime={runtimeId} canFork={features.rewind} onclose={() => (side = null)} onkeep={(id) => ((side = null), select(id))} />
 				{/key}
 			{/if}
 		{:else if inEditor}

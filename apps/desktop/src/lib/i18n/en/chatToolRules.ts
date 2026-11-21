@@ -10,5 +10,8 @@ export const chatToolRules = {
 	'chatToolRules.allow.domainHint': 'Adds {keys} to chat.tools.urls.autoApprove in your user settings and fetches this page',
 	'chatToolRules.saveFailed': 'Could not save the rule: {error}',
 	'chatToolRules.approvedBy': 'Auto approved by rule {rules}',
+	'chatToolRules.assistedApproved': 'Approved by Assisted permissions: {reason}',
+	'chatToolRules.assistedAsked': 'Assisted permissions asks you: {reason}',
+	'chatToolRules.assistedUnavailable': 'The Assisted reviewer could not decide, so it asks you: {reason}',
 	'chatToolRules.approvedByMany': 'Auto approved by rules {rules}'
 } as const;

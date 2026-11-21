@@ -10,7 +10,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { focusTerminal, focusedTerminal, lastAdeTerminal, terminalHandle } from './registry.ts';
 import { terminals } from './terminals.svelte.ts';
 import { codeTerminalFolder, createTerminal, createTerminalInActiveFolder } from './newTerminal.ts';
-import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
+import { QUICK_INSERT_ID, quickAppendsEnter, quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 import { t } from '#lib/i18n/index.ts';
 import { installShellIntegrationCommands } from './shellIntegrationCommands.svelte.ts';
 
@@ -22,7 +22,8 @@ async function runQuickCommand() {
 	if (!target) return status.flash(t('tools.terminal.quick.openTerminal'));
 	const picked = await quick.choose({ placeholder: t('tools.terminal.quick.pick'), items: list.map((q, i) => ({ id: String(i), label: q.label, description: q.command.split('\n')[0] })) });
 	if (!picked) return;
-	target.write(quickCommandInput(list[Number(picked.id)].command));
+	const q = list[Number(picked.id)];
+	target.write(quickCommandInput(q.command, quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), q.label)));
 	target.focus();
 }
 

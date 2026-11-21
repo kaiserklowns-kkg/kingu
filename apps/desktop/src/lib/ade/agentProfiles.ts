@@ -386,7 +386,7 @@ const ORCA_AGENTS: readonly Spec[] = [
 	{ id: 'kilo', title: 'Kilocode', bins: ['kilo'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'crush', title: 'Charm', bins: ['crush'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'aug', title: 'Auggie', bins: ['auggie'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
-	{ id: 'cline', title: 'Cline', bins: ['cline'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'cline', title: 'Cline', bins: ['cline'], status: O, ...plain, prompt: { kind: 'type' }, resume: byId('--id') },
 	{ id: 'codebuff', title: 'Codebuff', bins: ['codebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'freebuff', title: 'Freebuff', bins: ['freebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	// The binary is `cn` (`continue` is a shell keyword).

@@ -174,3 +174,22 @@ describe('tab switching (Orca)', () => {
 		expect(applyTabOrder(tabs, ['gone']).map((t) => t.id)).toEqual(['main', 'b1', 'b2']);
 	});
 });
+
+describe('per-tab browser profiles', () => {
+	test('names are trimmed and bounded; tags are stable and differ per name', async () => {
+		const { cleanProfile, profileTag } = await import('./adeTabs');
+		expect(cleanProfile('  work ')).toBe('work');
+		expect(cleanProfile('')).toBeNull();
+		expect(cleanProfile('x'.repeat(65))).toBeNull();
+		expect(cleanProfile('a\nb')).toBeNull();
+		expect(profileTag('work')).toBe(profileTag('work'));
+		expect(profileTag('work')).not.toBe(profileTag('personal'));
+		expect(profileTag('งาน')).toMatch(/^[0-9a-f]{8}$/);
+	});
+
+	test("a tab's profile survives a restart; a bad one is dropped", async () => {
+		const { parseSavedTabs } = await import('./adeSplit');
+		const saved = parseSavedTabs({ browsers: { '': [{ id: 'b1', url: 'https://a.test', title: 'A', profile: 'work' }, { id: 'b2', url: 'https://b.test', title: 'B', profile: '\u0000' }] } });
+		expect(saved.browsers[''].map((b) => b.profile)).toEqual(['work', undefined]);
+	});
+});
