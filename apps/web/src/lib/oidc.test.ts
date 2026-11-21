@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { authorizeUrl, parseDiscovery, pkceChallenge, randomToken, unverifiedClaims } from './oidc';
+import { authorizeUrl, parseDiscovery, parseProviders, pkceChallenge, randomToken, unverifiedClaims } from './oidc';
 
 test('pkceChallenge matches the RFC 7636 example', async () => {
 	expect(await pkceChallenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk')).toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
@@ -42,4 +42,29 @@ test('unverifiedClaims decodes UTF-8 payloads and rejects junk', () => {
 	expect(unverifiedClaims(`h.${payload}.s`)).toEqual({ nonce: 'n1', name: 'สมชาย' });
 	expect(unverifiedClaims('a.b')).toBeNull();
 	expect(unverifiedClaims('a.!!!.c')).toBeNull();
+});
+
+describe('parseProviders', () => {
+	const none = { issuer: '', clientId: '', clientSecret: '' };
+	const legacy = { issuer: 'https://login.acme.com', clientId: 'kingu', clientSecret: '' };
+	test('legacy single provider is "sso", listed first', () => {
+		const ps = parseProviders('[{"id":"partner","name":"Partner Co","issuer":"https://idp.partner.com","client_id":"k","client_secret":"s"}]', legacy);
+		expect(ps.map((p) => p.id)).toEqual(['sso', 'partner']);
+		expect(ps[1]).toEqual({ id: 'partner', name: 'Partner Co', issuer: 'https://idp.partner.com', clientId: 'k', clientSecret: 's' });
+		expect(parseProviders('', none)).toEqual([]);
+		expect(parseProviders('[{"id":"x","issuer":"https://x.com","client_id":"k"}]', none)[0].name).toBe('x');
+	});
+	test('rejects bad entries and repeats', () => {
+		for (const raw of [
+			'nope',
+			'{}',
+			'[{"id":"Bad Id","issuer":"https://x.com","client_id":"k"}]',
+			'[{"id":"x","issuer":"http://x.com","client_id":"k"}]',
+			'[{"id":"x","issuer":"https://x.com"}]',
+			'[{"id":"sso","issuer":"https://x.com","client_id":"k"}]',
+			'[{"id":"x","issuer":"https://login.acme.com","client_id":"k"}]'
+		]) {
+			expect(() => parseProviders(raw, legacy)).toThrow();
+		}
+	});
 });

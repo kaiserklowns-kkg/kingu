@@ -13,13 +13,15 @@
 	<p class="mb-6 text-(--vscode-descriptionForeground)">ดูงานของทีมแบบเรียลไทม์ (เฉพาะ metadata ไม่มีโค้ด)</p>
 
 	{#if data.ssoError}<p role="alert" class="mb-3 text-(--vscode-errorForeground)">{data.ssoError}</p>{/if}
-	{#if data.sso}
-		<a
-			href="/login/sso"
-			data-sveltekit-reload
-			class="mb-3 flex h-9 items-center justify-center rounded-sm bg-(--vscode-button-background) px-4 font-medium text-(--vscode-button-foreground) no-underline hover:brightness-110"
-			>เข้าสู่ระบบด้วย SSO</a
-		>
+	{#if data.sso.length}
+		{#each data.sso as p (p.id)}
+			<a
+				href={data.sso.length > 1 ? `/login/sso?p=${encodeURIComponent(p.id)}` : '/login/sso'}
+				data-sveltekit-reload
+				class="mb-3 flex h-9 items-center justify-center rounded-sm bg-(--vscode-button-background) px-4 font-medium text-(--vscode-button-foreground) no-underline hover:brightness-110"
+				>เข้าสู่ระบบด้วย {p.name}</a
+			>
+		{/each}
 		<p class="mb-3 text-center text-xs text-(--vscode-descriptionForeground)">หรือใช้ personal access token</p>
 	{/if}
 

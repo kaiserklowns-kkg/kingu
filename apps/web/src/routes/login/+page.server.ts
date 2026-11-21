@@ -1,13 +1,13 @@
 import { fail, redirect, type Actions } from '@sveltejs/kit';
 import { api, ApiError, isToken, setToken, type Me } from '#lib/server/api.ts';
-import { ssoEnabled } from '#lib/server/oidc.ts';
+import { ssoProviders } from '#lib/server/oidc.ts';
 import { SSO_ERRORS } from '#lib/oidc.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = ({ locals, url }) => {
 	if (locals.token) redirect(303, '/');
 	const code = url.searchParams.get('error') ?? '';
-	return { sso: ssoEnabled(), ssoError: SSO_ERRORS[code] ?? (code ? SSO_ERRORS.unavailable : null) };
+	return { sso: ssoProviders(), ssoError: SSO_ERRORS[code] ?? (code ? SSO_ERRORS.unavailable : null) };
 };
 
 export const actions: Actions = {

@@ -11,6 +11,49 @@ export async function pkceChallenge(verifier: string): Promise<string> {
 	return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
 }
 
+/** One identity provider of the login page (the team server maps its issuer to an org). */
+export type Provider = { id: string; name: string; issuer: string; clientId: string; clientSecret: string };
+
+const ISSUER_ERROR = 'issuer must be https (http only on localhost)';
+
+/**
+ * The login page's providers: KINGU_OIDC_PROVIDERS (a JSON array of
+ * {id, name, issuer, client_id, client_secret?}) after the single legacy provider, which is "sso".
+ * Throws on a bad entry, a repeated id or a repeated issuer.
+ */
+export function parseProviders(raw: string, legacy: { issuer: string; clientId: string; clientSecret: string }): Provider[] {
+	const out: Provider[] = [];
+	if (legacy.issuer && legacy.clientId) out.push({ id: 'sso', name: 'SSO', ...legacy });
+	const text = raw.trim();
+	if (text) {
+		let list: unknown;
+		try {
+			list = JSON.parse(text);
+		} catch {
+			throw new Error('KINGU_OIDC_PROVIDERS must be a JSON array');
+		}
+		if (!Array.isArray(list) || list.length > 50) throw new Error('KINGU_OIDC_PROVIDERS must be a JSON array of at most 50 providers');
+		for (const e of list as Record<string, unknown>[]) {
+			const str = (k: string) => (typeof e?.[k] === 'string' ? (e[k] as string).trim() : '');
+			const p: Provider = { id: str('id'), name: str('name'), issuer: str('issuer'), clientId: str('client_id'), clientSecret: str('client_secret') };
+			if (!/^[a-z0-9-]{1,32}$/.test(p.id)) throw new Error(`provider id "${p.id}" must be 1-32 of a-z, 0-9, -`);
+			if (!p.clientId) throw new Error(`provider ${p.id}: client_id is required`);
+			if (!secureUrl(p.issuer)) throw new Error(`provider ${p.id}: ${ISSUER_ERROR}`);
+			p.name ||= p.id;
+			out.push(p);
+		}
+	}
+	const ids = new Set<string>();
+	const issuers = new Set<string>();
+	for (const p of out) {
+		if (ids.has(p.id)) throw new Error(`provider id "${p.id}" is used twice`);
+		if (issuers.has(p.issuer)) throw new Error(`issuer ${p.issuer} is configured twice`);
+		ids.add(p.id);
+		issuers.add(p.issuer);
+	}
+	return out;
+}
+
 export type Discovery = { issuer: string; authorization_endpoint: string; token_endpoint: string };
 
 const secureUrl = (v: unknown) => {

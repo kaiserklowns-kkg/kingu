@@ -1,12 +1,13 @@
 import { error, redirect } from '@sveltejs/kit';
-import { ssoEnabled, startLogin } from '#lib/server/oidc.ts';
+import { providerOf, startLogin } from '#lib/server/oidc.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ cookies, url, setHeaders }) => {
-	if (!ssoEnabled()) error(404, 'SSO is not configured');
+	const p = providerOf(url.searchParams.get('p'));
+	if (!p) error(404, 'SSO is not configured');
 	let target: string;
 	try {
-		target = await startLogin(cookies, url.origin);
+		target = await startLogin(p, cookies, url.origin);
 	} catch {
 		redirect(303, '/login?error=unavailable');
 	}

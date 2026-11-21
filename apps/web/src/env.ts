@@ -1,4 +1,5 @@
 import { defineEnvVars } from '@sveltejs/kit/env';
+import { parseProviders } from './lib/oidc.ts';
 
 export const variables = defineEnvVars({
 	KINGU_API_URL: {
@@ -28,5 +29,14 @@ export const variables = defineEnvVars({
 	KINGU_OIDC_CLIENT_SECRET: {
 		description: 'Client secret, for confidential clients. Optional: the login uses PKCE either way.',
 		schema: (value) => (value ?? '').trim()
+	},
+	KINGU_OIDC_PROVIDERS: {
+		description:
+			'Further identity providers, one button each: a JSON array of {"id","name","issuer","client_id","client_secret"} (each issuer also listed in the team server\'s KINGU_OIDC_PROVIDERS, which maps it to an org).',
+		schema: (value) => {
+			const v = (value ?? '').trim();
+			parseProviders(v, { issuer: '', clientId: '', clientSecret: '' });
+			return v;
+		}
 	}
 });

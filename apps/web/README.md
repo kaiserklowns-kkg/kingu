@@ -45,6 +45,7 @@ KINGU_API_URL=http://127.0.0.1:8787 bun run dev:web     # http://localhost:5173
 | `KINGU_OIDC_ISSUER` | unset | Shows "เข้าสู่ระบบด้วย SSO". Same issuer as the team server. |
 | `KINGU_OIDC_CLIENT_ID` | unset | OAuth client id (same as the team server's). |
 | `KINGU_OIDC_CLIENT_SECRET` | unset | For confidential clients (sent with HTTP Basic). PKCE is used either way. |
+| `KINGU_OIDC_PROVIDERS` | unset | More identity providers, one button each: JSON array of `{"id","name","issuer","client_id","client_secret"}` (`id`: a-z, 0-9, `-`). Each issuer must also be in the team server's `KINGU_OIDC_PROVIDERS`, which maps it to an org. The single provider above is id `sso`. |
 
 **SSO:** register `https://<dashboard>/login/callback` as the redirect URI at the identity
 provider. `/login/sso` starts an authorization-code flow with PKCE (state, nonce and verifier in a
