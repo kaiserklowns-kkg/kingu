@@ -10,9 +10,13 @@
 import type { ArkaiSpec } from './arkai/spec.ts';
 import type { Effort } from './effort.ts';
 
-/** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first). */
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions';
-export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+/** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first).
+ * `assisted` is VS Code's "Assisted permissions": a reviewer decides which calls skip the prompt
+ * (assisted.ts); the Claude runtime only, others ask as in `default`. */
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions' | 'assisted';
+export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'assisted'];
+/** The SDK's own mode for one of ours (it has no `assisted`: that is Kingu's canUseTool). */
+export const sdkMode = (mode: PermissionMode): Exclude<PermissionMode, 'assisted'> => (mode === 'assisted' ? 'default' : mode);
 
 export type StartParams = {
 	runId: number;
@@ -261,6 +265,12 @@ export type AgentEvent =
 	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
 	 */
 	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule'; paths: string[] }
+	/**
+	 * Assisted permissions reviewed a tool call (assisted.ts). `approved`: it runs without a prompt
+	 * (`request_id` null); `needs_you` / `unavailable`: the `permission_request` with this
+	 * `request_id` follows, and `reason` says why it was not approved.
+	 */
+	| { kind: 'assisted_review'; request_id: string | null; tool: string; tool_use_id: string | null; verdict: 'approved' | 'needs_you' | 'unavailable'; reason: string }
 	/**
 	 * A hook of the session ran (the SDK's `hook_response`, with `includeHookEvents`): its name,
 	 * event, outcome and output. Rust keeps it in a chat's transcript for the Agent Debug Log only.

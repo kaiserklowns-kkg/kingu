@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { reviewToolCall, type AssistedReview, type JudgeQuery } from './assisted.ts';
 import { contextTokensOf, contextWindowOf, isUuid, mcpStatus, modelOptions, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards, type AskUser } from './guards/index.ts';
@@ -29,6 +30,7 @@ import {
 	DECISIONS,
 	MCP_TYPES,
 	PERMISSION_MODES,
+	sdkMode,
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
@@ -49,7 +51,7 @@ export type QueryLike = AsyncIterable<unknown> & {
 	interrupt(): Promise<unknown>;
 	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
 	setModel?(model?: string): Promise<void>;
-	setPermissionMode?(mode: PermissionMode): Promise<void>;
+	setPermissionMode?(mode: Exclude<PermissionMode, 'assisted'>): Promise<void>;
 	/** The session's flag settings (the effort level, effort.ts); `null` clears one. */
 	applyFlagSettings?(settings: { effortLevel?: ClaudeEffortLevel | null }): Promise<void>;
 	/** 0 turns thinking off; null clears the limit. */
@@ -200,6 +202,9 @@ class Run {
 	readonly guardApproved = new Set<string>();
 	/** The session's permission mode (start, then setOptions). */
 	mode = 'default';
+	/** The run's folder and account env, for the Assisted reviewer (assisted.ts). */
+	cwd = '';
+	env: Record<string, string | undefined> | null = null;
 	query: QueryLike | null = null;
 	stopped = false;
 	exited = false;
@@ -234,6 +239,8 @@ export type HostDeps = {
 	fetch?: typeof fetch;
 	/** How `mcp_query` reaches a server (tests pass a fake). */
 	mcpConnect?: (s: McpServerParams, cwd: string) => McpConnection;
+	/** Assisted permissions' reviewer (assisted.ts; tests pass a fake). */
+	review?: typeof reviewToolCall;
 };
 
 class RpcError extends Error {
@@ -478,6 +485,8 @@ export class AgentHost {
 
 		const run = new Run(p.runId);
 		run.mode = mode;
+		run.cwd = p.cwd;
+		run.env = accountEnv;
 		const mcpAsks = (run.asks = new McpAsks({ emit: (ev) => this.emit(run.id, ev), newId: () => this.newId(), log: (line) => this.log(`run ${run.id}: ${line}`), sampling }));
 		// Kingu's artifact tool (artifacts.ts), over the app's `kingu` socket; not when a server of the run is named `kingu`.
 		const cliRuntime = extraEnv.KINGU_CLI_RUNTIME || (this.deps.options?.env ?? process.env).KINGU_CLI_RUNTIME;
@@ -498,7 +507,7 @@ export class AgentHost {
 			model: p.model || DEFAULT_MODEL,
 			// The chat's reasoning effort (effort.ts): `effort`, or thinking off; none: the model's default.
 			...claudeStartOptions(effort),
-			permissionMode: mode,
+			permissionMode: sdkMode(mode),
 			// Lets the user switch a live session to "Allow all" (`setPermissionMode`); the mode
 			// itself only ever comes from the user's pick, which the app confirms first.
 			allowDangerouslySkipPermissions: true,
@@ -691,7 +700,7 @@ export class AgentHost {
 		}
 		if (mode !== undefined) {
 			if (!q.setPermissionMode) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the permission mode mid-session');
-			await q.setPermissionMode(mode);
+			await q.setPermissionMode(sdkMode(mode));
 			run.mode = mode;
 		}
 		if (effort !== undefined) await applyClaudeEffort(q, effort);
@@ -815,15 +824,40 @@ export class AgentHost {
 			});
 	}
 
+	/** Assisted permissions: the reviewer's verdict on a call (assisted.ts), in the run's folder and account. */
+	private review(run: Run, tool: string, input: unknown, signal?: AbortSignal): Promise<AssistedReview> {
+		const base: Partial<Options> = { ...this.deps.options, ...(run.env ? { env: run.env } : {}) };
+		return (this.deps.review ?? reviewToolCall)({ tool, input, cwd: run.cwd, query: this.deps.query as JudgeQuery, base, signal });
+	}
+
 	private canUseTool(run: Run): CanUseTool {
-		return (tool, input, opts) =>
-			new Promise<PermissionResult>((resolve) => {
-				if (run.exited || run.stopped) return resolve({ behavior: 'deny', message: 'stopped', interrupt: true });
-				// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
-				// whose own prompt is what keeps it read-only.
-				if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
-				// Publishing an artifact only writes to the project's .kingu/artifacts (plan mode still asks).
-				if (tool === ARTIFACT_TOOL && run.artifacts && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
+		return async (tool, input, opts) => {
+			if (run.exited || run.stopped) return { behavior: 'deny', message: 'stopped', interrupt: true };
+			// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
+			// whose own prompt is what keeps it read-only.
+			if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return { behavior: 'allow', updatedInput: input };
+			// Publishing an artifact only writes to the project's .kingu/artifacts (plan mode still asks).
+			if (tool === ARTIFACT_TOOL && run.artifacts && run.mode !== 'plan') return { behavior: 'allow', updatedInput: input };
+			// Assisted permissions: the reviewer may let the call through; otherwise the person decides,
+			// told why. A question is always the person's to answer.
+			let review: AssistedReview | null = null;
+			if (run.mode === 'assisted' && !isAskUserQuestion(tool)) {
+				review = await this.review(run, tool, input, opts.signal);
+				if (run.exited || run.stopped || opts.signal?.aborted) return { behavior: 'deny', message: 'cancelled', interrupt: true };
+				// Still assisted (the person may have switched modes meanwhile) and approved: it runs.
+				if (review.verdict === 'approved' && run.mode === 'assisted') {
+					this.emit(run.id, { kind: 'assisted_review', request_id: null, tool, tool_use_id: opts.toolUseID ?? null, verdict: 'approved', reason: review.reason });
+					this.log(`run ${run.id}: ${tool} approved by the Assisted reviewer`);
+					return { behavior: 'allow', updatedInput: input };
+				}
+			}
+			return this.ask(run, tool, input, opts, review);
+		};
+	}
+
+	/** A permission prompt for the person; `review`: why Assisted permissions did not approve it. */
+	private ask(run: Run, tool: string, input: Record<string, unknown>, opts: Parameters<CanUseTool>[2], review: AssistedReview | null): Promise<PermissionResult> {
+		return new Promise<PermissionResult>((resolve) => {
 				const requestId = this.newId();
 				run.pending.set(requestId, { resolve, input, suggestions: opts.suggestions ?? [], tool });
 				opts.signal?.addEventListener('abort', () => {
@@ -831,6 +865,7 @@ export class AgentHost {
 					resolve({ behavior: 'deny', message: 'cancelled', interrupt: true });
 					this.emit(run.id, { kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
 				});
+				if (review) this.emit(run.id, { kind: 'assisted_review', request_id: requestId, tool, tool_use_id: opts.toolUseID ?? null, verdict: review.verdict === 'approved' ? 'needs_you' : review.verdict, reason: review.reason });
 				const { summary, detail, diff } = summarizeTool(tool, input);
 				this.emit(run.id, {
 					kind: 'permission_request',

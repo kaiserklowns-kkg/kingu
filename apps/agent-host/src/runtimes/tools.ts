@@ -144,7 +144,9 @@ const MODE_IDS: Record<PermissionMode, readonly string[]> = {
 	default: ['default'],
 	acceptEdits: ['acceptEdits', 'autoEdit', 'auto_edit', 'auto-edit'],
 	plan: ['plan'],
-	bypassPermissions: ['bypassPermissions', 'yolo']
+	bypassPermissions: ['bypassPermissions', 'yolo'],
+	// Kingu's reviewer is the Claude runtime's; another agent asks as in `default`.
+	assisted: ['default']
 };
 export function agentModeFor(mode: PermissionMode, available: unknown): string | null {
 	const ids = new Set((Array.isArray(available) ? available.filter(isObj) : []).map((m) => str(m.id)).filter(Boolean));
