@@ -79,6 +79,42 @@ export function stripControls(text: string): string {
 		.replace(/[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g, '');
 }
 
+/** Most bytes one keystroke or paste sends from the pop-out to the previewed terminal (Rust checks it too). */
+export const PREVIEW_INPUT_MAX = 4096;
+
+const CURSOR: Record<string, string> = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D', Home: 'H', End: 'F' };
+const TILDE: Record<string, string> = { Insert: '2', Delete: '3', PageUp: '5', PageDown: '6' };
+
+/**
+ * The bytes a key sends to a terminal (xterm's defaults, normal cursor mode), for typing into the
+ * pop-out's terminal preview as Orca's AgentTerminalPreview does; null for keys left to the window
+ * (⌘ shortcuts, bare modifiers, composition). `escape`: Esc goes to the terminal (agents use it to interrupt).
+ */
+export function keyInput(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey' | 'isComposing'>): string | null {
+	if (e.isComposing || e.metaKey) return null;
+	const alt = (s: string) => (e.altKey ? `\x1b${s}` : s);
+	if (CURSOR[e.key]) return `\x1b[${e.shiftKey || e.ctrlKey || e.altKey ? `1;${1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0)}` : ''}${CURSOR[e.key]}`;
+	if (TILDE[e.key]) return `\x1b[${TILDE[e.key]}~`;
+	switch (e.key) {
+		case 'Enter':
+			return alt('\r');
+		case 'Backspace':
+			return alt(e.ctrlKey ? '\x08' : '\x7f');
+		case 'Tab':
+			return e.shiftKey ? '\x1b[Z' : '\t';
+		case 'Escape':
+			return '\x1b';
+	}
+	if (e.key.length !== 1 && [...e.key].length !== 1) return null;
+	if (e.ctrlKey) {
+		const c = e.key.toLowerCase();
+		if (c >= 'a' && c <= 'z') return alt(String.fromCharCode(c.charCodeAt(0) - 96));
+		const special: Record<string, string> = { ' ': '\x00', '@': '\x00', '[': '\x1b', '\\': '\x1c', ']': '\x1d', '^': '\x1e', _: '\x1f' };
+		return special[e.key] !== undefined ? alt(special[e.key]) : null;
+	}
+	return alt(e.key);
+}
+
 export type PopoutEntry = { root: string; view: TaskView; branch?: string | null };
 
 /**

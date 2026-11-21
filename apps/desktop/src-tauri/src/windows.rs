@@ -724,6 +724,10 @@ pub const BOARD_POPOUT_SNAPSHOT: &str = "board-popout:snapshot";
 pub const BOARD_POPOUT_REQUESTED: &str = "board-popout:requested";
 /// To the feeding window: open task `slug` of project `root` (Open task in a card's preview).
 pub const BOARD_POPOUT_REVEAL: &str = "board-popout:reveal";
+/// To the feeding window: keys typed into the pop-out's terminal preview (`{root, slug, data}`).
+pub const BOARD_POPOUT_INPUT: &str = "board-popout:input";
+/// Most bytes one relay carries (a keystroke or a paste).
+const BOARD_POPOUT_INPUT_MAX: usize = 4096;
 
 #[derive(Default)]
 struct BoardPopout {
@@ -862,6 +866,34 @@ pub fn board_popout_preview(app: AppHandle, window: tauri::WebviewWindow, card: 
     app.emit_to(owner.as_str(), BOARD_POPOUT_REQUESTED, card).map_err(|e| e.to_string())?;
   }
   Ok(())
+}
+
+/// Keys typed into the pop-out's terminal preview (Orca's AgentTerminalPreview writes to the PTY):
+/// relayed to the feeding window, which types them into that task's terminal. Only for the card
+/// whose preview is open, and never logged.
+#[tauri::command]
+pub fn board_popout_input(app: AppHandle, window: tauri::WebviewWindow, root: String, slug: String, data: String) -> Result<(), String> {
+  if window.label() != workspace::BOARD_POPOUT {
+    return Err("only the pop-out types into a preview".into());
+  }
+  if data.is_empty() || data.len() > BOARD_POPOUT_INPUT_MAX {
+    return Err("input too long".into());
+  }
+  let card = Reveal { root, slug };
+  let owner = {
+    let b = board();
+    if b.preview.as_ref() != Some(&card) {
+      return Err("that card's preview is not open".into());
+    }
+    b.owner.clone().ok_or("the window that opened the pop-out is gone")?
+  };
+  #[derive(Clone, serde::Serialize)]
+  struct Input<'a> {
+    root: &'a str,
+    slug: &'a str,
+    data: &'a str,
+  }
+  app.emit_to(owner.as_str(), BOARD_POPOUT_INPUT, Input { root: &card.root, slug: &card.slug, data: &data }).map_err(|e| e.to_string())
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

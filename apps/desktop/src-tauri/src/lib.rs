@@ -1651,6 +1651,7 @@ pub fn run() {
       windows::board_popout_publish,
       windows::board_popout_request,
       windows::board_popout_preview,
+      windows::board_popout_input,
       windows::board_popout_reveal,
       windows::workspace_storage_stale,
       window::window_close,

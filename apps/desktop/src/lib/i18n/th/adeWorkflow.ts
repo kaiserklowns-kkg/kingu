@@ -44,6 +44,7 @@ export const adeWorkflow = {
 	'adeWorkflow.popout.openTask': '{title}: เปิดงานนี้ในหน้าต่าง Kingu',
 	'adeWorkflow.popout.previewTask': '{title}: แสดงเทอร์มินัลของ agent ในงานนี้',
 	'adeWorkflow.popout.preview': 'ตัวอย่างเทอร์มินัล',
+	'adeWorkflow.popout.typeHint': 'คลิกที่เทอร์มินัลแล้วพิมพ์เพื่อส่งปุ่มไปให้ agent ได้ กด Esc ในเทอร์มินัลจะส่งไปที่ agent',
 	'adeWorkflow.popout.previewUnavailable': 'ไม่มีตัวอย่างให้ดู — เปิดงานนี้เพื่อดู agent',
 	'adeWorkflow.popout.openInWindow': 'เปิดงาน',
 	'adeWorkflow.popout.close': 'ปิด',

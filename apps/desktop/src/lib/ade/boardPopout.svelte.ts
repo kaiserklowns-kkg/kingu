@@ -71,7 +71,14 @@ class BoardPopoutFeed {
 				this.#sent = '';
 				this.#publish();
 			}),
-			listenWindow<{ root: string; slug: string }>('board-popout:reveal', (e) => void projects.open(e.payload.root, e.payload.slug))
+			listenWindow<{ root: string; slug: string }>('board-popout:reveal', (e) => void projects.open(e.payload.root, e.payload.slug)),
+			// Keys typed into the pop-out's preview go to that task's terminal, only while it is the one previewed.
+			listenWindow<{ root: string; slug: string; data: string }>('board-popout:input', (e) => {
+				const p = this.previewing;
+				if (!p || p.root !== e.payload.root || p.slug !== e.payload.slug) return;
+				const key = previewKey(p);
+				if (key) terminalHandle(key)?.write(e.payload.data);
+			})
 		]).then(() => {});
 		return this.#listening;
 	}

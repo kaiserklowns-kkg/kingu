@@ -45,6 +45,7 @@ export const adeWorkflow = {
 	'adeWorkflow.popout.openTask': '{title}: opens it in the Kingu window',
 	'adeWorkflow.popout.previewTask': '{title}: shows its agent terminal',
 	'adeWorkflow.popout.preview': 'Terminal preview',
+	'adeWorkflow.popout.typeHint': 'Click the terminal and type to send keys to the agent; Esc there goes to the agent.',
 	'adeWorkflow.popout.previewUnavailable': 'No preview available — open the task to view this agent.',
 	'adeWorkflow.popout.openInWindow': 'Open task',
 	'adeWorkflow.popout.close': 'Close',

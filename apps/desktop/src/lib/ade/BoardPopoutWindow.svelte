@@ -14,7 +14,7 @@
 	import { resolveUiLanguage, t, useLocaleSource, type Locale } from '#lib/i18n/index.ts';
 	import { clientLog } from '#lib/client-log.ts';
 	import { boardMatches, inProjects, projectOptions, toggleFilter } from './boardSearch';
-	import { cssVariables, type PopoutCard, type PopoutSnapshot } from './boardPopout';
+	import { cssVariables, type PopoutCard, type PopoutSnapshot, keyInput, PREVIEW_INPUT_MAX } from './boardPopout';
 	import { timeAgo } from './model';
 
 	const COLUMN_DOT: Record<string, string> = {
@@ -112,6 +112,20 @@
 		previewKey = c.key;
 		previewPinned = true;
 		askPreview(c);
+	}
+	/** Types into the previewed terminal (Orca's preview writes to the PTY); Rust relays it to the feeding window. */
+	function sendInput(c: PopoutCard, data: string) {
+		for (let i = 0; i < data.length; i += PREVIEW_INPUT_MAX) {
+			invoke('board_popout_input', { root: c.root, slug: c.slug, data: data.slice(i, i + PREVIEW_INPUT_MAX) }).catch((e) => clientLog('error', `board_popout_input: ${e}`));
+		}
+	}
+	function onPreviewKey(c: PopoutCard, e: KeyboardEvent) {
+		const data = keyInput(e);
+		if (data === null) return;
+		// Esc here goes to the terminal (agents interrupt with it); outside the terminal it closes the dialog.
+		e.preventDefault();
+		e.stopPropagation();
+		sendInput(c, data);
 	}
 	function closePreview() {
 		if (!previewKey) return;
@@ -256,10 +270,21 @@
 				{#if preview?.lines}
 					<div
 						bind:this={previewBox}
-						role="log"
+						role="textbox"
+						aria-multiline="true"
 						aria-label={t('adeWorkflow.popout.preview')}
-						tabindex="-1"
-						class="flex h-[calc(100vh-140px)] flex-col overflow-auto bg-(--vscode-terminal-background,var(--vscode-panel-background)) p-1.5 text-(--vscode-terminal-foreground,var(--vscode-foreground))"
+						tabindex="0"
+						title={t('adeWorkflow.popout.typeHint')}
+						onkeydown={(e) => onPreviewKey(c, e)}
+						onpaste={(e) => {
+							const text = e.clipboardData?.getData('text/plain');
+							if (!text) return;
+							e.preventDefault();
+							sendInput(c, text.replace(/\r?\n/g, '\r'));
+						}}
+						oncompositionend={(e) => e.data && sendInput(c, e.data)}
+						{@attach (el) => el.focus({ preventScroll: true })}
+						class="flex h-[calc(100vh-140px)] flex-col overflow-auto outline-none focus-visible:ring-1 focus-visible:ring-(--vscode-focusBorder) bg-(--vscode-terminal-background,var(--vscode-panel-background)) p-1.5 text-(--vscode-terminal-foreground,var(--vscode-foreground))"
 						onscroll={(e) => (previewPinned = e.currentTarget.scrollTop + e.currentTarget.clientHeight >= e.currentTarget.scrollHeight - 4)}
 					>
 						<pre class="mt-auto font-mono text-xs leading-[1.35] whitespace-pre select-text">{preview.lines.join('\n')}</pre>
@@ -272,7 +297,8 @@
 				{:else}
 					<div class="h-[calc(100vh-140px)] bg-(--vscode-terminal-background,var(--vscode-panel-background))"></div>
 				{/if}
-				<footer class="flex shrink-0 items-center px-2.5 py-1.5">
+				<footer class="flex shrink-0 items-center gap-2 px-2.5 py-1.5">
+					{#if preview?.lines}<span class="min-w-0 truncate text-[11px] text-(--vscode-descriptionForeground)">{t('adeWorkflow.popout.typeHint')}</span>{/if}
 					<button
 						class="ml-auto flex h-6 items-center gap-1 rounded-md border border-(--vscode-button-border,var(--vscode-widget-border)) px-2 text-xs hover:bg-(--vscode-toolbar-hoverBackground)"
 						title={t('adeWorkflow.popout.openTask', { title: c.title })}

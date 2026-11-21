@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cssVariables, popoutLanes, PREVIEW_SCROLLBACK_ROWS, previewLines, stripControls, type PopoutEntry } from './boardPopout.ts';
+import { cssVariables, popoutLanes, PREVIEW_SCROLLBACK_ROWS, keyInput, previewLines, stripControls, type PopoutEntry } from './boardPopout.ts';
 import { effectiveStatus, newTask, type TaskMeta } from './model.ts';
 
 const COLS = [
@@ -61,5 +61,18 @@ describe('previewLines', () => {
 		expect(stripControls('\u001b[31mred\u001b[0m\tok\u0007\r')).toBe('red\tok');
 		expect(stripControls('\u001b]0;title\u0007after')).toBe('after');
 		expect(previewLines(['\u001b[1mbold\u001b[22m'], 24)).toEqual(['bold']);
+	});
+});
+
+describe('keyInput', () => {
+	const k = (key: string, mods: Partial<Record<'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey' | 'isComposing', boolean>> = {}) =>
+		keyInput({ key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, isComposing: false, ...mods });
+	test('maps keys like xterm', () => {
+		expect([k('a'), k('A', { shiftKey: true }), k('ก'), k('Enter'), k('Backspace'), k('Tab'), k('Tab', { shiftKey: true }), k('Escape')]).toEqual(['a', 'A', 'ก', '\r', '\x7f', '\t', '\x1b[Z', '\x1b']);
+		expect([k('ArrowUp'), k('ArrowLeft', { shiftKey: true }), k('Delete'), k('PageDown')]).toEqual(['\x1b[A', '\x1b[1;2D', '\x1b[3~', '\x1b[6~']);
+		expect([k('c', { ctrlKey: true }), k('d', { ctrlKey: true }), k('b', { altKey: true }), k('[', { ctrlKey: true })]).toEqual(['\x03', '\x04', '\x1bb', '\x1b']);
+	});
+	test('leaves shortcuts, modifiers and composition to the window', () => {
+		expect([k('c', { metaKey: true }), k('Shift'), k('F5'), k('a', { isComposing: true }), k('1', { ctrlKey: true })]).toEqual([null, null, null, null, null]);
 	});
 });
