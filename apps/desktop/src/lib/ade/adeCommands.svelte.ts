@@ -11,6 +11,7 @@ import { adeLayout, browserLabel } from './adeLayout.svelte';
 import { browserAction } from '#lib/workbench/floating.ts';
 import { tabPanes } from './adeTabs.ts';
 import { cliName, parseCliCommand } from './agentCli';
+import { profileOf } from './agentProfiles';
 import { isMarkdownEditor } from './adeMarkdown.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspaceSpace } from './workspaceSpace.svelte';
@@ -33,7 +34,7 @@ export function installAdeCommands(): () => void {
 		cmd(K.openMarkdown, () => void adeLayout.openMarkdown(adeLayout.key)),
 		cmd(K.newAgent, () => {
 			const argv = parseCliCommand(settings.get<string>('kingu.agent.cli') ?? '') ?? ['claude'];
-			adeLayout.newTerminal(adeLayout.key, { title: cliName(argv), run: argv });
+			adeLayout.newTerminal(adeLayout.key, { title: cliName(argv), run: argv, launch: { agent: profileOf(argv).id, argv } });
 		}),
 		cmd(K.markdownPreview, () => adeLayout.toggleMarkdownPreview(adeLayout.key), () => {
 			const file = front() ? adeLayout.activeFile() : null;

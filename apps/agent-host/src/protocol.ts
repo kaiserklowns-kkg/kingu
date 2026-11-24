@@ -7,8 +7,10 @@
 // Host → Rust notifications: `ready` once at startup, `event` {runId, event} for every run event.
 // Field names in events are snake_case, mirroring `AgentEvent` in src-tauri/src/agent/events.rs.
 
+import type { SandboxGrantWire } from './sandbox/retry.ts';
 import type { ArkaiSpec } from './arkai/spec.ts';
 import type { Effort } from './effort.ts';
+import type { SandboxParam } from './sandbox/config.ts';
 
 /** `bypassPermissions` is "Allow all": no prompts at all (the app confirms it with the user first).
  * `assisted` is VS Code's "Assisted permissions": a reviewer decides which calls skip the prompt
@@ -75,12 +77,41 @@ export type StartParams = {
 	 * model calls during the chat (`allowedDuringChat`); a server not listed is asked about.
 	 */
 	mcpSampling?: Record<string, boolean> | null;
+	/** Skills over MCP (`chat.agentHost.mcpSkills.enabled`, arkai/mcpSkills.ts): on unless `false`. Arkai only. */
+	mcpSkills?: boolean | null;
 	/**
 	 * The chat's reasoning effort (effort.ts: how each runtime takes it); absent or null: the
 	 * model's default, nothing is sent.
 	 */
 	effort?: Effort | null;
+	/**
+	 * The agent sandbox (`chat.agent.sandbox.*`, user settings, read by Rust agent/sandbox.rs) in VS
+	 * Code's agent host shape (sandbox/config.ts checks it; a value that does not fit refuses the
+	 * run). Absent, null or `enabled` not `on`: off. Arkai's Bash runs under `sandbox-exec`, Claude
+	 * gets the SDK's own sandbox; Codex and ACP agents run their own tools.
+	 */
+	sandbox?: SandboxParam | null;
+	/**
+	 * Browser tools (browser.ts), only with `kingu.browser.agentTools` on: the session token every
+	 * `browser.*` call to the app carries (src-tauri floating_browser/agent.rs). Absent: no tools.
+	 */
+	browser?: { session: string } | null;
+	/**
+	 * `chat.permissions.assisted.instructions` (user settings, read by Rust): the user's guidance
+	 * for the Assisted permissions reviewer (assisted.ts). Never sent to the agent. Null: none.
+	 */
+	assistedInstructions?: string | null;
+	/**
+	 * The MCP server policy (Rust agent/mcp_policy.rs: `chat.mcp.allowedServers` /
+	 * `chat.mcp.deniedServers` and the managed `allowedMcpServers` / `deniedMcpServers`), in Claude
+	 * Code's settings shape. Rust already left out the servers it blocks; this also reaches the
+	 * servers Claude Code reads itself (the user's own `~/.claude.json`), as `managedSettings`.
+	 * Null: no policy.
+	 */
+	mcpPolicy?: { allowedMcpServers?: McpServerMatcher[]; deniedMcpServers?: McpServerMatcher[] } | null;
 };
+/** One `allowedMcpServers` / `deniedMcpServers` entry: exactly one of the three. */
+export type McpServerMatcher = { serverName?: string; serverUrl?: string; serverCommand?: [string, ...string[]] };
 /**
  * A runtime other than the Claude Agent SDK, resolved by Rust (agent/runtimes.rs) to a program it
  * found on the login-shell PATH: an ACP agent (Agent Client Protocol, JSON-RPC over stdio) or
@@ -156,6 +187,17 @@ export type McpQueryParams = {
 	prompt?: string;
 	arguments?: Record<string, string>;
 };
+
+/**
+ * A request of an MCP App in the chat (arkai/mcpApps.ts), for the live Arkai run whose tool call
+ * rendered it: `resources/read`, `tools/call` (a tool of the app's server visible to apps, through
+ * the run's permission rules) or `sampling/createMessage` (asked like a server's own).
+ */
+export type McpAppParams = { runId: number; server: string; method: string; params?: Record<string, unknown> | null };
+/** The tools an MCP App in the chat registered (`App.registerTool()`); empty when it is gone. */
+export type McpAppToolsParams = { runId: number; appId: string; tools: unknown[] };
+/** The chat's answer to an `mcp_app_tool_call`: the app's `CallToolResult`, or why it failed. */
+export type McpAppToolResultParams = { runId: number; requestId: string; result?: Record<string, unknown> | null; error?: string | null };
 
 export type Usage = {
 	input_tokens: number;
@@ -236,6 +278,13 @@ export type AgentEvent =
 			can_always: boolean;
 			/** The rules an "always" answer adds, readable (`Bash(npm test:*)`); empty: the whole tool. */
 			rules: string[];
+			/**
+			 * A sandboxed command the sandbox stopped (sandbox/retry.ts, VS Code 1.147's "retry with
+			 * updated sandbox permissions"): what a yes adds to the sandbox before it runs again. `allow`
+			 * / `allow_always`: for this session; `allow_user`: the client saved it to the user's
+			 * `chat.agent.sandbox.*` settings first; `deny`: Skip. `blocked`: what stopped it, by which rule.
+			 */
+			sandbox_grant?: SandboxGrantWire;
 	  }
 	| { kind: 'permission_resolved'; request_id: string; decision: Decision | 'cancelled' }
 	/**
@@ -262,9 +311,11 @@ export type AgentEvent =
 	/**
 	 * Kingu's always-ask check stopped a tool call for the user's answer (in any permission mode):
 	 * the `permission_request` with this `request_id` follows. `check`: `outside_cwd` (writes
-	 * outside the run's folder), `delete`, `protected` (a .kinguignore path) or `mcp`; `paths`: what it is about.
+	 * outside the run's folder), `delete`, `protected` (a .kinguignore path), `mcp`, or `unsandboxed` (a
+	 * sandboxed run's command asks to run outside the sandbox), `sandbox_retry` (the sandbox stopped a
+	 * command and the user may allow what it needed, sandbox/retry.ts); `paths`: what it is about.
 	 */
-	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule'; paths: string[] }
+	| { kind: 'guard_asked'; request_id: string; tool: string; tool_use_id: string | null; check: 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule' | 'unsandboxed' | 'sandbox_retry'; paths: string[] }
 	/**
 	 * Assisted permissions reviewed a tool call (assisted.ts). `approved`: it runs without a prompt
 	 * (`request_id` null); `needs_you` / `unavailable`: the `permission_request` with this
@@ -300,9 +351,29 @@ export type AgentEvent =
 			timeout_ms: number;
 	  }
 	| { kind: 'mcp_request_resolved'; request_id: string; action: 'accept' | 'decline' | 'cancel' }
+	/**
+	 * MCP Apps (SEP-1865, VS Code's chatMcpAppModel.ts; Arkai, arkai/mcpApps.ts): tool call
+	 * `tool_use_id` of `server`'s `tool` declares a UI resource (`_meta.ui.resourceUri`, `ui://…`).
+	 * Sent once the call is allowed (`done` false, the chat loads the app and sends it `input`), and
+	 * again when it returns with `result`, the server's raw `CallToolResult` (null when too large).
+	 */
+	| { kind: 'mcp_app'; tool_use_id: string; server: string; tool: string; resource_uri: string; input: Record<string, unknown>; done: boolean; result?: Record<string, unknown> | null }
+	/**
+	 * The model called a tool an MCP App registered (ext-apps `App.registerTool()`, VS Code's
+	 * agentHostMcpAppToolsService.ts): the chat sends the app `tools/call` and answers with
+	 * `mcp_app_tool_result`; `mcp_app_tool_cancel` when the turn was stopped first.
+	 */
+	| { kind: 'mcp_app_tool_call'; request_id: string; app_id: string; name: string; arguments: Record<string, unknown> }
+	| { kind: 'mcp_app_tool_cancel'; request_id: string }
 	| { kind: 'error'; message: string }
 	| { kind: 'raw'; line: string }
 	| { kind: 'stderr'; line: string }
+	/**
+	 * The agent needs a sign-in before its session opens (runtimes/acpSignIn.ts); the run waits for
+	 * the chat's Sign in (`sign_in` request). `browser`: the agent runs Google's sign-in itself,
+	 * `url` the link it would open; `terminal`: `login` signs it in from a terminal.
+	 */
+	| { kind: 'sign_in'; state: 'required' | 'starting' | 'waiting' | 'verifying' | 'signed_in' | 'failed'; via: 'browser' | 'terminal'; agent: string; url?: string; login?: string[]; error?: string; /** `browser`: the auth method Sign in sends, when not a Google sign-in (`gemini-api-key`, `agent-platform`). */ method?: string }
 	| { kind: 'exit'; code: number | null; signal: number | null; stopped: boolean };
 
 /** Kingu's own tool for publishing an artifact (artifacts.ts): never asked about as an MCP tool. */

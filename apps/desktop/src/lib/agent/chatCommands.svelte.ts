@@ -8,6 +8,7 @@
 //                                     custom agents; ⇧Tab in the input too)
 //   kingu.chat.openModelPicker        ⌘/ while the chat has focus: the composer's model picker
 //   kingu.chat.cancel                 Cancel Chat: stop the running turn (⌘⇧⌫ / ⌃C in the input)
+//   kingu.chat.sendLater              Send Later...: schedule what is typed (VS Code 1.147's sessions.sendLater)
 //   workbench.action.chat.export / .import  Export Chat... (JSON) / Import Chat...
 //   Find in Chat and Previous / Next User Prompt: chatTranscriptCommands.svelte.ts
 //   workbench.action.chat.toggleSpeechToText and the other dictation commands (chatVoice.svelte.ts)
@@ -34,6 +35,8 @@ class ChatSignals {
 	nextMode = $state(0);
 	modelPicker = $state(0);
 	cancel = $state(0);
+	/** Bumped to schedule what is typed (Send Later...). */
+	sendLater = $state(0);
 	/** Bumped to export the shown chat / import one. */
 	exportChat = $state(0);
 	importChat = $state(0);
@@ -152,6 +155,15 @@ export function registerChatCommands(): () => void {
 			title: 'Cancel Chat',
 			category: 'Chat',
 			run: () => chatSignals.cancel++
+		}),
+		commands.register({
+			id: 'kingu.chat.sendLater',
+			title: 'Send Later...',
+			category: 'Chat',
+			run: () => {
+				show();
+				chatSignals.sendLater++;
+			}
 		}),
 		commands.register({
 			id: 'workbench.action.chat.export',

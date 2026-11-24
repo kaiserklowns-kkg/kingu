@@ -11,12 +11,13 @@
 import type { HookState } from './agentHooks';
 import { needsInput } from './agentHooks';
 import { isWorking } from './agentCli';
+import { agentOfProcess } from './agentProfiles';
 import type { TitleTrack } from './agentTitle';
 import type { TaskRuntime, TaskStatus } from './model';
 import { t } from '#lib/i18n/index.ts';
 
 /** One entry of `pty_list`. */
-export type PtyListing = { key: string; alive: boolean; foreground?: { pid: number; name: string } | null };
+export type PtyListing = { key: string; alive: boolean; foreground?: { pid: number; name: string; /** The command line, only for an interpreter (`node`, `python`). */ args?: string[] } | null };
 
 /**
  * One terminal's liveness. `listedAt`: when the PTY list first had the key (a terminal mounted
@@ -85,8 +86,6 @@ export type PaneEvidence = {
 	lastOutput?: number;
 };
 
-/** Program names of agent CLIs that report nothing themselves (no hooks, no title): output timing. */
-const OUTPUT_AGENTS = new Set(['aider', 'qwen', 'amp', 'goose', 'crush', 'kimi', 'auggie']);
 
 /**
  * The agent row of a pane, or null when no agent runs there: hooks that report (and are fresh)
@@ -102,8 +101,9 @@ export function paneRow(p: PaneEvidence, now: number): AgentRow | null {
 	}
 	const t = p.title;
 	if (t?.status) return { id: p.id, agent: t.agent, state: t.status, at: t.at };
-	const name = p.foreground?.toLowerCase();
-	if (name && OUTPUT_AGENTS.has(name)) return { id: p.id, agent: name, state: isWorking(p.lastOutput, now) ? 'working' : 'idle', at: p.lastOutput ?? now };
+	// Any catalog agent in front of the shell that reports nothing itself (no hooks yet, no title): output timing.
+	const name = agentOfProcess(p.foreground);
+	if (name) return { id: p.id, agent: name, state: isWorking(p.lastOutput, now) ? 'working' : 'idle', at: p.lastOutput ?? now };
 	return null;
 }
 

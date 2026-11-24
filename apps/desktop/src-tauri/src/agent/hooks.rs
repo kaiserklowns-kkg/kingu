@@ -178,11 +178,141 @@ pub fn valid_hold(id: &str) -> bool {
   (3..=40).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit() || b == b'-')
 }
 
-/// Claude's PermissionRequest decision (Orca `claudePermissionReply`; never `updatedPermissions`:
-/// an answer covers this one request only).
+/// Claude's PermissionRequest decision for this one request (Orca `claudePermissionReply`).
 pub fn permission_reply(allow: bool, message: &str) -> String {
   let decision = if allow { serde_json::json!({ "behavior": "allow" }) } else { serde_json::json!({ "behavior": "deny", "message": message }) };
   serde_json::json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": decision } }).to_string()
+}
+
+/// "Allow for this session" (Orca's claude-structured-prompt-replies.ts `allowForSession`): allow,
+/// with Claude's own suggestions as session-scoped `updatedPermissions` (`session_grants`).
+pub fn permission_reply_session(updates: Vec<serde_json::Value>) -> String {
+  serde_json::json!({ "hookSpecificOutput": { "hookEventName": "PermissionRequest", "decision": { "behavior": "allow", "updatedPermissions": updates } } }).to_string()
+}
+
+/// Limits of a session grant (permissionAsk.ts has the same): past them nothing wider than once is offered.
+pub const MAX_GRANTS: usize = 20;
+pub const MAX_GRANT_VALUE: usize = 500;
+const MAX_DENY_MESSAGE: usize = 500;
+const DENIED: &str = "Denied in Kingu.";
+
+/// The reason sent with a deny: one line, bounded; Kingu's own wording when there is none.
+pub fn deny_message(message: Option<&str>) -> String {
+  let line = message.unwrap_or_default().split_whitespace().collect::<Vec<_>>().join(" ");
+  if line.is_empty() { DENIED.to_owned() } else { line.chars().take(MAX_DENY_MESSAGE).collect() }
+}
+
+/// What "Allow for this session" grants for a PermissionRequest payload: each grant as the card
+/// shows it (`rule:Bash(npm test:*)`, `dir:/path`, `mode:acceptEdits`; permissionAsk.ts
+/// `sessionGrants` + `grantKey`) and the `updatedPermissions` that apply exactly those. Only
+/// Claude's own `permission_suggestions` of the kinds Kingu can name are kept (allow rules, added
+/// folders, the accept-edits mode), rebuilt field by field with `destination: "session"`, so
+/// nothing is saved to a settings file and no other mode or field passes through. A command that
+/// asks to leave the sandbox (`dangerouslyDisableSandbox`) gets none.
+pub fn session_grants(request: &serde_json::Value) -> (Vec<String>, Vec<serde_json::Value>) {
+  use serde_json::{Value, json};
+  let none = (Vec::new(), Vec::new());
+  if request["tool_input"]["dangerouslyDisableSandbox"] == Value::Bool(true) {
+    return none;
+  }
+  let Some(suggestions) = request["permission_suggestions"].as_array() else { return none };
+  let (mut keys, mut updates) = none.clone();
+  for s in suggestions {
+    match s["type"].as_str() {
+      Some("addRules") if s["behavior"] == "allow" => {
+        let Some(rules) = s["rules"].as_array().filter(|r| !r.is_empty()) else { continue };
+        let named: Option<Vec<(String, Value)>> = rules
+          .iter()
+          .map(|r| {
+            let tool = r["toolName"].as_str().filter(|t| !t.is_empty())?;
+            match &r["ruleContent"] {
+              Value::Null => Some((tool.to_owned(), json!({ "toolName": tool }))),
+              Value::String(c) if c.is_empty() => Some((tool.to_owned(), json!({ "toolName": tool }))),
+              Value::String(c) => Some((format!("{tool}({c})"), json!({ "toolName": tool, "ruleContent": c }))),
+              _ => None,
+            }
+          })
+          .collect();
+        let Some(named) = named else { continue };
+        let (texts, rules): (Vec<String>, Vec<Value>) = named.into_iter().unzip();
+        keys.extend(texts.into_iter().map(|t| format!("rule:{t}")));
+        updates.push(json!({ "type": "addRules", "rules": rules, "behavior": "allow", "destination": "session" }));
+      }
+      Some("addDirectories") => {
+        let Some(dirs) = s["directories"].as_array().filter(|d| !d.is_empty()) else { continue };
+        let Some(dirs) = dirs.iter().map(|d| d.as_str().filter(|d| !d.is_empty())).collect::<Option<Vec<&str>>>() else { continue };
+        keys.extend(dirs.iter().map(|d| format!("dir:{d}")));
+        updates.push(json!({ "type": "addDirectories", "directories": dirs, "destination": "session" }));
+      }
+      Some("setMode") if s["mode"] == "acceptEdits" => {
+        keys.push("mode:acceptEdits".to_owned());
+        updates.push(json!({ "type": "setMode", "mode": "acceptEdits", "destination": "session" }));
+      }
+      _ => {}
+    }
+  }
+  // The page counts a value's length in UTF-16 units.
+  let too_long = |k: &String| k.split_once(':').is_some_and(|(_, v)| v.encode_utf16().count() > MAX_GRANT_VALUE);
+  if keys.len() > MAX_GRANTS || keys.iter().any(too_long) {
+    return none;
+  }
+  (keys, updates)
+}
+
+fn hold_file(file: &Path, hold: &str, ext: &str) -> Result<PathBuf, String> {
+  let base = file.with_extension("");
+  let name = base.file_name().and_then(|n| n.to_str()).ok_or("bad hook file")?;
+  Ok(base.with_file_name(format!("{name}.{hold}.{ext}")))
+}
+
+/// The PermissionRequest payload the hold script appended for `hold`: the line that starts with
+/// its id (the script writes the id first, and a payload is always one line).
+pub fn held_request(file: &Path, hold: &str) -> Result<Option<serde_json::Value>, String> {
+  use std::io::BufRead;
+  if !valid_hold(hold) {
+    return Err("invalid hold id".into());
+  }
+  let prefix = format!("{{\"kingu_hold\":\"{hold}\",");
+  let Ok(f) = std::fs::File::open(file) else { return Ok(None) };
+  let mut reader = std::io::BufReader::new(f);
+  let mut line = Vec::new();
+  let mut found = None;
+  loop {
+    line.clear();
+    if reader.read_until(b'\n', &mut line).map_err(|e| e.to_string())? == 0 {
+      break;
+    }
+    if line.starts_with(prefix.as_bytes()) {
+      found = serde_json::from_slice(&line).ok();
+    }
+  }
+  Ok(found)
+}
+
+/// Answers the waiting hold: once, for the session (`session`: the grants the person was shown),
+/// or deny with a reason. A session answer is given only when the request in the hook file still
+/// yields exactly the grants shown; otherwise it is an error and nothing is answered. False when
+/// the hook no longer waits.
+pub fn answer_permission(file: &Path, hold: &str, allow: bool, session: Option<&[String]>, message: Option<&str>) -> Result<bool, String> {
+  if !valid_hold(hold) {
+    return Err("invalid hold id".into());
+  }
+  if !hold_file(file, hold, "wait")?.exists() {
+    return Ok(false);
+  }
+  let reply = match (allow, session) {
+    (true, Some(shown)) => {
+      let request = held_request(file, hold)?.ok_or("the permission request is no longer on record")?;
+      let (keys, updates) = session_grants(&request);
+      if keys.is_empty() || keys != shown {
+        return Err("the session grant does not match the request".into());
+      }
+      permission_reply_session(updates)
+    }
+    (true, None) => permission_reply(true, ""),
+    (false, _) => permission_reply(false, &deny_message(message)),
+  };
+  answer_hold(file, hold, &reply)
 }
 
 /// Hands the answer to a waiting hold of the session whose hook file is `file`. False when that
@@ -191,16 +321,13 @@ pub fn answer_hold(file: &Path, hold: &str, reply: &str) -> Result<bool, String>
   if !valid_hold(hold) {
     return Err("invalid hold id".into());
   }
-  let base = file.with_extension("");
-  let name = base.file_name().and_then(|n| n.to_str()).ok_or("bad hook file")?;
-  let at = |ext: &str| base.with_file_name(format!("{name}.{hold}.{ext}"));
-  if !at("wait").exists() {
+  if !hold_file(file, hold, "wait")?.exists() {
     return Ok(false);
   }
   // Written whole, then renamed: the script prints the file as soon as it is not empty.
-  let tmp = at("answer.tmp");
+  let tmp = hold_file(file, hold, "answer.tmp")?;
   std::fs::write(&tmp, format!("{reply}\n")).map_err(|e| e.to_string())?;
-  std::fs::rename(&tmp, at("answer")).map_err(|e| e.to_string())?;
+  std::fs::rename(&tmp, hold_file(file, hold, "answer")?).map_err(|e| e.to_string())?;
   Ok(true)
 }
 
@@ -263,11 +390,24 @@ pub async fn agent_hook_settings(app: AppHandle, token: String, program: Option<
   settings_json(&file, &events_for(version), hold)
 }
 
-/// Answers the waiting PermissionRequest hook `hold` of a claude session (the task's quick reply).
-/// False when that hook no longer waits.
+/// Answers the waiting PermissionRequest hook `hold` of a claude session (the task's quick reply):
+/// allow once, allow with grants (`session`: the grants shown, checked against the request on
+/// record; `scope`: `session` (default), `project` or `user`, permission_rules.rs) or deny, with
+/// an optional reason for the agent. A grant is recorded so it can be listed and revoked. False
+/// when that hook no longer waits.
 #[tauri::command]
-pub fn agent_permission_answer(app: AppHandle, token: String, hold: String, allow: bool) -> Result<bool, String> {
-  answer_hold(&file_of(&app, &token)?, &hold, &permission_reply(allow, "Denied in Kingu."))
+pub fn agent_permission_answer(app: AppHandle, token: String, hold: String, allow: bool, session: Option<Vec<String>>, message: Option<String>, scope: Option<String>) -> Result<bool, String> {
+  use super::permission_rules::{Scope, answer_and_record};
+  let file = file_of(&app, &token)?;
+  let scope = match scope.as_deref() {
+    None => None,
+    Some(s) => Some(Scope::parse(s).ok_or("unknown grant scope")?),
+  };
+  match (allow, session.as_deref(), scope) {
+    (true, Some(shown), scope) => answer_and_record(&app, &token, &file, &hold, scope.unwrap_or(Scope::Session), shown),
+    (true, None, Some(_)) => Err("a grant needs the grants shown".into()),
+    _ => answer_permission(&file, &hold, allow, session.as_deref(), message.as_deref()),
+  }
 }
 
 /// The hook file of a new session whose CLI appends to it itself (codex `notify`).
@@ -519,6 +659,87 @@ mod tests {
     assert_eq!(shell_path("/c/agent-hooks/t.jsonl", false), "/c/agent-hooks/t.jsonl");
   }
 
+  fn held(dir: &Path, request: serde_json::Value) -> (PathBuf, String) {
+    let file = dir.join("tok12345.jsonl");
+    let hold = "1795160000-4242";
+    let mut line = request.to_string();
+    line.replace_range(..1, &format!("{{\"kingu_hold\":\"{hold}\","));
+    std::fs::write(&file, format!("{{\"hook_event_name\":\"PreToolUse\"}}\n{line}\n{{\"hook_event_name\":\"Notification\"}}\n")).unwrap();
+    std::fs::write(dir.join(format!("tok12345.{hold}.wait")), b"").unwrap();
+    (file, hold.to_owned())
+  }
+
+  fn answered(dir: &Path, hold: &str) -> Option<serde_json::Value> {
+    serde_json::from_slice(&std::fs::read(dir.join(format!("tok12345.{hold}.answer"))).ok()?).ok()
+  }
+
+  #[test]
+  fn session_grants_keep_only_named_kinds_at_session_scope() {
+    let request = serde_json::json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "npm test" }, "permission_suggestions": [
+      { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test:*" }, { "toolName": "WebFetch" }], "behavior": "allow", "destination": "localSettings", "extra": 1 },
+      { "type": "addDirectories", "directories": ["/w"], "destination": "userSettings" },
+      { "type": "setMode", "mode": "acceptEdits", "destination": "session" },
+      { "type": "setMode", "mode": "bypassPermissions", "destination": "session" },
+      { "type": "addRules", "rules": [{ "toolName": "Bash" }], "behavior": "deny", "destination": "session" },
+      { "type": "removeRules", "rules": [{ "toolName": "Bash" }], "behavior": "deny", "destination": "session" },
+      { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": 7 }], "behavior": "allow", "destination": "session" },
+    ] });
+    let (keys, updates) = session_grants(&request);
+    assert_eq!(keys, ["rule:Bash(npm test:*)", "rule:WebFetch", "dir:/w", "mode:acceptEdits"]);
+    assert_eq!(updates, vec![
+      serde_json::json!({ "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test:*" }, { "toolName": "WebFetch" }], "behavior": "allow", "destination": "session" }),
+      serde_json::json!({ "type": "addDirectories", "directories": ["/w"], "destination": "session" }),
+      serde_json::json!({ "type": "setMode", "mode": "acceptEdits", "destination": "session" }),
+    ]);
+    // Nothing wider for a command that leaves the sandbox, for none suggested, or past the limits.
+    let mut out = request.clone();
+    out["tool_input"]["dangerouslyDisableSandbox"] = true.into();
+    assert!(session_grants(&out).0.is_empty());
+    assert!(session_grants(&serde_json::json!({ "tool_name": "Bash" })).0.is_empty());
+    let long = serde_json::json!({ "permission_suggestions": [{ "type": "addDirectories", "directories": ["x".repeat(MAX_GRANT_VALUE + 1)] }, { "type": "setMode", "mode": "acceptEdits" }] });
+    assert_eq!(session_grants(&long), (vec![], vec![]));
+    let many: Vec<_> = (0..=MAX_GRANTS).map(|i| format!("/d{i}")).collect();
+    assert!(session_grants(&serde_json::json!({ "permission_suggestions": [{ "type": "addDirectories", "directories": many }] })).0.is_empty());
+  }
+
+  #[test]
+  fn a_session_answer_must_match_the_request_on_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let request = serde_json::json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": { "command": "npm test" }, "permission_suggestions": [
+      { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test:*" }], "behavior": "allow", "destination": "localSettings" },
+    ] });
+    let (file, hold) = held(dir.path(), request);
+    assert_eq!(held_request(&file, &hold).unwrap().unwrap()["tool_name"], "Bash");
+    assert!(held_request(&file, "1795160000-1").unwrap().is_none());
+    // Grants other than the ones on record, or none: an error, and the hook stays unanswered.
+    for shown in [vec![], vec!["rule:Bash".to_owned()], vec!["rule:Bash(npm test:*)".to_owned(), "mode:acceptEdits".to_owned()]] {
+      assert!(answer_permission(&file, &hold, true, Some(&shown), None).is_err(), "{shown:?}");
+      assert!(answered(dir.path(), &hold).is_none());
+    }
+    assert!(answer_permission(&file, &hold, true, Some(&["rule:Bash(npm test:*)".to_owned()]), None).unwrap());
+    let reply = answered(dir.path(), &hold).unwrap();
+    assert_eq!(reply["hookSpecificOutput"]["decision"], serde_json::json!({ "behavior": "allow", "updatedPermissions": [
+      { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "npm test:*" }], "behavior": "allow", "destination": "session" },
+    ] }));
+    // A hold that ended takes nothing.
+    assert!(!answer_permission(&file, "1795160000-1", true, Some(&["rule:Bash".to_owned()]), None).unwrap());
+    assert!(answer_permission(&file, "../x", true, None, None).is_err());
+  }
+
+  #[test]
+  fn once_and_deny_answers_carry_no_grant() {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, hold) = held(dir.path(), serde_json::json!({ "hook_event_name": "PermissionRequest", "tool_name": "Bash", "permission_suggestions": [{ "type": "setMode", "mode": "acceptEdits" }] }));
+    assert!(answer_permission(&file, &hold, true, None, None).unwrap());
+    assert_eq!(answered(dir.path(), &hold).unwrap()["hookSpecificOutput"]["decision"], serde_json::json!({ "behavior": "allow" }));
+    // A deny ignores any grants sent with it and tells the agent the reason on one bounded line.
+    assert!(answer_permission(&file, &hold, false, Some(&["mode:acceptEdits".to_owned()]), Some("  use\n pnpm  instead ")).unwrap());
+    assert_eq!(answered(dir.path(), &hold).unwrap()["hookSpecificOutput"]["decision"], serde_json::json!({ "behavior": "deny", "message": "use pnpm instead" }));
+    assert_eq!(deny_message(None), "Denied in Kingu.");
+    assert_eq!(deny_message(Some(" \n ")), "Denied in Kingu.");
+    assert_eq!(deny_message(Some(&"x".repeat(900))).chars().count(), 500);
+  }
+
   /// The real script under /bin/sh: the request lands in the hook file with its hold id, Kingu's
   /// answer comes out on stdout, and nothing is left behind.
   #[cfg(unix)]
@@ -542,6 +763,8 @@ mod tests {
       assert!(start.elapsed().as_secs() < 10, "the request never arrived");
       std::thread::sleep(std::time::Duration::from_millis(50));
     };
+    // The script's line is the one a session answer is checked against.
+    assert_eq!(held_request(&file, &hold).unwrap().unwrap()["tool_name"], "Bash");
     assert!(answer_hold(&file, &hold, &permission_reply(true, "")).unwrap());
     let out = child.wait_with_output().unwrap();
     let printed: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();

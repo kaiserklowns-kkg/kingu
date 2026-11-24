@@ -22,6 +22,7 @@ export const mcp = {
 	'mcp.state.off': 'Off',
 	'mcp.state.untrusted': 'Not trusted',
 	'mcp.state.invalid': 'Invalid',
+	'mcp.state.blocked': 'Blocked by policy',
 	'mcp.state.idle': 'Not started yet',
 	'mcp.source.snap': 'Snap',
 	'mcp.source.user': 'User',

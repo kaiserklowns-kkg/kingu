@@ -998,3 +998,22 @@ div.chat-welcome-view {
 	color: var(--vscode-descriptionForeground);
 	font-variant-numeric: tabular-nums;
 }
+
+/* A side chat (/btw) over the chat: the one the user is not in fades, as an unfocused chat in VS
+   Code's Agents window does, and its requests keep a faded fill so where each starts stays visible
+   (sessionView.css, 95ea6d41d2c: list opacity 0.85, request bubble background at 40%). The chat
+   fades while the side chat has focus; the side chat while it has neither focus nor the pointer. */
+.interactive-list:has(~ .kg-side-chat:focus-within):not(:hover, :focus-within),
+.kg-side-chat:not(:hover, :focus-within) .interactive-list {
+	opacity: 0.85;
+}
+
+.interactive-list:has(~ .kg-side-chat:focus-within):not(:hover, :focus-within) .interactive-item-container.interactive-request .value .rendered-markdown,
+.kg-side-chat:not(:hover, :focus-within) .interactive-list .interactive-item-container.interactive-request .value .rendered-markdown {
+	background-color: color-mix(in srgb, var(--vscode-chat-requestBubbleBackground) 40%, transparent);
+}
+
+:root:not(.kg-reduce-motion) .interactive-list:has(~ .kg-side-chat),
+:root:not(.kg-reduce-motion) .kg-side-chat .interactive-list {
+	transition: opacity 100ms ease-out;
+}

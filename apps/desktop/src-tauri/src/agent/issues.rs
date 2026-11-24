@@ -184,9 +184,9 @@ fn reader(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<S
 
 /// Runs `gh args…` in `dir` without prompts; stdout on success, else a user-facing error.
 pub(crate) fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, String> {
-  let mut cmd = crate::shell_env::command(gh);
+  // The project's GitHub account, when it has one (gh_account.rs).
+  let mut cmd = super::gh_account::command(gh, dir, args.first().map(String::as_str))?;
   cmd
-    .current_dir(dir)
     .args(args)
     .env("GH_PROMPT_DISABLED", "1")
     .env("GH_NO_UPDATE_NOTIFIER", "1")

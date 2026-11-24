@@ -13,8 +13,113 @@ import type { SettingSchema } from '../registry';
 import TOOL_RULES from './chatToolRules.json';
 
 const bool = { type: 'boolean' } as const;
+/**
+ * An entry of `chat.mcp.allowedServers` / `deniedServers`. VS Code's schema also requires exactly
+ * one of the three (`oneOf` of `required`); Kingu's JSON schema has no `required`, and Rust
+ * (mcp_policy.rs `Matcher::parse`) drops an entry that has none or several, as VS Code does.
+ */
+const MCP_SERVER_MATCHER = {
+	type: 'object',
+	additionalProperties: false,
+	properties: {
+		serverName: { type: 'string', minLength: 1 },
+		serverUrl: { type: 'string', minLength: 1 },
+		serverCommand: { type: 'array', minItems: 1, items: { type: 'string' } }
+	}
+} as const;
 
 export const CHAT_SETTINGS: SettingSchema[] = [
+	// The agent sandbox (VS Code: terminalChatAgentToolsConfiguration.ts, `chat.agent.sandbox.*`).
+	// Rust reads these from the user's settings.json only (agent/sandbox.rs) and the agent host
+	// checks them (agent-host sandbox/config.ts), so they are user settings here: a repository
+	// cannot turn the sandbox off for the agent that works in it. macOS (Seatbelt) and Linux (bubblewrap);
+	// on Windows Arkai refuses the command (VS Code's Local harness does not sandbox there).
+	{
+		id: 'chat.agent.sandbox.allowUnsandboxedCommands',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'เมื่อคำสั่งล้มเหลวเพราะ sandbox ให้ agent ขอรันคำสั่งนั้นนอก sandbox ได้ โดย Kingu จะถามคุณก่อนทุกครั้ง แม้ในโหมดอนุญาตทั้งหมด ปิดแล้วทุกคำสั่งต้องรันใน sandbox เท่านั้น (Controls whether agent mode terminal commands can run outside the sandbox after user confirmation when a sandboxed command fails or when sandbox restrictions would block the command.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.credentials.envVars',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: {
+			type: ['object', 'null'],
+			patternProperties: { '^[A-Za-z_][A-Za-z0-9_]*$': { type: 'object', properties: { injectHosts: { type: 'array', items: { type: 'string' } } }, additionalProperties: false } },
+			additionalProperties: false
+		},
+		default: null,
+		description:
+			'ซ่อน environment variable ที่ระบุชื่อไว้จากคำสั่งที่ agent รัน เมื่อเปิด chat.agent.sandbox.enabled ใส่ชื่อตัวแปร ไม่ใช่ค่าความลับ เช่น { "GH_TOKEN": { "injectHosts": [] } } ตัวแปรที่ซ่อนจะไม่ถึงคำสั่งเลย ทั้งใน sandbox และคำสั่งที่คุณอนุญาตให้รันนอก sandbox ถ้าค่านี้เขียนผิดรูปแบบ agent จะไม่เริ่มทำงาน Kingu ไม่ส่งค่ากลับให้ host ใน injectHosts เพราะต้องถอดรหัส HTTPS ด้วย CA ของ Kingu จึงเป็นการซ่อนอย่างเดียว (Mask the named environment variables inside the Copilot Agent Host sandbox. For each variable, list the HTTPS hosts that may receive its value in `injectHosts`. Enter variable names, not secret values.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.enabled',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'off',
+		enum: ['off', 'on'],
+		enumDescriptions: ['ไม่ใช้ sandbox กับคำสั่งของ agent (Disable sandboxing for agent mode tools.)', 'รันคำสั่งของ agent ใน sandbox (Enable sandboxing for agent mode tools.)'],
+		description:
+			'รันคำสั่ง shell ของ agent ในแชตใน sandbox ของระบบ (macOS: Seatbelt, Linux: bubblewrap) เขียนไฟล์ได้เฉพาะในโฟลเดอร์ที่ agent ทำงานและ $TMPDIR ใช้กับ Arkai (Kingu รันคำสั่งเอง) และ Claude (sandbox ของ Claude Agent SDK) Codex ใช้ sandbox ของตัวเองตามโหมดการอนุญาต ส่วน agent แบบ ACP และ CLI ในเทอร์มินัลรันคำสั่งเอง Kingu จึงไม่ได้ครอบให้ รองรับ macOS และ Linux (ต้องติดตั้ง bubblewrap และต้องมี socat เมื่อใช้รายการโดเมน) บน Windows เมื่อเปิดไว้ Arkai จะไม่รันคำสั่ง (เว้นแต่คุณอนุญาตให้รันนอก sandbox) แทนที่จะรันโดยไม่มี sandbox (Controls whether agent mode uses sandboxing to restrict what tools can do. When enabled, tools like the terminal are run in a sandboxed environment to limit access to the system. The Local harness supports sandboxing on Linux and macOS only. The Copilot Agent Host harness uses the SDK runtime\'s sandbox, including on supported Windows hosts.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.fileSystem.userConfiguredPaths',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: {
+			type: 'object',
+			properties: { readwritePaths: { type: 'array', items: { type: 'string' } }, readonlyPaths: { type: 'array', items: { type: 'string' } }, deniedPaths: { type: 'array', items: { type: 'string' } } },
+			additionalProperties: false
+		},
+		default: { readwritePaths: [], readonlyPaths: [], deniedPaths: [] },
+		description:
+			'path เพิ่มเติมของ sandbox: readwritePaths อ่านและเขียนได้ readonlyPaths ห้ามเขียน deniedPaths ห้ามทั้งอ่านและเขียน (denied ชนะ readonly ชนะ readwrite) ใช้ path ตรงตัว ไม่รองรับ glob เริ่มด้วย ~/ ได้ และ path สัมพัทธ์นับจากโฟลเดอร์ที่ agent ทำงาน (Customize file path permissions in the sandbox.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.network.allowLocalNetwork',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'เมื่อปิด chat.agent.sandbox.network.allowNetwork ยังให้คำสั่งใน sandbox ต่อ localhost ได้ (Seatbelt แยกได้แค่ localhost กับทุกที่ จึงหมายถึง loopback เท่านั้น ไม่รวมเครื่องอื่นใน LAN บน Linux หมายถึง loopback ของ sandbox เอง ไม่ใช่ของเครื่อง) (Allow the sandboxed process to reach hosts on the local network. Windows needs this on when a proxy, host rules, or credential masking is used: it reaches the local listener over host loopback, and a sandboxed command will not launch without it. The local proxy checks destination addresses for direct connections. An upstream proxy resolves its own destinations.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.network.allowNetwork',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้คำสั่งใน sandbox ออกเครือข่ายได้ ยังจำกัดด้วย chat.agent.sandbox.network.allowedDomains และ deniedDomains ปิดแล้วคำสั่งต่อได้เฉพาะโดเมนใน allowedDomains (ถ้ามี) (Allow outbound network access in the sandbox (`allowOutbound` in the SDK). Configured allowed and denied network domains still restrict destinations. When disabled, outbound network access is blocked, including for the integrated browser.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.network.allowedDomains',
+		group: 'Agent Chat',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'โดเมนที่คำสั่งใน sandbox ต่อได้ เมื่อมีรายการนี้ คำสั่งออกเครือข่ายได้เฉพาะโดเมนเหล่านี้ (ทั้งเมื่อเปิดและปิด allowNetwork) ผ่าน proxy ของ Kingu ด้วย HTTP(S) เท่านั้น รองรับ *.example.com และ * ค่าที่ไม่ใช่โดเมนทำให้ agent ไม่เริ่มทำงาน deniedDomains ชนะเสมอ (Allowed domains for network access by agent tools (fetch tool, integrated browser) when `#chat.agent.networkFilter#` is enabled. In Copilot Agent Host sessions with sandboxing (`#chat.agent.sandbox.enabled#`) enabled, also restricts the integrated browser when outbound network access (`#chat.agent.sandbox.network.allowNetwork#`) is allowed; an empty allow list adds no sandbox restriction. This list does not enable outbound access. Supports wildcards like `*.example.com`. Outside sandboxing, when both allowed and denied lists are empty, all domains are blocked. Denied domains (see `#chat.agent.sandbox.network.deniedDomains#`) take precedence.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agent.sandbox.network.deniedDomains',
+		group: 'Agent Chat',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'โดเมนที่คำสั่งใน sandbox ต่อไม่ได้ แม้เปิด allowNetwork หรืออยู่ใน allowedDomains เมื่อมีรายการนี้ คำสั่งออกเครือข่ายผ่าน proxy ของ Kingu ด้วย HTTP(S) เท่านั้น รองรับ *.example.com (Denied domains for network access by agent tools (fetch tool, integrated browser) when `#chat.agent.networkFilter#` is enabled. Also applies to the integrated browser in sandboxed Copilot Agent Host sessions (`#chat.agent.sandbox.enabled#`); allowing outbound network access (`#chat.agent.sandbox.network.allowNetwork#`) does not bypass this list. Takes precedence over `#chat.agent.sandbox.network.allowedDomains#`. Supports wildcards like `*.example.com`.)',
+		scope: 'application'
+	},
 	{
 		id: 'chat.agent.thinkingStyle',
 		group: 'Agent Chat',
@@ -190,6 +295,80 @@ export const CHAT_SETTINGS: SettingSchema[] = [
 		default: {},
 		description:
 			'MCP server ใดเรียกโมเดลของแชตได้ (sampling) โดยไม่ต้องถาม คีย์คือชื่อ server (หรือ "<collection>: <server>" แบบ VS Code) allowedDuringChat: true อนุญาต false ไม่อนุญาต ไม่ระบุ: ถามทุกครั้งในแชต ปุ่ม Always / Never บนการ์ดในแชตเขียนค่านี้ ใช้กับ Arkai ซึ่งส่งคำขอไปยังโมเดลของแชตนั้น (Configures which models are exposed to MCP servers for sampling (making model requests in the background).)',
+		scope: 'application'
+	},
+	// Which MCP servers may run (VS Code: chat.shared.contribution.ts, allowedMcpServers.ts). Rust
+	// reads these from the user's settings.json only (agent/mcp_policy.rs); a machine-wide
+	// managed-settings.json (allowedMcpServers, deniedMcpServers, allowManagedMcpServersOnly) wins.
+	{
+		id: 'chat.mcp.access',
+		group: 'Agent Chat',
+		type: 'string',
+		default: 'all',
+		enum: ['none', 'registry', 'all'],
+		enumDescriptions: [
+			'ไม่ให้ใช้ MCP server ใดเลย (No access to MCP servers.)',
+			'เฉพาะ server ใน registry Kingu ไม่มี MCP registry จึงใช้ได้เฉพาะ server ที่ allowlist ที่องค์กรจัดการอนุญาต (Allows access to MCP servers listed in the registry that VS Code is connected to.)',
+			'ใช้ MCP server ที่ติดตั้งได้ทุกตัว (Allow access to any installed MCP server.)'
+		],
+		description:
+			'ควบคุมการเข้าถึง MCP server ที่ติดตั้งไว้ server ที่ถูกบล็อกจะไม่เริ่มทำงาน และหน้า MCP Servers แสดงว่า "ถูกบล็อกโดยนโยบาย" (Controls access to installed Model Context Protocol servers.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.mcp.allowedServers',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: { type: ['array', 'null'], items: MCP_SERVER_MATCHER },
+		default: null,
+		description:
+			'MCP server ที่รันได้ แต่ละรายการคือ { "serverName" }, { "serverUrl" } (ใช้ * ได้) หรือ { "serverCommand": [คำสั่ง, ...อาร์กิวเมนต์] } รายการว่างไม่อนุญาตเลย ไม่ตั้งค่าคือไม่จำกัด deniedServers ชนะเสมอ ถ้า managed-settings.json ของเครื่องมี allowedMcpServers จะใช้ค่านั้นแทน และส่งให้ Claude Code ด้วย (Enterprise-managed allowlist that controls which Model Context Protocol servers may be installed and run. Local servers must match a command entry when any command entries exist; remote servers must match a URL entry when any URL entries exist. Otherwise, servers may match a literal name entry. An empty list allows no servers. If omitted, no allowlist restriction applies.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.mcp.deniedServers',
+		group: 'Agent Chat',
+		type: 'json',
+		schema: { type: ['array', 'null'], items: MCP_SERVER_MATCHER },
+		default: null,
+		description:
+			'MCP server ที่ห้ามรันเสมอ แม้อยู่ใน allowedServers รูปแบบรายการเหมือน allowedServers รวมกับ deniedMcpServers ใน managed-settings.json ของเครื่อง (Enterprise-managed denylist of Model Context Protocol servers. Servers matching any entry are unconditionally blocked from being installed or run, even if they also match the allow list — deny rules always take precedence.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.permissions.assisted.instructions',
+		group: 'Agent Chat',
+		type: 'string',
+		default: '',
+		description:
+			'คำแนะนำเพิ่มให้ตัวตรวจของ Assisted permissions ที่ตัดสินว่าเครื่องมือใดรันได้โดยไม่ถาม มีน้ำหนักเหนือแนวทางเริ่มต้นของตัวตรวจ แต่ข้ามกฎการอนุญาตหรือ sandbox ไม่ได้ และไม่ส่งให้ agent ว่างไว้เพื่อใช้แนวทางเริ่มต้น (Custom instructions for the reviewer that decides which tool calls can run without asking when a Copilot session uses Assisted permissions. They take precedence over the reviewer\'s default guidance but cannot override permission rules, organization policy, or the sandbox, and they are not sent to the agent. Leave empty to use the default guidance.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.mcp.apps.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ MCP server แสดง UI ของตัวเอง (MCP App, ui://) ใต้การเรียกเครื่องมือในแชต Kingu แสดงใน frame ที่แยก origin ไม่มีสิทธิ์เข้าถึงแอปหรือแชตอื่น และการเรียกเครื่องมือจาก App ผ่านกฎการอนุญาตของแชต (Controls whether MCP servers can provide custom UI for tool invocations.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.agentHost.mcpSkills.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ Arkai ใช้ skill ที่ MCP server ให้มา (Skills over MCP, SEP-2640) รายชื่อ skill อยู่ในคำสั่งของโมเดลและเป็นคำสั่ง /<server>:<skill> ในแชต ก่อนโหลด skill ของ server ใด Kingu ถามคุณก่อน และตรวจไฟล์ทุกไฟล์กับ sha256 ที่ server ประกาศไว้ มีผลกับแชตใหม่ (When enabled, Copilot agent sessions discover and use skills served by MCP servers. Changes apply to new sessions.)',
+		scope: 'application'
+	},
+	{
+		id: 'chat.copilot.modelRouter.enabled',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: false,
+		description:
+			'แสดง model router แต่ละตัวใน ~/.agents/model-routers/ (<ชื่อ>.model-router.yaml) เป็นโมเดลในตัวเลือกโมเดลของ Arkai router เลือกโมเดลของ provider นั้นให้แต่ละข้อความตาม route ที่คุณเขียน โดยถามโมเดลแรกของ router ว่า route ไหนเหมาะ (When enabled, Copilot in Agent Host sessions offers each model router in `~/.agents/model-routers/` as a model. A router picks a model for each turn from the routes you write. The built-in `model-router` skill can write and check routers.)',
 		scope: 'application'
 	},
 	{

@@ -11,5 +11,14 @@ export const chatToolRules = {
 	'chatToolRules.assistedApproved': 'Assisted permissions อนุมัติ: {reason}',
 	'chatToolRules.assistedAsked': 'Assisted permissions ขอให้คุณตัดสิน: {reason}',
 	'chatToolRules.assistedUnavailable': 'ตัวตรวจ Assisted ตัดสินไม่ได้ จึงถามคุณ: {reason}',
-	'chatToolRules.approvedByMany': 'อนุมัติเองตามกฎ {rules}'
+	'chatToolRules.approvedByMany': 'อนุมัติเองตามกฎ {rules}',
+	'chatToolRules.ask.sandboxRetry': 'sandbox บล็อกคำสั่งนี้ และรันใหม่ได้เมื่อคุณอนุญาตสิ่งที่คำสั่งต้องใช้',
+	'chatToolRules.sandbox.session': 'อนุญาตในเซสชันนี้',
+	'chatToolRules.sandbox.sessionHint': 'เพิ่มเข้า sandbox ของการรันแชตนี้เท่านั้น แล้วรันคำสั่งใหม่ใน sandbox',
+	'chatToolRules.sandbox.user': 'อนุญาตสำหรับผู้ใช้นี้',
+	'chatToolRules.sandbox.userHint': 'บันทึกลง {setting} ใน user settings แล้วรันคำสั่งใหม่ใน sandbox',
+	'chatToolRules.sandbox.skip': 'ข้าม',
+	'chatToolRules.sandbox.skipHint': 'ไม่เปลี่ยน sandbox และบอก agent ว่าคำสั่งยังถูกบล็อก',
+	'chatToolRules.sandbox.blockedBy': 'ถูกบล็อกโดย',
+	'chatToolRules.sandbox.saveFailed': 'บันทึกลง settings ไม่ได้: {error}'
 } satisfies Record<keyof typeof en, string>;

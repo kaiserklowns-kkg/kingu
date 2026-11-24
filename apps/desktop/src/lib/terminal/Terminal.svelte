@@ -76,7 +76,8 @@
 		onaction,
 		onopenfile,
 		onopenurl,
-		onfocus
+		onfocus,
+		onconnect
 	}: {
 		key: string;
 		slug?: string;
@@ -109,6 +110,9 @@
 		 *  `system`: Shift was held too (Orca: ⇧⌘-click goes to the system browser). */
 		onopenurl?: (url: string, system: boolean) => boolean;
 		onfocus?: () => void;
+		/** How the terminal came up: a new shell started (`run` was typed into it), a live session was
+		 *  re-attached, or no shell could be started (a sleeping pane's owner follows this: ade/paneSleep.svelte.ts). */
+		onconnect?: (how: 'spawned' | 'attached' | 'failed') => void;
 	} = $props();
 	/** Follows a web link: the owner's handler first, else the system's opener. */
 	function followUrl(url: string, system = false) {
@@ -428,8 +432,10 @@
 		invoke<Attached | null>('pty_attach', { key, cols: shown ? t.cols : null, rows: shown ? t.rows : null, onData: channel() })
 			.then((a) => {
 				attachChecked = true;
-				if (a) connected(a);
-				else start();
+				if (a) {
+					connected(a);
+					onconnect?.('attached');
+				} else start();
 			})
 			.catch(failed);
 
@@ -455,7 +461,18 @@
 			const cwd = terminal.cwd?.includes('${') ? import('./newTerminal.ts').then((m) => m.terminalCwdSetting(folder)) : Promise.resolve(terminal.cwd);
 			cwd
 				.then((resolved) => invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal: { ...terminal, cwd: resolved }, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null, reportedCwd: reportedCwd ?? null }))
-				.then((a) => (connected(a), void system.refresh()))
+				.then(
+					(a) => {
+						// After `connected`: it reads `type`, which the owner may change once it hears of the new shell.
+						connected(a);
+						onconnect?.(a.spawned ? 'spawned' : 'attached');
+						void system.refresh();
+					},
+					(e) => {
+						onconnect?.('failed');
+						failed(e);
+					}
+				)
 				.catch(failed);
 		}
 

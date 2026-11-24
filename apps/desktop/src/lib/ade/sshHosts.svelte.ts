@@ -12,6 +12,7 @@ import { adeLayout } from './adeLayout.svelte';
 import { parseDestination, parseForward, type SshTarget } from './sshHosts';
 import { sshProjects } from './sshProjects.svelte';
 import { installSshCredentials } from './sshCredentials.svelte';
+import { sshConnections } from './sshConnections.svelte';
 
 export type TestResult = { success: boolean; error: string | null; millis: number };
 export type Forward = { id: string; target_id: string; local_port: number; remote_host: string; remote_port: number; label: string | null; running: boolean };
@@ -140,6 +141,7 @@ class SshHosts {
 
 	async remove(id: string) {
 		await invoke('ssh_target_remove', { id }).catch((e) => notifications.error(String(e)));
+		sshConnections.forget(id);
 		await this.refresh();
 	}
 

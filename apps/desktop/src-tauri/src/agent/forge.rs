@@ -59,7 +59,7 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>) -> Result<PathBuf, String> {
 /// Runs `gh` in `dir`; its stderr becomes the error.
 fn gh(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
   let bin = review::gh_bin().ok_or_else(issues::gh_missing)?;
-  let out = crate::shell_env::command(&bin).current_dir(dir).env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
+  let out = super::gh_account::command(&bin, dir, args.first().copied())?.env("GH_PROMPT_DISABLED", "1").args(args).output().map_err(|e| format!("gh: {e}"))?;
   if !out.status.success() {
     return Err(format!("gh {}: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&out.stderr).trim()));
   }

@@ -675,7 +675,7 @@ fn finish(planned: Planned, total: usize, write: impl FnOnce(Scope, Vec<ImportCo
 }
 
 #[cfg(target_os = "macos")]
-mod webkit {
+pub(super) mod webkit {
   //! The profile's WKWebsiteDataStore, chosen exactly as wry chooses a tab's store
   //! (`data_store_identifier` on macOS 14+, else the default store). wry's own `set_cookie`
   //! cannot be used: the cookie crate drops a domain cookie's leading dot, which would turn every
@@ -770,6 +770,63 @@ mod webkit {
     }
   }
 
+  /// A cookie of the store as Kingu keeps one (session_cookies.rs).
+  fn from_ns(c: &NSHTTPCookie) -> ImportCookie {
+    let same_site = match c.sameSitePolicy().map(|p| p.to_string().to_ascii_lowercase()).as_deref() {
+      Some("lax") => SameSite::Lax,
+      Some("strict") => SameSite::Strict,
+      _ => SameSite::Unspecified,
+    };
+    ImportCookie { name: c.name().to_string(), value: c.value().to_string(), domain: c.domain().to_string(), path: c.path().to_string(), secure: c.isSecure(), http_only: c.isHTTPOnly(), same_site, expires: None }
+  }
+
+  /// The profile's session cookies (no expiry): the ones WebKit forgets when the app quits.
+  pub fn session_cookies(app: &tauri::AppHandle, store: Option<[u8; 16]>) -> Result<Vec<ImportCookie>, String> {
+    let (tx, rx) = mpsc::channel::<Vec<ImportCookie>>();
+    app
+      .run_on_main_thread(move || {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        // SAFETY: main thread.
+        let jar = unsafe { data_store(store, mtm).httpCookieStore() };
+        let got = RcBlock::new(move |all: NonNull<NSArray<NSHTTPCookie>>| {
+          // SAFETY: WebKit hands a valid array for the duration of the block.
+          let all = unsafe { all.as_ref() };
+          let _ = tx.send(all.iter().filter(|c| c.isSessionOnly()).map(|c| from_ns(&c)).collect());
+        });
+        // SAFETY: main thread; WebKit copies the block.
+        unsafe { jar.getAllCookies(&got) };
+      })
+      .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(10)).map_err(|_| "the browser's cookie store did not answer".to_string())
+  }
+
+  /// Sets the `cookies` the profile's store has no cookie for (same name, domain and path): saved
+  /// session cookies going back never replace what the jar holds now.
+  pub fn add_missing(app: &tauri::AppHandle, store: Option<[u8; 16]>, cookies: Vec<ImportCookie>) -> Result<Outcome, String> {
+    if cookies.is_empty() {
+      return Ok((0, 0, 0));
+    }
+    let (tx, rx) = mpsc::channel::<Outcome>();
+    app
+      .run_on_main_thread(move || {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        // SAFETY: main thread.
+        let jar = unsafe { data_store(store, mtm).httpCookieStore() };
+        let pending = RefCell::new(Some((jar.clone(), cookies, tx)));
+        let got = RcBlock::new(move |all: NonNull<NSArray<NSHTTPCookie>>| {
+          let Some((jar, cookies, tx)) = pending.borrow_mut().take() else { return };
+          // SAFETY: WebKit hands a valid array for the duration of the block.
+          let all = unsafe { all.as_ref() };
+          let live = all.iter().map(|c| super::super::session_cookies::live_key(&c.name().to_string(), &c.domain().to_string(), &c.path().to_string())).collect();
+          set_all(jar, super::super::session_cookies::missing_from(cookies, &live), 0, tx);
+        });
+        // SAFETY: main thread; WebKit copies the block.
+        unsafe { jar.getAllCookies(&got) };
+      })
+      .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(20)).map_err(|_| "the browser's cookie store did not answer".to_string())
+  }
+
   /// Deletes the profile's cookies of the imported domains, then sets the imported ones (in that
   /// order, so a late delete never removes a new cookie).
   pub fn replace(app: &tauri::AppHandle, store: Option<[u8; 16]>, scope: Scope, cookies: Vec<ImportCookie>) -> Result<Outcome, String> {
@@ -792,6 +849,41 @@ mod webkit {
           let next = jar.clone();
           let done = countdown(replaced, move || set_all(next, cookies, replaced, tx));
           for c in &doomed {
+            let done = done.clone();
+            // SAFETY: main thread; the cookie object came from this store.
+            unsafe { jar.deleteCookie_completionHandler(c, Some(&RcBlock::new(done))) };
+          }
+        });
+        // SAFETY: main thread; WebKit copies the block.
+        unsafe { jar.getAllCookies(&got) };
+      })
+      .map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(120)).map_err(|_| "the browser's cookie store did not answer".to_string())
+  }
+
+  /// Deletes every cookie in the profile's store (Orca's `clearProfileSessionCookies`); returns
+  /// how many there were. Other profiles' stores are not touched.
+  pub fn clear_all(app: &tauri::AppHandle, store: Option<[u8; 16]>) -> Result<usize, String> {
+    let (tx, rx) = mpsc::channel::<usize>();
+    app
+      .run_on_main_thread(move || {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        // SAFETY: main thread.
+        let jar = unsafe { data_store(store, mtm).httpCookieStore() };
+        let pending = RefCell::new(Some((jar.clone(), tx)));
+        let got = RcBlock::new(move |all: NonNull<NSArray<NSHTTPCookie>>| {
+          let Some((jar, tx)) = pending.borrow_mut().take() else { return };
+          // SAFETY: WebKit hands a valid array for the duration of the block.
+          let all: Vec<Retained<NSHTTPCookie>> = unsafe { all.as_ref() }.iter().collect();
+          let n = all.len();
+          if n == 0 {
+            let _ = tx.send(0);
+            return;
+          }
+          let done = countdown(n, move || {
+            let _ = tx.send(n);
+          });
+          for c in &all {
             let done = done.clone();
             // SAFETY: main thread; the cookie object came from this store.
             unsafe { jar.deleteCookie_completionHandler(c, Some(&RcBlock::new(done))) };
@@ -840,6 +932,31 @@ fn import(app: &AppHandle, profile: &str, from: ImportFrom) -> Result<Summary, F
 #[cfg(not(target_os = "macos"))]
 fn import(_app: &AppHandle, _profile: &str, _from: ImportFrom) -> Result<Summary, Failure> {
   Err(Failure::new("unsupported"))
+}
+
+/// Settings' Clear cookies… for one profile (Orca fd60d2198, `browser-cookie-clear-ipc.ts`
+/// `browser:session:clearCookies`): every cookie in the Kingu browser profile `profile` ("" is the
+/// shared default store) goes, and so does its saved session-cookie snapshot, so a restart can't
+/// bring them back. Other profiles keep theirs. Returns how many cookies were removed.
+#[tauri::command]
+pub async fn browser_cookie_clear(app: AppHandle, profile: String) -> Result<usize, String> {
+  // Orca's targetId: a renderer-named profile, bounded; the store is derived from it here.
+  if profile.len() > 256 {
+    return Err("invalid profile".into());
+  }
+  tauri::async_runtime::spawn_blocking(move || clear(&app, profile.trim())).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "macos")]
+fn clear(app: &AppHandle, profile: &str) -> Result<usize, String> {
+  let n = webkit::clear_all(app, super::profile_store(profile))?;
+  super::session_cookies::forget(app, profile);
+  Ok(n)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clear(_app: &AppHandle, _profile: &str) -> Result<usize, String> {
+  Err("unsupported".into())
 }
 
 #[cfg(test)]

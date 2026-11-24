@@ -33,6 +33,7 @@
 	import { paneProgram } from './paneProgram.svelte';
 	import { withPercent } from './programStatus';
 	import { automations } from './automations.svelte.ts';
+	import { sessionInbox } from './sessionInbox.svelte.ts';
 	import { repoDialog } from '#lib/workbench/repoDialog.svelte.ts';
 	import { scm } from '#lib/workbench/scm.svelte.ts';
 	import { adeTasks } from './tasks.svelte';
@@ -898,12 +899,14 @@
 			</span>
 		</button>
 		<InboxBell navClass="{NAV} {NAV_OFF} w-full" />
-		{#each ([{ page: 'now', icon: 'agent', label: 'Now' }, { page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
+		{#each ([{ page: 'now', icon: 'agent', label: 'Now' }, { page: 'inbox', icon: 'bellDot', label: 'Inbox' }, { page: 'board', icon: 'menu', label: 'Tasks' }, { page: 'automations', icon: 'clock', label: 'Automations' }, { page: 'issues', icon: 'bug', label: 'Issues' }] as const).filter((n) => (n.page !== 'inbox' || sessionInbox.enabled) && (n.page !== 'automations' || automations.featureEnabled) && settings.get<boolean>(n.page === 'automations' ? 'kingu.sidebar.showAutomations' : n.page === 'issues' ? 'kingu.sidebar.showIssues' : '') !== false) as n (n.page)}
 			{@const on = adeLayout.page === n.page}
 			<button class="{NAV} {on ? NAV_ON : NAV_OFF}" aria-current={on ? 'page' : undefined} disabled={n.page !== 'board' && !workspace.root} onclick={() => adeLayout.togglePage(n.page)}>
 				<span class={on ? '' : 'text-(--vscode-sideBar-foreground)/30'}><Icon name={n.icon} size={16} /></span>
 				<span class="flex-1">{n.label}</span>
-				{#if n.page === 'now' && adeTasks.counts.needsInput}
+				{#if n.page === 'inbox' && sessionInbox.count}
+					<span class="rounded-full bg-(--vscode-badge-background) px-1.5 text-[10px] leading-4 text-(--vscode-badge-foreground) tabular-nums" title={t('inbox.badge', { count: sessionInbox.count })}>{sessionInbox.count}</span>
+				{:else if n.page === 'now' && adeTasks.counts.needsInput}
 					<span class="rounded-full bg-(--vscode-editorWarning-foreground) px-1.5 text-[10px] leading-4 font-semibold text-black" title={t('legacyAde.adeSidebar.waitingForYou')}>{adeTasks.counts.needsInput}</span>
 				{:else if n.page === 'automations' && automations.activeCount}
 					<span class="text-[11px] {MUTED}" title={automations.globalEnabled ? t('legacyAde.adeSidebar.automationEnabled') : t('legacyAde.adeSidebar.automationsStopped')}>{automations.globalEnabled ? automations.activeCount : t('legacyAde.adeSidebar.stopped')}</span>

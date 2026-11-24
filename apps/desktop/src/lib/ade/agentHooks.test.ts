@@ -114,8 +114,8 @@ describe('status hooks of other CLIs (Orca provider mappings)', () => {
 
 describe('claude argv', () => {
 	test('start: our session id and the hooks before the prompt', () => {
-		expect(claudeStart(['claude'], 'งาน', 'sid', '{"hooks":{}}')).toEqual(['claude', '--session-id', 'sid', '--settings', '{"hooks":{}}', 'งาน']);
-		expect(claudeStart(['claude'], 'งาน', 'sid', null)).toEqual(['claude', '--session-id', 'sid', 'งาน']);
+		expect(claudeStart(['claude'], 'งาน', 'sid', '{"hooks":{}}')).toEqual(['claude', '--session-id', 'sid', '--settings', '{"hooks":{}}', '--', 'งาน']);
+		expect(claudeStart(['claude'], 'งาน', 'sid', null)).toEqual(['claude', '--session-id', 'sid', '--', 'งาน']);
 	});
 	test('resume this session when known, else the latest', () => {
 		expect(claudeResume(['claude'], 'sid', null)).toEqual(['claude', '--resume', 'sid']);
@@ -170,6 +170,24 @@ describe('the blocking PermissionRequest hold', () => {
 		expect(liveHold(h, 1000 + HOLD_BUDGET_MS)).toBeUndefined();
 		h = applyHook(h, { hook_event_name: 'PostToolUse', tool_name: 'Bash' }, 3000);
 		expect(h.hold).toBeUndefined();
+	});
+
+	test('a permission request says what is asked, until the prompt closes', () => {
+		const ev = { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'npm test' }, permission_suggestions: [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }], kingu_hold: '1795160000-42' };
+		let h = applyHook(initialHookState(0), ev, 1000);
+		expect(h.request).toEqual({ tool: 'Bash', detail: 'npm test', grants: [{ kind: 'mode', value: 'acceptEdits' }] });
+		// Claude's notification about the same prompt keeps it; the next request replaces it.
+		h = applyHook(h, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }, 2000);
+		expect(h.request?.detail).toBe('npm test');
+		h = applyHook(h, { hook_event_name: 'PermissionRequest', tool_name: 'Edit', tool_input: { file_path: '/w/a.ts' } }, 2500);
+		expect(h.request).toEqual({ tool: 'Edit', detail: '/w/a.ts', grants: [] });
+		h = applyHook(h, { hook_event_name: 'PostToolUse', tool_name: 'Edit' }, 3000);
+		expect(h.request).toBeUndefined();
+		// Other CLIs' requests carry their detail too; a turn end clears it.
+		let c = applyHook(initialHookState(0), { kingu_hook: 'codex', event: 'PermissionRequest', payload: { tool_name: 'Bash', tool_input: { command: 'ls' } } }, 1);
+		expect(c.request).toEqual({ tool: 'Bash', detail: 'ls', grants: [] });
+		c = applyHook(c, { type: 'agent-turn-complete' }, 2);
+		expect(c.request).toBeUndefined();
 	});
 
 	test('a permission request without a hold (async or older settings) has none', () => {

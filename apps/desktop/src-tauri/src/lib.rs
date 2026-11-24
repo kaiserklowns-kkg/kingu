@@ -57,6 +57,7 @@ mod snap_lsp;
 mod snap_sandbox;
 mod snap_service;
 mod snap_view;
+mod mcp_app;
 mod snap_secrets;
 mod mcp_tools;
 mod snippets;
@@ -78,11 +79,17 @@ mod windows;
 mod workspace;
 mod workspace_trust;
 mod workspace_cleanup;
+mod workspace_cleanup_chats;
 mod workspace_space;
 mod sparse_presets;
 mod bitbucket;
 mod link_preview;
 mod localhost_labels;
+mod ssh_agents;
+mod ssh_browser_relay;
+mod ssh_agent_install;
+mod ssh_holder;
+mod ssh_host_hooks;
 mod ssh_hosts;
 mod ssh_projects;
 mod ssh_remote;
@@ -628,7 +635,8 @@ async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>)
     all.extend(sessions::list_grok(&root, &dirs, &grok_home.join("sessions"), limit));
     // Hermes (`$HERMES_HOME`, else ~/.hermes) and jcode (`$JCODE_HOME`, else ~/.jcode): `sessions/session_*.json` (Orca's scanners/hermes, jcode).
     let env_dir = |k: &str| std::env::var(k).ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute());
-    all.extend(sessions::list_hermes(&root, &env_dir("HERMES_HOME").unwrap_or_else(|| home.join(".hermes")).join("sessions"), limit));
+    // Hermes: its `state.db` stores (the root's and each profile's), else the older snapshots.
+    all.extend(sessions::list_hermes_home(&root, &env_dir("HERMES_HOME").unwrap_or_else(|| home.join(".hermes")), limit));
     all.extend(sessions::list_jcode(&root, &env_dir("JCODE_HOME").unwrap_or_else(|| home.join(".jcode")).join("sessions"), limit));
     // OpenClaw (`$OPENCLAW_STATE_DIR` or ~/.openclaw, and the legacy ~/.clawdbot: agents/<agent>/sessions) and Pi (`$PI_CODING_AGENT_DIR`, else ~/.pi/agent/sessions); Orca's message-graph scanners.
     all.extend(sessions::list_openclaw(&root, &[env_dir("OPENCLAW_STATE_DIR").unwrap_or_else(|| home.join(".openclaw")), home.join(".clawdbot")], limit));
@@ -857,6 +865,18 @@ fn pty_spawn(
   let shell_args = injected_args.as_deref().or(shell_args);
   // The `kingu` command on PATH (cli_server.rs).
   cli_server::terminal_env(&mut env, &unset);
+  // Agent CLIs Kingu installed itself, last on PATH (agent/managed_cli).
+  agent::managed_cli::terminal_env(&mut env, &unset);
+  // A multi-line command (an SSH project's agent loop) is not typed line by line: its script goes
+  // in the environment and a short line runs it (pty.rs `run_through_env`).
+  let run = match run.as_deref().and_then(pty::run_through_env) {
+    Some((argv, script)) => {
+      unset.retain(|k| k != pty::RUN_ENV);
+      env.insert(pty::RUN_ENV.into(), script);
+      Some(argv)
+    }
+    None => run,
+  };
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, shell_args, &unset, clean_env, pty::channel_sink(on_data))?;
   ptys.own(&key, ws.label());
   if attached.spawned && pane_hooks {
@@ -868,6 +888,16 @@ fn pty_spawn(
     log::info!("terminal {key} re-attached ({cols}x{rows})");
   }
   Ok(attached)
+}
+
+/// The job in front of terminal `key`'s shell, for pane hibernation (Orca's SleepingAgentSessionRecord
+/// keeps the agent's folder and launch): its pid, folder, command line, and whether that folder is
+/// the shell's own. `None` at the prompt, when the terminal is gone, and where the platform does not
+/// report a foreground job (Windows).
+#[tauri::command(async)]
+fn pty_job_info(ptys: State<'_, pty::Ptys>, key: String) -> Result<Option<pty::JobInfo>, String> {
+  pty::validate_key(&key)?;
+  Ok(ptys.job_info(&key))
 }
 
 /// `terminal.integrated.*` for a new shell, read by the webview from the user's settings
@@ -1497,6 +1527,7 @@ pub fn run() {
     .manage(Workspaces::default())
     .manage(window::CloseGuard::default())
     .manage(pty::Ptys::default())
+    .manage(Arc::new(ssh_agent_install::RemoteInstalls::default()))
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(agent::supervisor::Supervisor::default()))
@@ -1513,11 +1544,14 @@ pub fn run() {
     .manage(DroppedPaths::default())
     .manage(artifacts::preview::Previews::default())
     .manage(snap_view::SnapViews::default())
+    .manage(mcp_app::McpApps::default())
     .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
     .register_uri_scheme_protocol(floating_browser::SCHEME, floating_browser::handle)
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .register_uri_scheme_protocol(snap_view::SCHEME, snap_view::handle)
+    // MCP Apps (mcp_app.rs): a tool's ui:// page, served only to its sandboxed chat frame.
+    .register_uri_scheme_protocol(mcp_app::SCHEME, mcp_app::handle)
     .setup(|app| {
       let config_dir = app.path().app_config_dir()?;
       // application.shellEnvironmentResolutionTimeout (user settings only: it is read before any folder opens).
@@ -1527,6 +1561,8 @@ pub fn run() {
       net_proxy::init(&config_dir);
       // Temporary profiles do not outlive the app (VS Code's transient profiles).
       user_profiles::remove_unused_transient(&config_dir, &[]);
+      // Snap and skill staging a quit or crash mid-fetch left behind, 30 s after start-up.
+      snap_install::sweep_stale_staging(app.handle());
       app.manage(settings::ConfigWatcher::default());
       if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
         log::warn!("settings watcher: {e}");
@@ -1559,8 +1595,10 @@ pub fn run() {
       team::install(app)?;
       accounts::install(app)?;
       ssh_hosts::install(app)?;
+      app.manage(ssh_browser_relay::Guard);
       mobile::install(app)?;
       cli_server::install(app)?;
+      agent::managed_cli::install(app.handle())?;
       git::load_git_path(&app.path().app_config_dir()?);
       // A git operation waiting for another one in the same repository (status bar).
       let queue_events = app.handle().clone();
@@ -1721,10 +1759,18 @@ pub fn run() {
       floating_browser::floating_browser_close,
       floating_browser::cookies::browser_cookie_sources,
       floating_browser::cookies::browser_cookie_import,
+      floating_browser::cookies::browser_cookie_clear,
       floating_browser::floating_browser_zoom,
       floating_browser::floating_browser_find,
       floating_browser::floating_browser_devtools,
+      floating_browser::agent::agent_browser_share,
+      floating_browser::agent::agent_browser_stop,
+      floating_browser::agent::agent_browser_pages,
+      floating_browser::agent::agent_browser_log,
+      floating_browser::agent::agent_browser_replay,
+      floating_browser::agent::floating_browser_capture,
       floating_browser::floating_browser_pick,
+      floating_browser::floating_browser_discardable,
       floating_browser::floating_browser_reveal_download,
       floating_note_read,
       floating_note_write,
@@ -1792,6 +1838,8 @@ pub fn run() {
       pty::pty_daemon_status,
       pty::pty_daemon_restart,
       pty::pty_foreground,
+      pty_job_info,
+      pty::pty_stop_job,
       terminal_links::terminal_link_target,
       shell_integration::terminal_shell_history,
       terminal_links::terminal_open_url,
@@ -1801,6 +1849,9 @@ pub fn run() {
       workspace_cleanup::workspace_cleanup_scan,
       workspace_cleanup::workspace_cleanup_inspect,
       workspace_cleanup::workspace_cleanup_sizes,
+      workspace_cleanup_chats::workspace_cleanup_chat_sweep,
+      workspace_cleanup_chats::workspace_cleanup_chat_forget,
+      workspace_cleanup_chats::workspace_cleanup_codex_history_usage,
       workspace_space::workspace_space_analyze,
       workspace_space::workspace_space_cancel,
       sparse_presets::sparse_presets_list,
@@ -1823,6 +1874,23 @@ pub fn run() {
       ssh_hosts::ssh_config_hosts,
       ssh_hosts::ssh_import_config,
       ssh_hosts::ssh_test_connection,
+      ssh_hosts::ssh_connect,
+      ssh_hosts::ssh_disconnect,
+      ssh_hosts::ssh_keepalive,
+      ssh_hosts::ssh_forwards_restart,
+      ssh_holder::ssh_holder_probe,
+      ssh_holder::ssh_holder_install,
+      ssh_holder::ssh_holder_sessions,
+      ssh_holder::ssh_holder_end,
+      ssh_holder::ssh_holder_reattach,
+      ssh_holder::ssh_remote_hold_setup,
+      ssh_holder::ssh_remote_permission_answer,
+      ssh_holder::ssh_holder_prune,
+      ssh_browser_relay::ssh_browser_relays,
+      ssh_browser_relay::ssh_browser_relay_stop,
+      ssh_host_hooks::ssh_remote_status_hooks,
+      ssh_host_hooks::ssh_remote_status_hooks_hosts,
+      ssh_host_hooks::ssh_remote_status_hooks_remove,
       ssh_hosts::ssh_terminal_command,
       ssh_hosts::ssh_forwards_list,
       ssh_hosts::ssh_forward_add,
@@ -1840,6 +1908,11 @@ pub fn run() {
       ssh_projects::ssh_project_worktree_add,
       ssh_projects::ssh_project_worktree_remove,
       ssh_projects::ssh_project_terminal,
+      ssh_agents::ssh_remote_agents,
+      ssh_agent_install::ssh_agent_installs,
+      ssh_agent_install::ssh_agent_install,
+      ssh_agent_install::ssh_agent_install_cancel,
+      ssh_agent_install::ssh_agent_remove,
       ssh_remote::ssh_remote_dir,
       ssh_remote::ssh_remote_read,
       ssh_remote::ssh_remote_write,
@@ -1895,12 +1968,21 @@ pub fn run() {
       agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
       agent::hooks::agent_permission_answer,
+      agent::permission_rules::agent_permission_scopes,
+      agent::permission_rules::agent_permission_grants,
+      agent::permission_rules::agent_permission_revoke,
       agent::hooks::agent_hook_file,
       agent::hooks::agent_run_dir,
       agent::hooks::agent_run_files_write,
       agent::cli::agent_cli_found,
       agent::runtimes::agent_runtimes,
+      agent::managed_cli::managed_cli_list,
+      agent::managed_cli::managed_cli_status,
+      agent::managed_cli::managed_cli_install,
+      agent::managed_cli::managed_cli_cancel,
+      agent::managed_cli::managed_cli_remove,
       agent::arkai::arkai_providers,
+      agent::arkai::arkai_model_routers,
       agent::arkai::arkai_set_key,
       agent::arkai::arkai_delete_key,
       agent::hooks::agent_hook_read,
@@ -1915,7 +1997,21 @@ pub fn run() {
       agent::agent_answer_permission,
       agent::mcp_chat::agent_answer_mcp,
       agent::mcp_chat::agent_mcp_query,
+      mcp_app::mcp_app_open,
+      mcp_app::mcp_app_close,
+      mcp_app::agent_mcp_app_request,
+      mcp_app::agent_mcp_app_tools,
+      mcp_app::agent_mcp_app_tool_result,
       agent::agent_interrupt,
+      agent::agent_sign_in,
+      agent::antigravity::antigravity_chat_route,
+      agent::antigravity_auth::antigravity_chat_auth_status,
+      agent::antigravity_auth::antigravity_api_key_save,
+      agent::antigravity_auth::antigravity_api_key_clear,
+      agent::antigravity_auth::antigravity_chat_auth_detect,
+      agent::antigravity_auth::antigravity_chat_stop_live,
+      agent::gh_account::gh_accounts,
+      agent::gh_account::gh_account_validate,
       agent::agent_stop,
       agent::agent_set_options,
       agent::chats_load,
@@ -1923,6 +2019,7 @@ pub fn run() {
       agent::slash_commands::chat_slash_commands,
       agent::chats_save,
       agent::chat_transcript_load,
+      agent::chat_cut_off,
       agent::chat_transcript_delete,
       agent::chat_context_git_diff,
       agent::chat_export,
@@ -2253,6 +2350,8 @@ pub fn run() {
         }
       }
       if let tauri::RunEvent::Exit = event {
+        // Not waited for: a Snap or skill git fetch stops; the start-up sweep takes its folder.
+        snap_install::stop_git_for_shutdown();
         app.state::<lsp::Servers>().stop_all();
         app.state::<snap_service::Services>().stop_all();
         app.state::<dap::Sessions>().stop_all();

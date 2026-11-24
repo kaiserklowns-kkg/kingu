@@ -35,6 +35,8 @@ const ASK_REASON = {
 	delete: 'chatExtras.ask.delete',
 	protected: 'chatExtras.ask.protected',
 	mcp: 'chatExtras.ask.mcp',
+	unsandboxed: 'chatExtras.ask.unsandboxed',
+	sandbox_retry: 'chatToolRules.ask.sandboxRetry',
 	edit_rule: 'chatToolRules.ask.editRule'
 } as const;
 

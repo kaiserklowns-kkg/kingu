@@ -22,6 +22,7 @@ export const mcp = {
 	'mcp.state.off': 'ปิด',
 	'mcp.state.untrusted': 'ยังไม่เชื่อถือ',
 	'mcp.state.invalid': 'ไม่ถูกต้อง',
+	'mcp.state.blocked': 'ถูกนโยบายบล็อก',
 	'mcp.state.idle': 'ยังไม่ได้เริ่ม',
 	'mcp.source.snap': 'Snap',
 	'mcp.source.user': 'ของคุณ',

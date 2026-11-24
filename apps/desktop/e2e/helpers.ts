@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { mockTauri, READY } from './mock';
+import { mockTauri, READY, type MockOpts } from './mock';
 import type { SetupReport } from '../src/lib/setup/setup';
 
 /** Mock Tauri, load the workbench and close the welcome tour if it opened. */
@@ -7,9 +7,17 @@ export async function openApp(
 	page: Page,
 	setup: SetupReport = READY,
 	settings: Record<string, unknown> = {},
-	opts: { probeFail?: boolean; live?: boolean; worktrees?: unknown[]; jira?: boolean } = {}
+	opts: MockOpts = {}
 ) {
 	await mockTauri(page, setup, '/tmp/kingu-e2e', settings, opts);
+	// The first-run tour can open after the Escape below (it raced on a cold page): mark it seen.
+	await page.addInitScript(() => {
+		try {
+			localStorage.setItem('kingu.welcome.seen', '1');
+		} catch {
+			// The Escape below still closes it.
+		}
+	});
 	await page.goto('/');
 	await expect(page.getByRole('banner')).toBeVisible({ timeout: 20_000 });
 	await page.keyboard.press('Escape');

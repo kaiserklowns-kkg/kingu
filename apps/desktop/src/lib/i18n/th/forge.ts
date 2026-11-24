@@ -232,6 +232,7 @@ export const forge = {
 	'forge.checks.statusLine': 'สถานะ: {status}',
 	'forge.checks.noDetails': 'check นี้ไม่มีรายละเอียดให้ดูในนี้',
 	'forge.checks.loadingDetails': 'กำลังโหลดรายละเอียดของ check…',
+	'forge.checks.loadingReview': 'กำลังโหลดรายละเอียดการรีวิว…',
 	'forge.checks.logExcerpt': 'ส่วนหนึ่งของ log',
 	'forge.checks.noChecks': 'ยังไม่ได้ตั้งค่า checks',
 	'forge.checks.comments': 'คอมเมนต์',

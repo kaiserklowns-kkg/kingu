@@ -11,6 +11,8 @@ export type TerminalTab = {
 	n: number;
 	title?: string;
 	run?: string[];
+	/** The agent CLI launch `run` is (its profile and argv without a prompt), when Kingu opened the tab for an agent: a hibernated pane resumes with it (hibernation.ts). */
+	launch?: { agent: string; argv: string[] };
 	/** A shell line typed into the new shell as is (a quick command: pipes, `&&`, aliases work). */
 	type?: string;
 	/** `type` stays on the prompt without Enter (Orca's Insert run mode). */

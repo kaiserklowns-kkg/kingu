@@ -24,6 +24,12 @@ describe('Workspace Cleanup settings', () => {
 		expect(validate(SCHEMA.get(PROJECT)!, { mode: 'delete-everything' })).toBeUndefined();
 	});
 
+	test('deleting the chat history of deleted workspaces is off by default and never set by a repository', () => {
+		const id = 'kingu.workspaceCleanup.deleteChatHistory';
+		expect([SCHEMA.get(id)?.default, SCHEMA.get(id)?.scope]).toEqual([false, 'application']);
+		expect(settingProblems({ [id]: true }, 'workspace').some((p) => p.id === id)).toBe(true);
+	});
+
 	test("a repository's own .kingu/settings.json cannot turn cleanup on", () => {
 		const on = { ...getDefaultWorkspaceCleanupRules(), merged: { enabled: true } };
 		const problems = settingProblems({ [RULES]: on, [PROJECT]: { mode: 'custom', rules: on } }, 'workspace');

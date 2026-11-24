@@ -14,9 +14,11 @@
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { openUrl } from '#lib/terminal/pty.ts';
 	import { KNOWN_BINS, PROFILES, profileOf, type AgentProfile } from '#lib/ade/agentProfiles.ts';
-	import { agentArgsSetting, agentEnvSetting, cmdOverride, parseCliCommand, YOLO_ARGS } from '#lib/ade/agentCli.ts';
+	import { agentArgsSetting, agentEnvSetting, cliPermissions, cmdOverride, parseCliCommand, permissionArgs, permissionEnv, YOLO_ARGS } from '#lib/ade/agentCli.ts';
 	import { agentCatalog } from '#lib/agent/agentCatalog.ts';
 	import { agentRuntimes } from '#lib/agent/runtimes.svelte.ts';
+	import { managedCli } from '#lib/agent/managedCli.svelte.ts';
+	import ManagedCliRow from '#lib/agent/ManagedCliRow.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import { settings } from '../settings.svelte';
 	import { SCHEMA } from '../registry';
@@ -56,6 +58,7 @@
 	onMount(() => {
 		void detect();
 		void agentRuntimes.load();
+		void managedCli.load();
 	});
 
 	// CLI profile id → the chat runtime of the same id (Claude always; the others once found on PATH).
@@ -94,15 +97,18 @@
 	}
 	const chips = $derived(PROFILES.filter((p) => (detected(p) && isEnabled(p)) || isDefault(p)));
 
-	const permissions = $derived(settings.get<string>('kingu.agent.cliPermissions') === 'yolo' ? 'yolo' : 'manual');
+	const permissions = $derived(cliPermissions((k) => settings.get(k)));
 
 	// What the row shows under the name: the program (an override struck through the default), the
 	// arguments (yours, else the bypass flags Yolo adds) and the env names.
 	const overrides = $derived(settings.get<Record<string, unknown>>('kingu.agent.cmdOverrides') ?? {});
 	const program = (p: AgentProfile) => cmdOverride(overrides, p.id);
 	const args = (p: AgentProfile) => (settings.get<string>(agentArgsSetting(p.id)) ?? '').trim();
-	const shownArgs = (p: AgentProfile) => args(p) || (permissions === 'yolo' ? (YOLO_ARGS[p.id] ?? []).join(' ') : '');
-	const envNames = (p: AgentProfile) => Object.keys(settings.get<Record<string, unknown>>(agentEnvSetting(p.id)) ?? {});
+	const shownArgs = (p: AgentProfile) => args(p) || permissionArgs(p.id, permissions).join(' ');
+	// Yours, and the ones the permission mode adds (Goose's GOOSE_MODE under Yolo) unless you set that name.
+	const envNames = (p: AgentProfile) => [
+		...new Set([...Object.keys(settings.get<Record<string, unknown>>(agentEnvSetting(p.id)) ?? {}), ...permissionEnv(p.id, permissions).map((a) => a.slice(0, a.indexOf('=')))])
+	];
 
 	function setProgram(p: AgentProfile, value: string) {
 		const next = { ...overrides };
@@ -167,11 +173,18 @@
 						<Icon name="openExternal" size={14} />
 					</button>
 				{:else}<span></span>{/if}
-				<button class={ICON_BTN} aria-expanded={expanded} aria-label={t('settings.agents.customize')} title={t('settings.agents.customize')} onclick={() => (open = expanded ? null : p.id)}>
+				<!-- Named after its agent, so each row's chevron is distinct in a list of buttons (Orca 1a9651f51). -->
+				<button class={ICON_BTN} aria-expanded={expanded} aria-label={t(expanded ? 'settings.agents.hideAgentCommand' : 'settings.agents.customizeAgent', { agent: p.title })} title={t('settings.agents.customize')} onclick={() => (open = expanded ? null : p.id)}>
 					<span class={['grid place-items-center transition-transform', expanded && 'rotate-180']}><Icon name="chevronDown" size={14} /></span>
 				</button>
 			</div>
 		</div>
+		<!-- An agent Kingu can install itself: what runs now, Install / Remove (agent/managed_cli). -->
+		<ManagedCliRow agent={p.id} onchanged={() => void detect()} />
+		{#if p.id === 'antigravity'}
+			<!-- Kingu's ACP server for Antigravity chats signed in through Kingu (agent/antigravity.rs). -->
+			<ManagedCliRow agent="antigravity-server" title={t('managedCli.serverLabel')} hint={t('managedCli.serverHint')} onchanged={() => void detect()} />
+		{/if}
 		{#if expanded}
 			{@const envSchema = SCHEMA.get(agentEnvSetting(p.id))}
 			<div class="mt-3 space-y-2 pl-10">
@@ -234,6 +247,7 @@
 			label={t('settings.agents.permissions')}
 			options={[
 				{ value: 'manual', label: t('settings.agents.manual') },
+				{ value: 'auto', label: t('settings.agents.autoMode') },
 				{ value: 'yolo', label: t('settings.agents.yolo') }
 			]}
 			onchange={(v) => void save('kingu.agent.cliPermissions', v === 'manual' ? undefined : v)}

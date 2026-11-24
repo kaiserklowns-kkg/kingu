@@ -5,6 +5,11 @@
 	import { sshHosts as ssh } from './sshHosts.svelte';
 	import { sshProjects } from './sshProjects.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
+	import { sshConnections } from './sshConnections.svelte';
+	import { canConnect, connectVerb, statusKey, isConnecting } from './sshConnection';
+	import { sshHolders } from './sshHolders.svelte';
+	import { sshAgentInstalls } from './sshAgentInstalls.svelte';
+	import SshAgentsPanel from './SshAgentsPanel.svelte';
 
 	function onkeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
@@ -33,19 +38,36 @@
 				{@const r = ssh.tests[t.id]}
 				{@const fws = ssh.forwards.filter((f) => f.target_id === t.id)}
 				{@const panel = ssh.panels[t.id]}
+				{@const conn = sshConnections.state(t.id)}
+				{@const choice = sshHolders.consent(t.id)}
 				<li class="mx-1.5 rounded-md px-3 py-2 hover:bg-(--vscode-list-hoverBackground)/60">
 					<div class="flex items-center gap-2">
 						<span class={['size-2 shrink-0 rounded-full', r === 'testing' ? 'animate-pulse bg-yellow-500' : r?.success ? 'bg-[#73C991]' : r ? 'bg-red-500' : 'bg-(--vscode-descriptionForeground)/40']}></span>
 						<span class="min-w-0 flex-1">
 							<span class="block truncate text-[13px]">{t.label}</span>
-							<span class="block truncate font-mono text-[11px] {MUTED}">{t.username ? `${t.username}@` : ''}{t.host}{t.port !== 22 ? `:${t.port}` : ''}{t.jump_host ? ` via ${t.jump_host}` : ''}{t.config_host ? ' · ~/.ssh/config' : ''}</span>
+							<span class="block truncate font-mono text-[11px] {MUTED}">{t.username ? `${t.username}@` : ''}{t.host}{t.port !== 22 ? `:${t.port}` : ''}{t.jump_host ? ` via ${t.jump_host}` : ''}{t.config_host ? ' · ~/.ssh/config' : ''}{conn.status === 'disconnected' ? '' : ` · ${tr(statusKey(conn.status))}`}</span>
 						</span>
+						<!-- Orca's SshTargetCard primary action: Disconnect when connected, else Connect / Reconnect / Retry. -->
+						{#if conn.status === 'connected'}
+							<button class={BTN} onclick={() => sshConnections.disconnect(t.id)}>{tr('sshRemote.disconnect')}</button>
+						{:else}
+							<button class={BTN} disabled={isConnecting(conn.status) || !canConnect(conn.status)} title={conn.error ?? undefined} onclick={() => sshConnections.connect(t.id)}>{isConnecting(conn.status) ? tr('sshRemote.conn.connecting') : tr(`sshRemote.verb.${connectVerb(conn.status)}`)}</button>
+						{/if}
 						<button class={BTN} disabled={r === 'testing'} onclick={() => ssh.test(t.id)}>{r === 'testing' ? 'Testing…' : 'Test'}</button>
 						<button class={BTN} onclick={() => ssh.terminal(t)}>Terminal</button>
 						<button class={[BTN, ssh.panels[t.id]?.kind === 'files' && 'bg-(--vscode-foreground)/10']} onclick={() => (ssh.panels[t.id]?.kind === 'files' ? ssh.closePanel(t.id) : ssh.browse(t.id))}>Files</button>
 						<button class={[BTN, ssh.panels[t.id]?.kind === 'ports' && 'bg-(--vscode-foreground)/10']} onclick={() => (ssh.panels[t.id]?.kind === 'ports' ? ssh.closePanel(t.id) : ssh.ports(t.id))}>Ports</button>
+						<!-- Agent CLIs Kingu installs on the host (SshAgentsPanel). -->
+						<button class={[BTN, sshAgentInstalls.open[t.id] && 'bg-(--vscode-foreground)/10']} aria-expanded={!!sshAgentInstalls.open[t.id]} onclick={() => sshAgentInstalls.toggle(t.id)}>{tr('sshAgentInstall.button')}</button>
 						<button class={BTN} onclick={() => ssh.forward(t)}>Forward…</button>
 						<button class={ICON_BTN} aria-label="Remove {t.label}" title="Remove host (stops its forwards)" onclick={() => ssh.remove(t.id)}><Icon name="trash" size={13} /></button>
+					</div>
+					<!-- Installing Kingu's terminal host here: the answer kept for this host, changed here (asked first, unlike Orca's silent install). -->
+					<div class="mt-1 flex items-center gap-2 pl-4 text-[11px] {MUTED}">
+						<span>{tr('sshRemote.holder.setting', { choice: tr(`sshRemote.holder.choice.${choice ?? 'none'}`) })}</span>
+						{#if choice !== 'allow'}<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => sshProjects.setHolderConsent(t.id, 'allow')}>{tr('sshRemote.holder.allow')}</button>{/if}
+						{#if choice !== 'never'}<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => sshProjects.setHolderConsent(t.id, 'never')}>{tr('sshRemote.holder.neverButton')}</button>{/if}
+						{#if choice}<button class="text-(--vscode-textLink-foreground) hover:underline" onclick={() => sshProjects.setHolderConsent(t.id, null)}>{tr('sshRemote.holder.askAgain')}</button>{/if}
 					</div>
 					{#if r && r !== 'testing'}
 						<p class={['mt-1 pl-4 text-[11px]', r.success ? 'text-[#73C991]' : 'text-(--vscode-errorForeground)']}>{r.success ? `Connected in ${(r.millis / 1000).toFixed(1)} s` : r.error}</p>
@@ -93,6 +115,7 @@
 							{/if}
 						</div>
 					{/if}
+					{#if sshAgentInstalls.open[t.id]}<SshAgentsPanel host={t.id} label={t.label} />{/if}
 					{#each fws as f (f.id)}
 						<div class="mt-1 flex items-center gap-2 pl-4 text-[11px] {MUTED}">
 							<Icon name="ports" size={11} />

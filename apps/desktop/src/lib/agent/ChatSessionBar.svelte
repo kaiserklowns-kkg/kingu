@@ -9,11 +9,23 @@
 	import { t } from '#lib/i18n/index.ts';
 	import ComposerMenu from './ComposerMenu.svelte';
 	import type { MenuRow } from './composerMenu.ts';
+	import type { Snippet } from 'svelte';
 
 	/** `icon`: a product icon id; `agent`: an agent whose mark is drawn instead (agentIcons.ts). */
 	type Picker = { label: string; icon: string; agent?: string; title: string; rows: MenuRow[]; onpick: (id: string) => void; disabled?: boolean; warn?: boolean };
 
-	let { target, permission, onclose }: { target: Picker | null; permission: Picker | null; /** A menu closed (`refocus`: from the keyboard). */ onclose: (refocus: boolean) => void } = $props();
+	let {
+		target,
+		permission,
+		trailing,
+		onclose
+	}: {
+		target: Picker | null;
+		permission: Picker | null;
+		/** At the row's right end (Antigravity's sign-in chip, AgyAuthChip.svelte). */
+		trailing?: Snippet;
+		/** A menu closed (`refocus`: from the keyboard). */ onclose: (refocus: boolean) => void;
+	} = $props();
 
 	let open = $state<'target' | 'permission' | null>(null);
 
@@ -44,11 +56,12 @@
 	</div>
 {/snippet}
 
-{#if target || permission}
+{#if target || permission || trailing}
 	<div class="chat-secondary-toolbar">
 		<div class="chat-responsive-picker-container">
 			{#if target}{@render picker('target', target, t('chatWelcome.target.label', { name: target.label }))}{/if}
 			{#if permission}{@render picker('permission', permission, t('chatWelcome.permissions.picker', { label: permission.label }))}{/if}
+			{@render trailing?.()}
 		</div>
 	</div>
 {/if}

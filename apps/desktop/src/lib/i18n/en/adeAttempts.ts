@@ -50,6 +50,8 @@ export const adeAttempts = {
 	'adeAttempts.badge.dispatched': 'Sub-task dispatched by the agent of {task}',
 	'adeAttempts.badge.hibernated': 'Agent hibernated {ago}: resume it to continue its session',
 	'adeAttempts.badge.resume': 'Resume agent',
+	// AdeTabBar.svelte: a terminal tab whose agent was hibernated
+	'adeAttempts.pane.sleeping': 'Agent hibernated {ago}: it continues its session when you open this tab',
 	// AgentsLayout.svelte
 	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.',
 	'adeAttempts.hibernated.resuming': 'Resuming the agent’s session…',

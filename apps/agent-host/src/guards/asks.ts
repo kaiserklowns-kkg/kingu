@@ -21,9 +21,14 @@ export type AskConfig = {
 	 * is `false` is asked about before an edit, in every permission mode but Allow all.
 	 */
 	editRules?: [string, boolean][];
+	/**
+	 * The run's commands are sandboxed (`chat.agent.sandbox.enabled`, the Claude SDK's sandbox): a
+	 * Bash call that asks to leave it (`dangerouslyDisableSandbox`) is asked about every time.
+	 */
+	sandboxed?: boolean;
 };
 
-export type AskCheck = 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule';
+export type AskCheck = 'outside_cwd' | 'delete' | 'protected' | 'mcp' | 'edit_rule' | 'unsandboxed';
 
 /** Why a call needs the user: the first check that applies, and the paths it is about. */
 export type Ask = { check: AskCheck; paths: string[] };
@@ -277,6 +282,8 @@ export function askFor(
 	const paths = command === null ? toolPaths(tool, input) : [];
 	const where = (p: string) => insideCwd(p, cwd, realpath);
 
+	// First: leaving the sandbox matters more than what the command then touches.
+	if (config.sandboxed && command !== null && o.dangerouslyDisableSandbox === true) return { check: 'unsandboxed', paths: [] };
 	if (rules.length) {
 		const words = command === null ? paths : shellPathWords(command);
 		const hit = words.filter((p) => {
@@ -314,7 +321,8 @@ export function askDeniedReason(ask: Ask, message?: string | null): string {
 		delete: 'it deletes files',
 		protected: 'it touches a file the user protected (.kinguignore)',
 		mcp: 'it calls an MCP tool',
-		edit_rule: 'it edits a file the user wants to approve edits to (chat.tools.edits.autoApprove)'
+		edit_rule: 'it edits a file the user wants to approve edits to (chat.tools.edits.autoApprove)',
+		unsandboxed: 'it runs outside the sandbox'
 	};
 	const said = message?.trim();
 	return `The user did not allow this call (Kingu asks before running it because ${why[ask.check]}).${said ? ` They said: ${said}` : ''} Do not try another way to do the same thing.`;

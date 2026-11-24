@@ -69,5 +69,13 @@ export const chatMcp = {
 	'chatMcp.status.needsAuthHint': 'Sign in with the server’s own tool, or add its token as a header in mcp.json.',
 	'chatMcp.status.starting': 'Starting MCP servers: {names}',
 	'chatMcp.status.failed': 'MCP server {name} failed: {error}',
-	'chatMcp.status.open': 'MCP Servers'
+	'chatMcp.status.open': 'MCP Servers',
+	'chatMcp.status.summary': '{count} MCP servers need sign-in or failed to start',
+	'chatMcp.status.show': 'Show',
+	'chatMcp.status.hide': 'Hide',
+	'chatMcp.app.title': 'MCP App: {server}',
+	'chatMcp.app.loading': 'Loading MCP App...',
+	'chatMcp.app.failed': 'Error loading MCP App: {error}',
+	'chatMcp.app.retry': 'Retry',
+	'chatMcp.app.unavailable': "MCP server {server} isn't running in this chat. Send a message to start it, then retry."
 } as const;

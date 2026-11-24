@@ -112,6 +112,14 @@ crate::i18n::messages! {
       en: "{id}: unknown mode {mode}",
       th: "{id}: ไม่รู้จักโหมด {mode}",
     },
+    AutomationUnknownTrigger {
+      en: "{id}: unknown trigger {trigger}",
+      th: "{id}: ไม่รู้จักทริกเกอร์ {trigger}",
+    },
+    AutomationBadTimeZone {
+      en: "{id}: invalid time zone",
+      th: "{id}: เขตเวลาไม่ถูกต้อง",
+    },
     AutomationBadLastTask {
       en: "{id}: invalid last task ({detail})",
       th: "{id}: งานล่าสุดไม่ถูกต้อง ({detail})",

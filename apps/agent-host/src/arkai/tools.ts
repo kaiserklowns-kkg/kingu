@@ -11,12 +11,31 @@ import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
 import type { ToolDef } from './messages.ts';
 import type { ToolKind } from '../runtimes/tools.ts';
 import { webFetch } from './webFetch.ts';
+import { applyFailed, failureNote, sandboxLines, type RunSandbox } from '../sandbox/run.ts';
+import type { SandboxConfig } from '../sandbox/config.ts';
+import type { Diagnosis } from '../sandbox/retry.ts';
 
 type Obj = Record<string, unknown>;
 
-export type ToolResult = { content: string; isError: boolean };
-/** `fetch`: WebFetch's network (tests pass a fake; the global one otherwise). */
-export type ToolContext = { cwd: string; env: Record<string, string | undefined>; signal: AbortSignal; todos?: (todos: unknown) => void; grep?: 'rg' | 'js'; fetch?: typeof fetch };
+/**
+ * `sandbox`: a sandboxed Bash command the sandbox stopped (../sandbox/retry.ts): what it stopped,
+ * by which rule, and what the user may allow to retry it (the session asks).
+ */
+export type ToolResult = { content: string; isError: boolean; sandbox?: Diagnosis };
+/**
+ * `fetch`: WebFetch's network (tests pass a fake; the global one otherwise). `sandbox`: the run's
+ * sandbox for Bash (../sandbox/run.ts); `unsandboxed` only once the user approved running this
+ * call outside it (the session's gate decides, never the call's own input).
+ */
+export type ToolContext = {
+	cwd: string;
+	env: Record<string, string | undefined>;
+	signal: AbortSignal;
+	todos?: (todos: unknown) => void;
+	grep?: 'rg' | 'js';
+	fetch?: typeof fetch;
+	sandbox?: { run: RunSandbox; unsandboxed: boolean } | null;
+};
 
 export const TOOL_NAMES = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'TodoWrite', 'WebFetch'] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -272,7 +291,18 @@ async function bash(input: Obj, ctx: ToolContext): Promise<ToolResult> {
 	if (typeof command !== 'string') return command;
 	const timeout = Math.min(typeof input.timeout === 'number' && input.timeout > 0 ? input.timeout : BASH_TIMEOUT_MS, MAX_BASH_TIMEOUT_MS);
 	if (ctx.signal.aborted) return fail('Interrupted');
-	const proc = Bun.spawn([SHELL, '-c', command], { cwd: ctx.cwd, env: ctx.env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
+	// A domain list needs the run's filtering proxy up before a sandboxed command starts.
+	if (ctx.sandbox && !ctx.sandbox.unsandboxed) {
+		try {
+			await ctx.sandbox.run.ready(ctx.env);
+		} catch (e) {
+			return fail(`The command was not run: the sandbox's network proxy could not start (${e instanceof Error ? e.message : String(e)}).`);
+		}
+	}
+	// Sandboxed (or, after the user's yes, not), and never with a masked variable: throws when it cannot be.
+	const launch = ctx.sandbox ? ctx.sandbox.run.launch([SHELL, '-c', command], ctx.env, ctx.sandbox.unsandboxed) : { argv: [SHELL, '-c', command], env: ctx.env, sandboxed: false };
+	const mark = ctx.sandbox?.run.refusalMark() ?? 0;
+	const proc = Bun.spawn(launch.argv, { cwd: ctx.cwd, env: launch.env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
 	let timedOut = false;
 	const kill = () => {
 		try {
@@ -293,12 +323,17 @@ async function bash(input: Obj, ctx: ToolContext): Promise<ToolResult> {
 		for await (const chunk of s) if (out.length < MAX_OUTPUT * 2) out += decoder.decode(chunk, { stream: true });
 		return out;
 	};
-	const [stdout, stderr, code] = await Promise.all([collect(proc.stdout), collect(proc.stderr), proc.exited]);
+	const [stdout, stderr, code] = await Promise.all([collect(proc.stdout), collect(proc.stderr), proc.exited]).finally(() => launch.done?.());
 	clearTimeout(timer);
 	ctx.signal.removeEventListener('abort', kill);
 	const out = [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n');
 	if (ctx.signal.aborted) return fail(cap(`${out}\n(interrupted)`.trim()));
 	if (timedOut) return fail(cap(`${out}\n(stopped after ${timeout} ms)`.trim()));
+	if (code !== 0 && launch.sandboxed && ctx.sandbox) {
+		if (applyFailed(code, out)) return fail(cap(`The command was not run: the sandbox could not be applied on this machine.\n${out}`.trim()));
+		const diagnosis = ctx.sandbox.run.diagnose(out, command, mark);
+		return { ...fail(cap(`${failureNote(ctx.sandbox.run.config, out, diagnosis)}${out}\nExit code ${code}`.trim())), sandbox: diagnosis };
+	}
 	if (code !== 0) return fail(cap(`${out}\nExit code ${code}`.trim()));
 	return { content: cap(out || '(no output)'), isError: false };
 }
@@ -426,9 +461,41 @@ function todoWrite(input: Obj, ctx: ToolContext): ToolResult {
 	return { content: `Todo list updated (${todos.length} items, ${left} open)`, isError: false };
 }
 
-/** The tools of a run, as offered to the model. */
-export function toolDefs(light: boolean): ToolDef[] {
-	return (light ? LIGHT_TOOL_NAMES : TOOL_NAMES).map((n) => TOOL_DEFS[n]);
+/**
+ * Bash for a sandboxed run: what the sandbox allows, and VS Code's two parameters for asking to
+ * run a command outside it (copilotShellTools.ts, `requestUnsandboxedExecution`).
+ */
+export function sandboxedBash(c: Pick<SandboxConfig, 'allowUnsandboxedCommands' | 'allowNetwork' | 'allowLocalNetwork'> & Partial<Pick<SandboxConfig, 'allowedDomains' | 'deniedDomains'>>): ToolDef {
+	const base = TOOL_DEFS.Bash;
+	const params = base.parameters as { properties: Record<string, unknown> };
+	return {
+		...base,
+		description: `${base.description}\n\n${sandboxLines(c)}`,
+		parameters: {
+			...base.parameters,
+			properties: {
+				...params.properties,
+				...(c.allowUnsandboxedCommands
+					? {
+							requestUnsandboxedExecution: {
+								type: 'boolean',
+								description:
+									'Request that this command run outside the sandbox. Only set this after first executing the command in the sandbox and observing that sandboxing caused the failure. The user will be prompted before the command runs unsandboxed.'
+							},
+							requestUnsandboxedExecutionReason: {
+								...str,
+								description: 'A short explanation of the sandboxed execution failure that justifies retrying outside the sandbox. Only provide this when requestUnsandboxedExecution is true.'
+							}
+						}
+					: {})
+			}
+		}
+	};
+}
+
+/** The tools of a run, as offered to the model. `sandbox`: the run's sandbox settings, when it has one. */
+export function toolDefs(light: boolean, sandbox: Pick<SandboxConfig, 'allowUnsandboxedCommands' | 'allowNetwork' | 'allowLocalNetwork'> & Partial<Pick<SandboxConfig, 'allowedDomains' | 'deniedDomains'>> | null = null): ToolDef[] {
+	return (light ? LIGHT_TOOL_NAMES : TOOL_NAMES).map((n) => (n === 'Bash' && sandbox ? sandboxedBash(sandbox) : TOOL_DEFS[n]));
 }
 
 /** Files a call writes (snapshotted before it runs). */

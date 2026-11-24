@@ -1,5 +1,6 @@
 //! Which agent CLIs are installed: the "Agent: Choose CLI…" picker asks for its known program
-//! names and gets back those found as executables on the login-shell PATH.
+//! names and gets back those found as executables on the login-shell PATH, and those Kingu
+//! installed a copy of itself (managed_cli).
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -47,9 +48,18 @@ pub fn program_of(argv: &[String]) -> Option<&String> {
 
 #[tauri::command]
 pub async fn agent_cli_found(names: Vec<String>) -> Result<Vec<String>, String> {
-  tauri::async_runtime::spawn_blocking(move || found_on_path(&names, crate::shell_env::path().as_deref()))
-    .await
-    .map_err(|e| e.to_string())
+  tauri::async_runtime::spawn_blocking(move || {
+    let mut found = found_on_path(&names, crate::shell_env::path().as_deref());
+    // An agent CLI Kingu installed itself counts as installed (Orca `provideInstalledManagedAgents`).
+    for name in super::managed_cli::provides(&names) {
+      if valid_name(&name) && !found.contains(&name) {
+        found.push(name);
+      }
+    }
+    found
+  })
+  .await
+  .map_err(|e| e.to_string())
 }
 
 #[cfg(all(test, unix))]

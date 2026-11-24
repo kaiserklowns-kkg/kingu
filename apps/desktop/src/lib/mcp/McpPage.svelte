@@ -19,6 +19,7 @@
 		off: 'bg-(--vscode-descriptionForeground)/40',
 		untrusted: 'bg-orange-500',
 		invalid: 'bg-red-500',
+		blocked: 'bg-red-500',
 		idle: 'bg-(--vscode-descriptionForeground)'
 	};
 	const TRANSPORT: Record<NonNullable<McpRow['transport']>, string> = { stdio: 'stdio', http: 'HTTP', sse: 'SSE' };
@@ -69,6 +70,7 @@
 								</div>
 								{#if row.detail}<div class="mt-0.5 truncate font-mono text-xs {MUTED}" title={row.detail}>{row.detail}</div>{/if}
 								{#if row.error}<div class="mt-0.5 text-xs text-(--vscode-errorForeground)">{row.error}</div>{/if}
+								{#if row.blocked}<div class="mt-0.5 text-xs text-(--vscode-errorForeground)" data-testid="mcp-blocked">{row.blocked}</div>{/if}
 								{#if row.live?.error && state === 'failed'}<div class="mt-0.5 text-xs text-(--vscode-errorForeground)">{row.live.error}</div>{/if}
 								{#if row.needsTrust}<div class="mt-0.5 text-xs {MUTED}">{t('mcp.needsTrust')}</div>{/if}
 							</div>

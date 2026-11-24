@@ -66,5 +66,21 @@ crate::i18n::messages! {
       en: "Open a folder first: project MCP servers belong to a folder",
       th: "เปิดโฟลเดอร์ก่อน — MCP server ของโปรเจกต์ผูกกับโฟลเดอร์",
     },
+    AppUnsupported {
+      en: "MCP Apps are not available on this system yet",
+      th: "ระบบนี้ยังแสดง MCP App ไม่ได้",
+    },
+    AppBadResource {
+      en: "{uri}: an MCP App's UI resource must be a ui:// URI",
+      th: "{uri}: UI resource ของ MCP App ต้องเป็น URI แบบ ui://",
+    },
+    AppNoContent {
+      en: "The MCP server returned no content for {uri}",
+      th: "MCP server ไม่ได้ส่งเนื้อหาของ {uri} มา",
+    },
+    AppTooLarge {
+      en: "The MCP App {uri} is larger than {mb} MB",
+      th: "MCP App {uri} ใหญ่เกิน {mb} MB",
+    },
   }
 }

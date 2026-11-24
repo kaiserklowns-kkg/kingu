@@ -64,14 +64,30 @@ export function parseArkaiProviders(v: unknown): ArkaiProviderInfo[] {
 	});
 }
 
+/** A model router (Rust `arkai_model_routers`, `~/.agents/model-routers/`): picked as `<provider>/model-router:<name>`. */
+export type ArkaiRouter = { name: string; label: string; description: string };
+export const MODEL_ROUTER_PREFIX = 'model-router:';
+const ROUTER_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** Rust's router list, checked loosely. */
+export function parseArkaiRouters(v: unknown): ArkaiRouter[] {
+	if (!Array.isArray(v)) return [];
+	return v.flatMap((r): ArkaiRouter[] =>
+		r && typeof r === 'object' && typeof r.name === 'string' && ROUTER_NAME.test(r.name)
+			? [{ name: r.name, label: typeof r.label === 'string' && r.label ? r.label : r.name, description: typeof r.description === 'string' ? r.description : '' }]
+			: []
+	);
+}
+
 export type ArkaiChoice = { value: string; label: string; description: string };
 export type ArkaiGroup = { provider: string; label: string; models: ArkaiChoice[] };
 
 /**
- * The picker's groups: one per provider with models, and the chat's own model in a group of its
- * own when no provider lists it (a provider removed since, or a model typed into settings).
+ * The picker's groups: one per provider with models (then the user's model routers, which route
+ * among that provider's models; agent-host arkai/modelRouter.ts), and the chat's own model in a
+ * group of its own when no provider lists it (a provider removed since, or a model typed into settings).
  */
-export function arkaiGroups(providers: readonly ArkaiProviderInfo[], current: string | null | undefined): ArkaiGroup[] {
+export function arkaiGroups(providers: readonly ArkaiProviderInfo[], current: string | null | undefined, routers: readonly ArkaiRouter[] = []): ArkaiGroup[] {
 	const groups: ArkaiGroup[] = providers
 		.filter((p) => p.models.length)
 		.map((p) => ({
@@ -81,7 +97,9 @@ export function arkaiGroups(providers: readonly ArkaiProviderInfo[], current: st
 				value: arkaiModelValue(p.id, m.id),
 				label: m.name || m.id,
 				description: [m.id, m.contextWindow ? `${Math.round(m.contextWindow / 1024)}k` : '', arkaiLight(m) ? t('arkai.picker.light') : ''].filter(Boolean).join(' · ')
-			}))
+			})).concat(
+				routers.map((r) => ({ value: arkaiModelValue(p.id, `${MODEL_ROUTER_PREFIX}${r.name}`), label: r.label, description: [t('arkai.picker.router'), r.description].filter(Boolean).join(' · ') }))
+			)
 		}));
 	const split = splitArkaiModel(current);
 	if (current && split && !groups.some((g) => g.models.some((m) => m.value === current))) {

@@ -16,7 +16,8 @@ use crate::procinfo::{self, Foreground};
 
 /// Output kept per session for a re-attaching viewer.
 pub const SCROLLBACK_BYTES: usize = 256 * 1024;
-const EXITED: &str = "\r\n[process exited]\r\n";
+/// A session's last output, sent as a chunk of its own once its shell has exited.
+pub const EXITED: &str = "\r\n[process exited]\r\n";
 
 /// Receives a session's live output; returns false once the viewer is gone (a reloaded page, a
 /// closed connection), and the session then keeps buffering until the next attach.

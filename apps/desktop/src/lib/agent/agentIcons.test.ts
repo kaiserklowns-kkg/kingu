@@ -12,14 +12,14 @@ const ASSETS = join(import.meta.dir, '../assets/agent-icons');
 /** The chat runtimes Rust knows (agent/runtimes.rs `KNOWN`, plus claude and arkai), read from the source so a new one cannot miss its icon. */
 function rustRuntimes(): { id: string; name: string; program: string }[] {
 	const src = readFileSync(join(import.meta.dir, '../../../src-tauri/src/agent/runtimes.rs'), 'utf8');
-	const known = [...src.matchAll(/Known \{ id: "([^"]+)", name: "([^"]+)", program: "([^"]+)"/g)].map((m) => ({ id: m[1], name: m[2], program: m[3] }));
+	const known = [...src.matchAll(/known\("([^"]+)", "([^"]+)", "([^"]+)"/g)].map((m) => ({ id: m[1], name: m[2], program: m[3] }));
 	return [{ id: 'claude', name: 'Claude Code', program: 'claude' }, { id: 'arkai', name: 'Arkai', program: 'arkai' }, ...known];
 }
 
 describe('agent icons', () => {
 	test('every chat runtime resolves by id, display name and program', () => {
 		const runtimes = rustRuntimes();
-		expect(runtimes.length).toBeGreaterThan(5);
+		expect(runtimes.length).toBeGreaterThan(15);
 		for (const r of runtimes) {
 			expect([r.id, agentIconKey(r.id)]).not.toEqual([r.id, null]);
 			expect(agentIconKey(r.name)).toBe(agentIconKey(r.id));

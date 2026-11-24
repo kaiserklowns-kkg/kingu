@@ -11,6 +11,7 @@
 	import { isoTime } from './taskSources';
 	import { timeAgo } from './model';
 	import { adeTasks } from './tasks.svelte';
+	import { keepFloatingToggleClear } from '#lib/workbench/floatingKeepClear.svelte.ts';
 
 	let { number, onclose, onchanged }: { number: number; onclose: () => void; onchanged?: () => void } = $props();
 
@@ -164,7 +165,8 @@
 		{/if}
 	</div>
 	{#if detail}
-		<form class="shrink-0 space-y-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={send}>
+		<!-- Like Orca's item comment box (BotItemCommentBox): the floating workspace toggle keeps off it. -->
+		<form class="shrink-0 space-y-1.5 border-t border-(--vscode-widget-border) p-2" onsubmit={send} {@attach keepFloatingToggleClear()}>
 			<textarea
 				class={[INPUT, 'h-16 resize-none']}
 				placeholder={t('adeSources.drawer.commentPlaceholder')}

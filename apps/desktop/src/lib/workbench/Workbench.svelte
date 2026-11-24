@@ -85,6 +85,8 @@
 	import LinkPreview from '#lib/workbench/LinkPreview.svelte';
 	import SshHostsDialog from '#lib/ade/SshHostsDialog.svelte';
 	import { installSshCommands, sshHosts } from '#lib/ade/sshHosts.svelte.ts';
+	import PermissionGrantsDialog from '#lib/ade/PermissionGrantsDialog.svelte';
+	import { installPermissionGrants, permissionGrants } from '#lib/ade/permissionGrants.svelte.ts';
 	import SshRemoteFolder from '#lib/ade/SshRemoteFolder.svelte';
 	import { sshWorkspace } from '#lib/ade/sshWorkspace.svelte.ts';
 	import MobilePairDialog from '#lib/ade/MobilePairDialog.svelte';
@@ -92,6 +94,7 @@
 	import { installAgentNotifications } from '#lib/ade/agentNotify.svelte.ts';
 	import { installAdeAttention } from '#lib/ade/adeAttention.svelte.ts';
 	import { installAutomations } from '#lib/ade/automations.svelte.ts';
+	import { installSessionInbox } from '#lib/ade/sessionInbox.svelte.ts';
 	import { installIssues } from '#lib/ade/issues.svelte.ts';
 	import { installLinear } from '#lib/ade/linear.svelte.ts';
 	import { installCliBridge } from '#lib/ade/cliBridge.svelte.ts';
@@ -414,10 +417,12 @@
 		const uninstallAttempts = installAttempts();
 		const uninstallBitbucket = installBitbucketCommands();
 		const uninstallSsh = installSshCommands();
+		const uninstallPermissionGrants = installPermissionGrants();
 		const uninstallMobile = installMobile();
 		const uninstallAgentNotifications = installAgentNotifications();
 		const uninstallAdeAttention = installAdeAttention();
 		const uninstallAutomations = installAutomations();
+		const uninstallSessionInbox = installSessionInbox();
 		const uninstallIssues = installIssues();
 		const uninstallLinear = installLinear();
 		const uninstallTaskSources = installTaskSources();
@@ -501,6 +506,7 @@
 			uninstallAttempts();
 			uninstallBitbucket();
 			uninstallSsh();
+			uninstallPermissionGrants();
 			uninstallMobile();
 			uninstallIssues();
 			uninstallLinear();
@@ -510,6 +516,7 @@
 			uninstallTrustedDomains();
 			uninstallVoice();
 			uninstallAutomations();
+			uninstallSessionInbox();
 			uninstallAgentNotifications();
 			uninstallAdeAttention();
 			uninstallAde();
@@ -696,6 +703,7 @@
 	{#if workspaceSpace.open}<WorkspaceSpaceDialog />{/if}
 	{#if sshWorkspace.current}<SshRemoteFolder />{/if}
 	{#if sshHosts.open}<SshHostsDialog />{/if}
+	{#if permissionGrants.open}<PermissionGrantsDialog />{/if}
 	{#if mobilePairing.open}<MobilePairDialog />{/if}
 	<Tooltips />
 	<LinkPreview />

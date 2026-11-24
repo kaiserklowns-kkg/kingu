@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ACTIVITY_LIMIT, AUTO_CHECK_MS, autoRunDue, nextAutoRunAt, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, activityKey, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
+import { ACTIVITY_LIMIT, AUTO_CHECK_MS, CHAT_SWEEP_INTERVAL_MS, autoRulesOn, chatSweepDue, codexHistoryBadge, normalizeChatHistory, normalizeCodexUsage, autoRunDue, nextAutoRunAt, normalizeActivity, parseStoredActivity, serializeActivity, withActivity, withActivityLock, activityKey, ACTIVITY_KEY, type AutoState, type CleanupActivity } from './autoCleanup';
 
 const base: AutoState = { enabled: true, rulesOn: true, hasFolder: true, busy: false, lastRunAt: null, now: 1_000_000 };
 const act = (over: Partial<CleanupActivity> = {}): CleanupActivity => ({ at: 1, source: 'auto', removed: ['a'], archived: [], failed: [], kept: 0, ...over });
@@ -111,5 +111,54 @@ describe('nextAutoRunAt', () => {
 		expect(nextAutoRunAt(true, now - 5 * AUTO_CHECK_MS, now)).toBeNull();
 		expect(nextAutoRunAt(true, null, now)).toBeNull();
 		expect(nextAutoRunAt(false, now - 1000, now)).toBeNull();
+	});
+});
+
+describe('chat history of deleted workspaces', () => {
+	test('off by default: without the setting no run is due for it and no sweep happens', () => {
+		expect(autoRunDue({ ...base, enabled: false, rulesOn: false })).toBe(false);
+		for (const source of ['auto', 'cli', 'dialog'] as const) expect(chatSweepDue(false, source, null, 1)).toBe(false);
+	});
+
+	test('with only the chat history setting on a run is due, and it applies no rule', () => {
+		const only = { ...base, enabled: false, rulesOn: true, chatHistoryOn: true };
+		expect(autoRunDue(only)).toBe(true);
+		expect(autoRulesOn(only)).toBe(false);
+		expect(autoRulesOn({ enabled: true, rulesOn: false })).toBe(false);
+		expect(autoRunDue({ ...only, busy: true })).toBe(false);
+		expect(autoRunDue({ ...only, hasFolder: false })).toBe(false);
+	});
+
+	test('automatic runs sweep at most every six hours; asked-for runs always sweep', () => {
+		const now = 10 * CHAT_SWEEP_INTERVAL_MS;
+		expect(chatSweepDue(true, 'auto', null, now)).toBe(true);
+		expect(chatSweepDue(true, 'auto', now - CHAT_SWEEP_INTERVAL_MS + 1, now)).toBe(false);
+		expect(chatSweepDue(true, 'auto', now - CHAT_SWEEP_INTERVAL_MS, now)).toBe(true);
+		expect(chatSweepDue(true, 'cli', now - 1, now)).toBe(true);
+		expect(chatSweepDue(true, 'dialog', now - 1, now)).toBe(true);
+	});
+
+	test('a run that only deleted chats is worth a row, and the row round-trips', () => {
+		const chatHistory = { deleted: 2, failed: 0, freedBytes: 4096 };
+		const row = act({ removed: [], chatHistory });
+		expect(withActivity([], row)).toEqual([row]);
+		expect(withActivity([], act({ removed: [], chatHistory: { deleted: 0, failed: 0, freedBytes: 0 } }))).toEqual([]);
+		expect(parseStoredActivity(serializeActivity({ activity: [row], lastRunAt: 1 })).activity[0].chatHistory).toEqual(chatHistory);
+	});
+
+	test('an unusable chat history result is dropped, never guessed', () => {
+		for (const raw of [null, 'x', {}, { deleted: 1 }, { deleted: -1, failed: 0, freedBytes: 0 }, { deleted: '1', failed: 0, freedBytes: 0 }]) expect([raw, normalizeChatHistory(raw)]).toEqual([raw, null]);
+		expect(normalizeChatHistory({ deleted: 1, failed: 2, freedBytes: 3.7, chats: ['a'] })).toEqual({ deleted: 1, failed: 2, freedBytes: 3 });
+		expect('chatHistory' in normalizeActivity({ at: 1, source: 'auto', chatHistory: { deleted: 'x' } })!).toBe(false);
+	});
+
+	test('the Codex history badge shows only when Codex has history, and says when the size is a lower bound', () => {
+		for (const raw of [null, 'x', {}, { bytes: 1, rollouts: 1 }, { bytes: -1, rollouts: 1, complete: true }, { bytes: 1, rollouts: '1', complete: true }]) expect([raw, normalizeCodexUsage(raw)]).toEqual([raw, null]);
+		const usage = normalizeCodexUsage({ bytes: 2048.5, rollouts: 3, complete: true });
+		expect(usage).toEqual({ bytes: 2048, rollouts: 3, complete: true });
+		expect(codexHistoryBadge(usage)).toEqual({ bytes: 2048, atLeast: false });
+		expect(codexHistoryBadge({ bytes: 2048, rollouts: 3, complete: false })).toEqual({ bytes: 2048, atLeast: true });
+		expect(codexHistoryBadge({ bytes: 0, rollouts: 0, complete: true })).toBeNull();
+		expect(codexHistoryBadge(null)).toBeNull();
 	});
 });

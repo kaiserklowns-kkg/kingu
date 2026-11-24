@@ -7,7 +7,8 @@
 import { t } from '#lib/i18n/index.ts';
 import { parseRequest, type ParsedRequest } from './chatPrompt';
 import { assistedText, guardAskedText, guardBlockedText } from './guardText';
-import type { AgentEvent, McpAction, McpRequestEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
+import { hostErrorText } from './agentSignIn';
+import type { AgentEvent, McpAction, McpAppEvent, McpRequestEvent, PermissionRequest, ResultEvent, RunState, RunStatus, Vote } from './events';
 import type { ArtifactEvent } from '#lib/artifacts/artifacts.ts';
 
 export type ToolPart = {
@@ -36,6 +37,8 @@ export type Part =
 	| { kind: 'artifact'; artifact: ArtifactEvent }
 	/** An MCP server's form or sampling request (McpRequestCard); `action` once answered. */
 	| { kind: 'mcpRequest'; request: McpRequestEvent; action?: McpAction }
+	/** An MCP App under its tool call (McpAppFrame.svelte): the call's latest `mcp_app` event. Not folded into "Worked for". */
+	| { kind: 'mcpApp'; app: McpAppEvent }
 	/** The turn was cut short (Stop, or the session ended mid-turn). */
 	| { kind: 'canceled' };
 
@@ -93,6 +96,8 @@ export function buildTurns(run: ChatView): Turn[] {
 	const assistedEarly = new Map<string, string>();
 	/** Votes by checkpoint, the last one winning. */
 	const votes = new Map<number, Vote | null>();
+	/** MCP Apps by tool call: the second `mcp_app` (with the result) updates the first's part. */
+	const apps = new Map<string, Extract<Part, { kind: 'mcpApp' }>>();
 	const close = (canceled: boolean) => {
 		if (!cur || cur.done) return;
 		cur.done = true;
@@ -168,7 +173,7 @@ export function buildTurns(run: ChatView): Turn[] {
 				turn.result = ev;
 				if (ev.is_error) {
 					const msg = (ev.result ?? '').trim();
-					if (msg) turn.parts.push({ kind: 'error', message: msg });
+					if (msg) turn.parts.push({ kind: 'error', message: hostErrorText(msg) });
 					else turn.parts.push({ kind: 'canceled' });
 				}
 				turn.done = true;
@@ -180,11 +185,21 @@ export function buildTurns(run: ChatView): Turn[] {
 				if (cur) (cur as Turn).checkpoint = ev.request;
 				break;
 			case 'error':
-				current().parts.push({ kind: 'error', message: ev.message });
+				current().parts.push({ kind: 'error', message: hostErrorText(ev.message) });
 				break;
 			case 'artifact':
 				current().parts.push({ kind: 'artifact', artifact: ev });
 				break;
+			case 'mcp_app': {
+				const known = apps.get(ev.tool_use_id);
+				if (known) known.app = ev;
+				else {
+					const part: Extract<Part, { kind: 'mcpApp' }> = { kind: 'mcpApp', app: ev };
+					apps.set(ev.tool_use_id, part);
+					current().parts.push(part);
+				}
+				break;
+			}
 			case 'mcp_request': {
 				const action = run.mcpActions?.[ev.request_id];
 				current().parts.push({ kind: 'mcpRequest', request: ev, ...(action ? { action } : {}) });

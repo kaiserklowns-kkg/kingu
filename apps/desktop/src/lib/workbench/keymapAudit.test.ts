@@ -196,6 +196,7 @@ test('Orca keys in the Agents layout, VS Code keys in the IDE', () => {
 		expect(ide.get('cmd+shift+t')).toEqual(['workbench.action.reopenClosedEditor']);
 		expect(agents.get('ctrl+tab')).toEqual(['kingu.ade.tab.previousRecent']);
 		expect(agents.get('cmd+shift+e')).toEqual(['kingu.agents.rightSidebar.explorer']);
+		expect(agents.get('cmd+shift+i')).toEqual(['kingu.agents.rightSidebar.ports']);
 		expect(ide.get('cmd+shift+e')).toEqual(['workbench.view.explorer']);
 		// Shared by both layouts.
 		expect(agents.get('cmd+p')).toEqual(['workbench.action.quickOpen']);

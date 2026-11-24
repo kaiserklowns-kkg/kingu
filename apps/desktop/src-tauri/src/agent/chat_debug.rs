@@ -210,6 +210,9 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
         }
         None
       }
+      // An MCP App (mcp_app.rs): its row once the tool returned; never its input or result.
+      AgentEvent::McpApp { server, resource_uri, done: true, .. } => Some(row("mcp", format!("MCP App: {server}"), one_line(resource_uri, MAX_DETAIL), None)),
+      AgentEvent::McpApp { .. } | AgentEvent::McpAppToolCall { .. } | AgentEvent::McpAppToolCancel { .. } => None,
       AgentEvent::GuardBlocked { tool, check, detail, .. } => {
         let mut r = row("guard", format!("Safety check: {check}"), one_line(&format!("{tool}: {detail}"), MAX_DETAIL), None);
         r.is_error = true;
@@ -283,6 +286,7 @@ pub fn debug_events(lines: &[(u64, AgentEvent)]) -> (Vec<DebugEvent>, Totals) {
       | AgentEvent::FileSnapshot { .. }
       | AgentEvent::EditsChanged { .. }
       | AgentEvent::Raw { .. }
+      | AgentEvent::SignIn { .. }
       | AgentEvent::Stderr { .. } => None,
     };
     if let Some(mut r) = next {

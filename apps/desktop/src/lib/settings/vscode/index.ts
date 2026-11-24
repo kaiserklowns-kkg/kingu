@@ -28,6 +28,7 @@ import { EMMET_SETTINGS } from './emmet';
 import { ACCESSIBILITY_SETTINGS } from './accessibility';
 import { MARKDOWN_SETTINGS } from './markdown';
 import { SECURITY_SETTINGS } from './security';
+import { AGENT_SESSIONS_SETTINGS } from './agentSessions';
 
 export const VSCODE_SETTINGS = [
 	...EDITOR_SETTINGS,
@@ -55,6 +56,7 @@ export const VSCODE_SETTINGS = [
 	...ACCESSIBILITY_SETTINGS,
 	...MARKDOWN_SETTINGS,
 	...SECURITY_SETTINGS,
+	...AGENT_SESSIONS_SETTINGS,
 	// The settings sections Kingu delivers to the language servers it runs (lsp/serverSettings.ts).
 	...TYPESCRIPT_SETTINGS,
 	...CSS_SETTINGS,

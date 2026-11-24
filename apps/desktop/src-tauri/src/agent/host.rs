@@ -182,14 +182,40 @@ pub struct StartRequest {
   /// `chat.mcp.serverSampling` (`mcp_chat::sampling_policy`): server → may make model calls; omitted when none.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mcp_sampling: Option<std::collections::BTreeMap<String, bool>>,
+  /// `chat.agentHost.mcpSkills.enabled` (Skills over MCP, Arkai only); omitted (on) unless turned off.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub mcp_skills: Option<bool>,
   /// The chat's reasoning effort (`events::EFFORTS`; agent-host `effort.ts` maps it per runtime);
   /// omitted: the model's default.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub effort: Option<String>,
+  /// The agent sandbox (`chat.agent.sandbox.*`, `sandbox::from_settings`); omitted when off.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub sandbox: Option<serde_json::Value>,
+  /// `chat.permissions.assisted.instructions`, for the Assisted reviewer only; omitted when empty.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub assisted_instructions: Option<String>,
+  /// The MCP allow/deny lists in Claude Code's settings shape (`mcp_policy::Policy::for_sdk`).
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub mcp_policy: Option<serde_json::Value>,
+  /// Browser tools for this run (`kingu.browser.agentTools`, floating_browser/agent.rs): the
+  /// session token its `browser.*` requests carry; omitted when off.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub browser: Option<BrowserParam>,
   /// What else this run owns while it is live besides its session (e.g. `chat:<root>:<id>`);
   /// not sent to the sidecar.
   #[serde(skip)]
   pub owner: Option<String>,
+  /// The chat's agent id (`runtimes`), so its live runs can be stopped together
+  /// ([`AgentHost::stop_agent`]); not sent to the sidecar.
+  #[serde(skip)]
+  pub agent_id: Option<String>,
+}
+
+/// The host's `browser` start parameter.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct BrowserParam {
+  pub session: String,
 }
 
 /// Single owner per agent session: while a run is live it holds its session id (the one it
@@ -202,6 +228,11 @@ pub struct Owners {
 
 fn session_key(id: &str) -> String {
   format!("session:{id}")
+}
+
+/// The session a run continues in place, which it must own: none for a fork (`resume_at`).
+fn continued_session(req: &StartRequest) -> Option<&str> {
+  if req.resume_at.is_some() { None } else { req.resume.as_deref() }
 }
 
 impl Owners {
@@ -245,6 +276,22 @@ impl Owners {
 
   pub fn holds(&self, owner: &str) -> bool {
     self.by_key.contains_key(owner)
+  }
+
+  /// Whether chat `owner` (whose transcript names `session`) has a live run: its own run, or a run
+  /// that resumed its session without being any chat's (a terminal or task agent). A run that is
+  /// another chat's does not count: a fork starts with the session of the chat it came from, whose
+  /// run may well still be live.
+  pub fn chat_busy(&self, session: Option<&str>, owner: &str) -> bool {
+    if self.by_key.contains_key(owner) {
+      return true;
+    }
+    session.and_then(|s| self.by_key.get(&session_key(s))).is_some_and(|run| !self.by_key.iter().any(|(k, r)| r == run && k.starts_with("chat:")))
+  }
+
+  /// The run holding chat key `owner`.
+  pub fn holder(&self, owner: &str) -> Option<u32> {
+    self.by_key.get(owner).copied()
   }
 }
 
@@ -467,6 +514,8 @@ pub struct AgentHost {
   next_run: AtomicU32,
   proc: Arc<Mutex<Option<Arc<Proc>>>>,
   owners: Arc<Mutex<Owners>>,
+  /// Live runs → their agent id (`StartRequest::agent_id`), until their `Exit`.
+  agents: Arc<Mutex<HashMap<u32, String>>>,
 }
 
 impl Default for AgentHost {
@@ -477,7 +526,7 @@ impl Default for AgentHost {
 
 impl AgentHost {
   pub fn new(launch: Launcher) -> Self {
-    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default(), owners: Arc::default() }
+    Self { launch, next_run: AtomicU32::new(0), proc: Arc::default(), owners: Arc::default(), agents: Arc::default() }
   }
 
   /// The running sidecar, spawning it if needed.
@@ -535,12 +584,23 @@ impl AgentHost {
   /// Refused while another live run holds the session it resumes or its `owner` (`Owners`).
   pub fn start(&self, req: StartRequest, sink: Sink) -> Result<u32, String> {
     let id = self.next_run.fetch_add(1, Ordering::Relaxed) + 1;
-    self.owners.lock().unwrap().claim(id, req.resume.as_deref(), req.owner.as_deref())?;
-    let owners = self.owners.clone();
+    // A run with `resume_at` forks the session into a new one and never writes to it, so it does
+    // not take it over: `/btw` and side chats fork a chat whose own run is still live (Orca's
+    // native-chat-side-chat-fork-point.ts forks mid-turn). The chat itself stays guarded by `owner`.
+    self.owners.lock().unwrap().claim(id, continued_session(&req), req.owner.as_deref())?;
+    if let Some(agent) = &req.agent_id {
+      self.agents.lock().unwrap().insert(id, agent.clone());
+    }
+    let (owners, agents) = (self.owners.clone(), self.agents.clone());
     let sink: Sink = Arc::new(move |ev: AgentEvent| {
       {
         let mut o = owners.lock().unwrap();
-        if matches!(ev, AgentEvent::Exit { .. }) { o.release(id) } else { o.observe(id, &ev) }
+        if matches!(ev, AgentEvent::Exit { .. }) {
+          o.release(id);
+          agents.lock().unwrap().remove(&id);
+        } else {
+          o.observe(id, &ev)
+        }
       }
       sink(ev);
     });
@@ -558,6 +618,7 @@ impl AgentHost {
       Ok(_) => Ok(id),
       Err(e) => {
         self.owners.lock().unwrap().release(id);
+        self.agents.lock().unwrap().remove(&id);
         Err(e)
       }
     }
@@ -593,6 +654,17 @@ impl AgentHost {
       params["effort"] = json!(e);
     }
     self.run_request(run_id, "set_options", params)
+  }
+
+  /// Like `run_request`, with the sidecar's answer and its own time limit (mcp_app.rs: an MCP
+  /// App's request may wait for a permission prompt).
+  pub fn run_call(&self, run_id: u32, method: &str, mut params: Value, timeout: Duration) -> Result<Value, String> {
+    let proc = self.proc.lock().unwrap().clone().ok_or("no such agent run")?;
+    if !proc.runs.lock().unwrap().contains_key(&run_id) {
+      return Err("no such agent run".into());
+    }
+    params["runId"] = json!(run_id);
+    proc.request(method, params, timeout)
   }
 
   fn run_request(&self, run_id: u32, method: &str, mut params: Value) -> Result<(), String> {
@@ -670,9 +742,68 @@ impl AgentHost {
     self.run_request(run_id, "interrupt", json!({}))
   }
 
+  /// The chat's Sign in for a run that waits for one (`AgentEvent::SignIn`).
+  pub fn sign_in(&self, run_id: u32) -> Result<(), String> {
+    self.run_request(run_id, "sign_in", json!({}))
+  }
+
   /// Ends the run (its `Exit` follows with `stopped: true`).
   pub fn stop(&self, run_id: u32) -> Result<(), String> {
     self.run_request(run_id, "stop", json!({}))
+  }
+
+  /// How many live runs agent `agent` has (Orca `countStructuredAgentChats`).
+  pub fn live_runs_of(&self, agent: &str) -> usize {
+    self.agents.lock().unwrap().values().filter(|a| *a == agent).count()
+  }
+
+  /// Stops every live run of agent `agent` and waits up to `wait` for each one's `Exit` (Orca
+  /// `stopStructuredAgentChats`, before its program is removed). Ok: how many were stopped;
+  /// Err: how many are still running.
+  pub fn stop_agent(&self, agent: &str, wait: Duration) -> Result<usize, usize> {
+    let ids: Vec<u32> = self.agents.lock().unwrap().iter().filter(|(_, a)| *a == agent).map(|(id, _)| *id).collect();
+    for &id in &ids {
+      log::info!("agent run {id} stopping: its agent {agent} is being removed");
+      if let Err(e) = self.stop(id) {
+        log::warn!("agent run {id} not stopped: {e}");
+      }
+    }
+    let until = std::time::Instant::now() + wait;
+    loop {
+      let left = {
+        let live = self.agents.lock().unwrap();
+        ids.iter().filter(|id| live.contains_key(id)).count()
+      };
+      if left == 0 {
+        return Ok(ids.len());
+      }
+      if std::time::Instant::now() >= until {
+        return Err(left);
+      }
+      std::thread::sleep(Duration::from_millis(50));
+    }
+  }
+
+  /// See `Owners::chat_busy`.
+  pub fn chat_busy(&self, session: Option<&str>, owner: &str) -> bool {
+    self.owners.lock().unwrap().chat_busy(session, owner)
+  }
+
+  /// Stops chat `owner`'s run and waits up to `wait` for it to let go: a side chat discarded
+  /// after a reload, whose run the page no longer knows about.
+  pub fn stop_chat(&self, owner: &str, wait: Duration) -> Result<(), String> {
+    let Some(id) = self.owners.lock().unwrap().holder(owner) else { return Ok(()) };
+    if let Err(e) = self.stop(id) {
+      log::warn!("agent run {id} not stopped: {e}");
+    }
+    let until = std::time::Instant::now() + wait;
+    while self.owners.lock().unwrap().holds(owner) {
+      if std::time::Instant::now() >= until {
+        return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
+      }
+      std::thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
   }
 
   #[cfg(test)]
@@ -889,6 +1020,26 @@ read -r line
   }
 
   #[test]
+  fn a_fork_does_not_claim_the_session_it_forks() {
+    let mut o = Owners::default();
+    o.claim(1, Some("s-1"), Some("chat:/r:c-1")).unwrap();
+    let fork = StartRequest { resume: Some("s-1".into()), resume_at: Some("0b5e9a1c-4c1d-4e2f-9a3b-000000000001".into()), owner: Some("chat:/r:c-2".into()), ..Default::default() };
+    assert_eq!(continued_session(&fork), None);
+    o.claim(2, continued_session(&fork), fork.owner.as_deref()).unwrap();
+    // Continuing it in place still needs the session.
+    let resume = StartRequest { resume: Some("s-1".into()), owner: Some("chat:/r:c-3".into()), ..Default::default() };
+    assert!(o.claim(3, continued_session(&resume), resume.owner.as_deref()).unwrap_err().contains("already running"));
+    // The fork (chat c-2) still names s-1, which chat c-1's run holds: that is not c-2 running.
+    assert!(o.chat_busy(Some("s-1"), "chat:/r:c-2"), "c-2's own run");
+    o.release(2);
+    assert!(!o.chat_busy(Some("s-1"), "chat:/r:c-2"));
+    assert_eq!(o.holder("chat:/r:c-1"), Some(1));
+    // A session resumed by a run that is no chat's (a terminal agent) keeps its chat busy.
+    o.claim(5, Some("s-5"), None).unwrap();
+    assert!(o.chat_busy(Some("s-5"), "chat:/r:c-5"));
+  }
+
+  #[test]
   fn owners_hold_sessions_and_chats_until_released() {
     let mut o = Owners::default();
     o.claim(1, Some("s-1"), Some("chat:/r:c-1")).unwrap();
@@ -941,17 +1092,28 @@ done"#,
     host.stop(first).unwrap();
     assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
     assert!(!host.session_live("s-old") && !host.session_live("s-new") && !host.owner_live("chat:/r:c-1"));
+    // Removing an agent's program stops its live runs first and waits for them to end.
+    let copilot = host.start(StartRequest { agent_id: Some("copilot".into()), ..req("/w") }, sink.clone()).unwrap();
+    assert!(matches!(next(&rx), AgentEvent::System { .. }));
+    assert_eq!(host.stop_agent("grok", Duration::from_secs(5)), Ok(0), "another agent's runs stay");
+    assert!(host.is_running(copilot));
+    assert_eq!((host.live_runs_of("copilot"), host.live_runs_of("grok")), (1, 0));
+    assert_eq!(host.stop_agent("copilot", Duration::from_secs(5)), Ok(1));
+    assert_eq!(host.live_runs_of("copilot"), 0);
+    assert!(matches!(next(&rx), AgentEvent::Exit { stopped: true, .. }));
+    assert!(!host.is_running(copilot));
     let second = host.start(StartRequest { resume: Some("s-old".into()), owner: Some("chat:/r:c-1".into()), effort: Some("off".into()), ..req("/w") }, sink).unwrap();
     assert_ne!(first, second);
 
     let requests = std::fs::read_to_string(&log).unwrap();
     let lines: Vec<Value> = requests.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     let methods: Vec<_> = lines.iter().map(|l| l["method"].as_str().unwrap()).collect();
-    assert_eq!(methods, ["start", "set_options", "set_options", "stop", "start"], "refused starts never reach the sidecar");
+    assert_eq!(methods, ["start", "set_options", "set_options", "stop", "start", "stop", "start"], "refused starts never reach the sidecar");
     assert_eq!(lines[1]["params"], json!({"runId": first, "model": "claude-sonnet-5", "permissionMode": "plan"}));
     assert_eq!(lines[2]["params"], json!({"runId": first, "effort": "high"}));
     assert!(lines[0]["params"].get("effort").is_none(), "no effort: the model's default");
-    assert_eq!(lines[4]["params"]["effort"], "off");
+    assert!(lines[4]["params"].get("agent_id").is_none() && lines[4]["params"].get("agentId").is_none(), "the agent id stays in the app");
+    assert_eq!(lines[6]["params"]["effort"], "off");
     assert!(lines[0]["params"].get("owner").is_none(), "the owner key stays in the app");
     host.shutdown();
   }

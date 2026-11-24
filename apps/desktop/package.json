@@ -15,6 +15,7 @@
 		"tauri": "tauri",
 		"build:sidecar": "bun ../agent-host/scripts/build-sidecar.ts",
 		"build:ptyd": "bun ../../tools/build-ptyd.ts",
+		"build:ptyd-host": "bun ../../tools/build-ptyd-host.ts",
 		"build:cli": "bun ../../tools/build-cli.ts"
 	},
 	"devDependencies": {

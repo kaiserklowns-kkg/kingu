@@ -8,6 +8,7 @@ export const arkai = {
 	'arkai.picker.none': 'No models: set up a provider',
 	'arkai.picker.noKey': '{name} (no API key)',
 	'arkai.picker.light': 'light mode',
+	'arkai.picker.router': 'model router',
 	// Settings › Arkai › Model providers
 	'arkai.settings.title': 'Model providers',
 	'arkai.settings.hint': 'Arkai runs chats on these models. Add one below, or in settings.json under kingu.arkai.providers; Ollama, and Clyde 1X on a local vLLM (port 8000), are found by themselves. API keys stay in the macOS Keychain.',

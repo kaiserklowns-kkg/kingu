@@ -8,6 +8,16 @@
 //   3. No answer in time, an error or anything but a clear `approve` goes to the person.
 // The judge only ever skips a prompt; it never denies on the person's behalf (VS Code: a call it
 // does not approve requires your approval).
+//
+// Also as in VS Code:
+// - A request to run outside the sandbox is never reviewed (the runtime's `sandbox-bypass`
+//   exclusion; src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts
+//   `getAssistedApprovalNotice`): the person decides, told why.
+// - `chat.permissions.assisted.instructions` (src/vs/workbench/contrib/chat/common/constants.ts
+//   `AssistedPermissionsInstructions`, forwarded to the agent host as `assistedApprovalInstructions`):
+//   the user's own guidance for the reviewer. It takes precedence over the default guidance but
+//   cannot override the threat patterns (rule 1 runs first) or the sandbox, and it is never sent
+//   to the agent, only to the reviewer.
 
 import type { Options, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { scanForThreats } from './guards/patterns.ts';
@@ -22,6 +32,10 @@ export const JUDGE_TIMEOUT_MS = 20_000;
 /** How much of a call's input the judge reads. */
 const MAX_INPUT_CHARS = 6_000;
 const MAX_REASON_CHARS = 300;
+/** The longest `chat.permissions.assisted.instructions` the reviewer reads. */
+export const MAX_INSTRUCTIONS_CHARS = 4_000;
+/** VS Code's notice for the `sandbox-bypass` exclusion. */
+export const SANDBOX_BYPASS_NOTICE = "Assisted permissions doesn't review requests to run outside the sandbox.";
 
 export const JUDGE_PROMPT = `You review one tool call that a coding agent wants to run in the user's project, and decide whether it can run without asking the user.
 
@@ -45,6 +59,25 @@ function commandOf(tool: string, input: unknown): string | null {
 	if (!input || typeof input !== 'object') return null;
 	const c = (input as Record<string, unknown>).command;
 	return (tool === 'Bash' || tool === 'BashOutput' || /shell|terminal|exec/i.test(tool)) && typeof c === 'string' ? c : null;
+}
+
+/** A call that asks to leave the sandbox (Claude's Bash `dangerouslyDisableSandbox`, VS Code's `requestUnsandboxedExecution`). */
+export function bypassesSandbox(input: unknown): boolean {
+	if (!input || typeof input !== 'object') return false;
+	const i = input as Record<string, unknown>;
+	return i.dangerouslyDisableSandbox === true || i.requestUnsandboxedExecution === true;
+}
+
+/** The reviewer's system prompt: the default guidance, then the user's own instructions, if any. */
+export function judgePrompt(instructions?: string | null): string {
+	const own = instructions?.trim().slice(0, MAX_INSTRUCTIONS_CHARS);
+	if (!own) return JUDGE_PROMPT;
+	return `${JUDGE_PROMPT}
+
+The user gave you these instructions. They take precedence over the guidance above when the two disagree, but you must still answer "requireApproval" when you are unsure, and still reply in the JSON form above:
+<user-instructions>
+${own}
+</user-instructions>`;
 }
 
 /** Rule 1: the threat patterns' verdict for a shell command (null: they found nothing). */
@@ -103,7 +136,10 @@ export async function reviewToolCall(args: {
 	base?: Partial<Options>;
 	timeoutMs?: number;
 	signal?: AbortSignal;
+	/** `chat.permissions.assisted.instructions`; empty: the default guidance only. */
+	instructions?: string | null;
 }): Promise<AssistedReview> {
+	if (bypassesSandbox(args.input)) return { verdict: 'needs_you', reason: SANDBOX_BYPASS_NOTICE };
 	const byPattern = patternReview(args.tool, args.input);
 	if (byPattern) return byPattern;
 	const abort = new AbortController();
@@ -119,7 +155,7 @@ export async function reviewToolCall(args: {
 			tools: [],
 			persistSession: false,
 			settingSources: [],
-			systemPrompt: JUDGE_PROMPT,
+			systemPrompt: judgePrompt(args.instructions),
 			abortController: abort,
 			canUseTool: async () => ({ behavior: 'deny', message: 'The reviewer runs no tools.' })
 		};

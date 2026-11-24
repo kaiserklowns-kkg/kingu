@@ -8,8 +8,17 @@ export const AUTO_CHECK_MS = 60 * 60 * 1000;
 /** After the window opens, so startup work (restoring tabs, git reads) is not competing with a scan. */
 export const AUTO_FIRST_MS = 2 * 60 * 1000;
 export const ACTIVITY_LIMIT = 20;
+/**
+ * Automatic runs sweep the chat history of deleted workspaces at most this often (Orca
+ * `chat-history-sweep-schedule.ts`: listing every transcript costs a stat and a read per file); a run
+ * that was asked for always sweeps.
+ */
+export const CHAT_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export type CleanupSource = 'auto' | 'cli' | 'dialog';
+
+/** Chats of deleted workspaces a run removed (Orca `WorkspaceCleanupRun.chatHistory`). */
+export type ChatHistorySweep = { deleted: number; failed: number; freedBytes: number };
 
 export type CleanupActivity = {
 	at: number;
@@ -18,12 +27,16 @@ export type CleanupActivity = {
 	archived: string[];
 	failed: { slug: string; error: string }[];
 	kept: number;
+	/** Absent when the run swept no chat history (the setting is off, or the sweep was not due). */
+	chatHistory?: ChatHistorySweep;
 };
 
 export type AutoState = {
 	enabled: boolean;
 	/** At least one rule is on for the open folder (a folder with cleanup off never runs). */
 	rulesOn: boolean;
+	/** `kingu.workspaceCleanup.deleteChatHistory` is on: runs happen for it alone, whatever `enabled` and the rules say. */
+	chatHistoryOn?: boolean;
 	hasFolder: boolean;
 	/** The review dialog is open, or a scan or run is going: never start under the user's hands. */
 	busy: boolean;
@@ -31,10 +44,18 @@ export type AutoState = {
 	now: number;
 };
 
-/** Run when asked for, a rule is on, nothing else is going, and the last run was a check interval ago. */
+/** Whether an automatic run applies the rules: only with the automatic switch and a rule on. */
+export const autoRulesOn = (s: Pick<AutoState, 'enabled' | 'rulesOn'>): boolean => s.enabled && s.rulesOn;
+
+/** Run when asked for (rules, or chat history of deleted workspaces), nothing else is going, and the last run was a check interval ago. */
 export function autoRunDue(s: AutoState, intervalMs = AUTO_CHECK_MS): boolean {
-	if (!s.enabled || !s.rulesOn || !s.hasFolder || s.busy) return false;
+	if ((!autoRulesOn(s) && !s.chatHistoryOn) || !s.hasFolder || s.busy) return false;
 	return s.lastRunAt === null || s.now - s.lastRunAt >= intervalMs;
+}
+
+/** Whether a run sweeps chat history: the setting is on, and an automatic run last swept an interval ago. */
+export function chatSweepDue(on: boolean, source: CleanupSource, lastSweptAt: number | null, now: number, intervalMs = CHAT_SWEEP_INTERVAL_MS): boolean {
+	return on && (source !== 'auto' || lastSweptAt === null || now - lastSweptAt >= intervalMs);
 }
 
 /**
@@ -49,7 +70,8 @@ export function nextAutoRunAt(auto: boolean, lastRunAt: number | null, now: numb
 
 /** Newest first, bounded; a run that found nothing to do is not worth a row unless it was asked for. */
 export function withActivity(list: readonly CleanupActivity[], entry: CleanupActivity): CleanupActivity[] {
-	if (entry.source === 'auto' && !entry.removed.length && !entry.archived.length && !entry.failed.length) return [...list];
+	const chats = (entry.chatHistory?.deleted ?? 0) + (entry.chatHistory?.failed ?? 0);
+	if (entry.source === 'auto' && !entry.removed.length && !entry.archived.length && !entry.failed.length && !chats) return [...list];
 	return [entry, ...list].slice(0, ACTIVITY_LIMIT);
 }
 
@@ -67,6 +89,30 @@ const time = (v: unknown): number | null => (typeof v === 'number' && Number.isF
 const text = (v: unknown): v is string => typeof v === 'string';
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
+/** A stored (or Rust-sent) chat history result; null unless all three counts are usable. */
+export function normalizeChatHistory(raw: unknown): ChatHistorySweep | null {
+	if (!isRecord(raw)) return null;
+	const [deleted, failed, freedBytes] = [time(raw.deleted), time(raw.failed), time(raw.freedBytes)];
+	if (deleted === null || failed === null || freedBytes === null) return null;
+	return { deleted: Math.floor(deleted), failed: Math.floor(failed), freedBytes: Math.floor(freedBytes) };
+}
+
+/** Space Codex's own chat history takes (Orca `CodexHistoryDiskUsage`); each hard-linked rollout counts once. */
+export type CodexHistoryUsage = { bytes: number; rollouts: number; /** False: the walk hit its budget, so `bytes` is a lower bound. */ complete: boolean };
+
+/** What Rust measured; null unless every field is usable. */
+export function normalizeCodexUsage(raw: unknown): CodexHistoryUsage | null {
+	if (!isRecord(raw)) return null;
+	const [bytes, rollouts] = [time(raw.bytes), time(raw.rollouts)];
+	if (bytes === null || rollouts === null || typeof raw.complete !== 'boolean') return null;
+	return { bytes: Math.floor(bytes), rollouts: Math.floor(rollouts), complete: raw.complete };
+}
+
+/** The "Codex history" badge (Orca `DeleteAgentHistoryWithWorkspaceSetting`): shown only when Codex has history. */
+export function codexHistoryBadge(usage: CodexHistoryUsage | null): { bytes: number; atLeast: boolean } | null {
+	return usage && usage.rollouts > 0 ? { bytes: usage.bytes, atLeast: !usage.complete } : null;
+}
+
 /** One stored row, repaired field by field; null when it has no usable time or source. */
 export function normalizeActivity(raw: unknown): CleanupActivity | null {
 	if (!isRecord(raw)) return null;
@@ -79,7 +125,8 @@ export function normalizeActivity(raw: unknown): CleanupActivity | null {
 		? raw.failed.filter((f): f is { slug: string; error: string } => isRecord(f) && text(f.slug) && text(f.error)).map(({ slug, error }) => ({ slug, error }))
 		: [];
 	const kept = time(raw.kept);
-	return { at, source, removed, archived, failed, kept: kept === null ? 0 : Math.floor(kept) };
+	const chatHistory = normalizeChatHistory(raw.chatHistory);
+	return { at, source, removed, archived, failed, kept: kept === null ? 0 : Math.floor(kept), ...(chatHistory ? { chatHistory } : {}) };
 }
 
 /** The stored payload, newest first and bounded; anything unreadable is empty rather than an error. */

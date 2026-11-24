@@ -7,6 +7,7 @@ export const chatExtras = {
 	'chatExtras.ask.delete': 'จะลบไฟล์',
 	'chatExtras.ask.protected': 'จะยุ่งกับไฟล์ที่ป้องกันไว้ (.kinguignore)',
 	'chatExtras.ask.mcp': 'จะเรียกเครื่องมือของ MCP',
+	'chatExtras.ask.unsandboxed': 'จะรันนอก sandbox เข้าถึงไฟล์และเครือข่ายได้เท่าที่คุณเข้าถึงได้',
 	'chatExtras.feedback.helpful': 'มีประโยชน์',
 	'chatExtras.feedback.unhelpful': 'ไม่มีประโยชน์',
 	'chatExtras.feedback.thanks': 'ขอบคุณสำหรับความเห็น',

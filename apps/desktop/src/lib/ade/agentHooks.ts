@@ -5,6 +5,7 @@
 // provider mappers do. Pure.
 
 import { parseAsk, type AskPrompt } from '#lib/agent/ask.ts';
+import { permissionAsk, type PermissionAsk } from './permissionAsk';
 import { t } from '#lib/i18n/index.ts';
 
 export type HookPhase = 'starting' | 'working' | 'waiting' | 'idle' | 'ended';
@@ -17,6 +18,8 @@ export type HookState = {
 	/** The waiting PermissionRequest hook (hooks.rs PERMISSION_HOLD_SCRIPT) the quick reply answers,
 	 * and since when (Unix ms); its budget is 122 s. Only a claude Kingu started has one. */
 	hold?: { id: string; since: number };
+	/** What the open permission prompt asks (the tool, its command or path) and what a session-wide answer would grant. */
+	request?: PermissionAsk;
 	/** The tool call (and its agent) the permission prompt is for: PostToolBatch settles it only when it lists it (Orca). */
 	waitingFor?: { toolUseId: string; agentId?: string };
 	/** Waiting on the answer to a question the agent asked (AskUserQuestion, elicitation, …). */
@@ -78,10 +81,18 @@ export function questionText(input: unknown): string | undefined {
 const toolOf = (p: Payload) => str(p.tool_name) ?? str(p.toolName) ?? str(p.name) ?? str((p.tool as Payload | undefined)?.name);
 const inputOf = (p: Payload) => p.tool_input ?? p.toolInput ?? p.input ?? p.args ?? p.arguments;
 
-type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message' | 'subagents' | 'leadDone'>>;
+type Patch = Partial<Pick<HookState, 'phase' | 'permission' | 'question' | 'ask' | 'message' | 'subagents' | 'leadDone' | 'request'>>;
 const working = (message?: string): Patch => ({ phase: 'working', permission: false, question: false, ask: undefined, leadDone: false, ...(message ? { message } : {}) });
 const idle = (message = t('ade.hooks.turnDone')): Patch => ({ phase: 'idle', permission: false, question: false, ask: undefined, leadDone: false, message });
-const permission = (tool?: string, message?: string): Patch => ({ phase: 'waiting', permission: true, question: false, ask: undefined, message: message || (tool ? t('ade.model.eventPermission', { tool }) : t('ade.hooks.waitingPermission')) });
+/** `p`: the PermissionRequest payload, when the event is one (a notification about a prompt keeps the request it had). */
+const permission = (tool?: string, message?: string, p?: Payload): Patch => ({
+	phase: 'waiting',
+	permission: true,
+	question: false,
+	ask: undefined,
+	message: message || (tool ? t('ade.model.eventPermission', { tool }) : t('ade.hooks.waitingPermission')),
+	...(p ? { request: permissionAsk(tool, inputOf(p), p.permission_suggestions) } : {})
+});
 const question = (input: unknown): Patch => ({ phase: 'waiting', permission: false, question: true, ask: parseAsk(input) ?? undefined, message: firstLine(questionText(input)) || t('ade.model.question') });
 const usingTool = (p: Payload) => {
 	const tool = toolOf(p);
@@ -181,7 +192,7 @@ function droid(ev: string, p: Payload): Patch | null {
 		case 'PostToolUse':
 			return working();
 		case 'PermissionRequest':
-			return permission(toolOf(p));
+			return permission(toolOf(p), undefined, p);
 		case 'Notification': {
 			const m = typeof p.message === 'string' ? p.message.toLowerCase() : '';
 			if (/permission|approve|approval/.test(m)) return permission(undefined, firstLine(p.message));
@@ -208,7 +219,7 @@ function codex(ev: string, p: Payload): Patch | null {
 		case 'PostToolUse':
 			return working();
 		case 'PermissionRequest':
-			return permission(toolOf(p));
+			return permission(toolOf(p), undefined, p);
 		case 'Stop':
 			return idle(firstLine(p.last_assistant_message) || undefined);
 		case 'Interrupt':
@@ -276,7 +287,7 @@ function claude(ev: HookEvent, prev: HookState): Patch | null {
 			if (isQuestionTool(ev.tool_name)) return question(ev.tool_input);
 			return working(ev.tool_name ? t('ade.hooks.usingTool', { tool: ev.tool_name }) : t('ade.hooks.working'));
 		case 'PermissionRequest':
-			return isQuestionTool(ev.tool_name) ? question(ev.tool_input) : permission(ev.tool_name);
+			return isQuestionTool(ev.tool_name) ? question(ev.tool_input) : permission(ev.tool_name, undefined, ev);
 		// Orca (claude-settled-permission-requests.ts): Claude can deny a request itself (a prompt
 		// timeout, a safety check) with no Post* hook; the owner's batch end lists the call. A batch
 		// that does not list the waiting call (a late one, another agent's) changes nothing.
@@ -330,17 +341,20 @@ function claude(ev: HookEvent, prev: HookState): Patch | null {
 	}
 }
 
+/** A request lasts while its permission prompt does. */
+const settled = (next: HookState): HookState => (next.request && !(next.permission && next.phase === 'waiting') ? { ...next, request: undefined } : next);
+
 export function applyHook(state: HookState, event: object, now: number): HookState {
 	const ev = event as HookEvent;
 	if (ev.type === 'agent-turn-complete') {
 		const sessionId = typeof ev['thread-id'] === 'string' && ev['thread-id'] ? ev['thread-id'] : state.sessionId;
-		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, message: firstLine(ev['last-assistant-message']) || t('ade.hooks.turnDone') };
+		return { ...state, at: now, sessionId, phase: 'idle', permission: false, question: false, ask: undefined, request: undefined, message: firstLine(ev['last-assistant-message']) || t('ade.hooks.turnDone') };
 	}
 	// A claude typed by hand in a task pane reports through Kingu's user-settings entries (status_hooks.rs).
 	if (ev.kingu_hook === 'claude' && ev.payload && typeof ev.payload === 'object') {
 		const p = { ...ev.payload, hook_event_name: str(ev.payload.hook_event_name) ?? ev.event } as HookEvent;
 		const patch = claude(p, state);
-		return patch ? { ...state, ...patch, hooks: true, at: now, sessionId: p.session_id ?? state.sessionId } : state;
+		return patch ? settled({ ...state, ...patch, hooks: true, at: now, sessionId: p.session_id ?? state.sessionId }) : state;
 	}
 	if (typeof ev.kingu_hook === 'string') {
 		const map = PROVIDERS[ev.kingu_hook];
@@ -348,13 +362,13 @@ export function applyHook(state: HookState, event: object, now: number): HookSta
 		const patch = map && typeof ev.event === 'string' ? map(ev.event, p, state) : null;
 		if (!patch) return state;
 		const sessionId = str(p.session_id) ?? str(p.sessionID) ?? state.sessionId;
-		return { ...state, ...patch, hooks: true, at: now, sessionId };
+		return settled({ ...state, ...patch, hooks: true, at: now, sessionId });
 	}
 	const patch = claude(ev, state);
 	if (!patch) return state;
 	// The hold lasts while the permission prompt does (a Notification about it keeps it).
 	const holdId = ev.hook_event_name === 'PermissionRequest' ? str((ev as Payload).kingu_hold) : undefined;
-	const next = { ...state, ...patch, hooks: true, at: now, sessionId: ev.session_id ?? state.sessionId };
+	const next = settled({ ...state, ...patch, hooks: true, at: now, sessionId: ev.session_id ?? state.sessionId });
 	next.hold = !next.permission ? undefined : holdId ? { id: holdId, since: now } : ev.hook_event_name === 'PermissionRequest' ? undefined : state.hold;
 	const toolUseId = str((ev as Payload).tool_use_id);
 	const agentId = str((ev as Payload).agent_id);

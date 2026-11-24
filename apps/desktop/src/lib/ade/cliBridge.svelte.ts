@@ -28,6 +28,8 @@ import { AUTO_CLEANUP_ID } from './autoCleanup.svelte.ts';
 import { nextAutoRunAt } from './autoCleanup.ts';
 import { WORKSPACE_CLEANUP_RULE_KEYS } from './workspaceCleanupPolicy.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
+import { floating } from '#lib/workbench/floating.svelte.ts';
+import { askRelayGrant, RELAY_GRANT_METHOD } from './sshBrowserRelay.ts';
 
 async function handle(req: CliRequest): Promise<unknown> {
 	switch (req.method) {
@@ -44,6 +46,16 @@ async function handle(req: CliRequest): Promise<unknown> {
 			if (!slug) throw new Error(t('cli.taskNotCreated'));
 			return { slug };
 		}
+		case 'browser.page': {
+			// A page an agent opened (Rust floating_browser/agent.rs): shown as a floating browser tab.
+			const label = String(req.params.label ?? '');
+			if (!label.startsWith('agent-browser-')) throw new Error('not an agent page');
+			floating.newAgentBrowser(label, String(req.params.url ?? ''));
+			return null;
+		}
+		case RELAY_GRANT_METHOD:
+			// An agent on an SSH host opens a page or loads an address (Rust ssh_browser_relay.rs).
+			return askRelayGrant(req.params);
 		case 'task.open': {
 			const slug = String(req.params.slug ?? '');
 			if (!appMode.isAgents) appMode.setMode('agents');

@@ -62,13 +62,18 @@ describe('profile detection', () => {
 
 describe('claude (unchanged behaviour)', () => {
 	const ctx: LaunchContext = { ...withMcp, sessionId: 'sid', hookSettings: '{"hooks":{}}' };
-	test('start: session id and hooks before the prompt, plugins and --mcp-config after it', () => {
+	test('start: session id, hooks, plugins and --mcp-config, then `--` and the prompt', () => {
 		const { argv, typePrompt } = profile('claude').launch(['claude'], { prompt: tricky }, ctx);
 		expect(typePrompt).toBeUndefined();
-		expect(argv.slice(0, 6)).toEqual(['claude', '--session-id', 'sid', '--settings', '{"hooks":{}}', tricky]);
-		expect(argv.slice(6, 9)).toEqual(['--plugin-dir', '/c/snap-plugins/go-1', '--mcp-config']);
-		expect(JSON.parse(argv[9])).toEqual({ mcpServers: servers });
-		expect(argv).toHaveLength(10);
+		expect(argv.slice(0, 5)).toEqual(['claude', '--session-id', 'sid', '--settings', '{"hooks":{}}']);
+		expect(argv.slice(5, 8)).toEqual(['--plugin-dir', '/c/snap-plugins/go-1', '--mcp-config']);
+		expect(JSON.parse(argv[8])).toEqual({ mcpServers: servers });
+		// The variadic --mcp-config (or a `--disallowedTools` in the args) ends at `--` (Orca 907b43c04).
+		expect(argv.slice(9)).toEqual(['--', tricky]);
+	});
+	test('a base that already ends its options gets no second `--`', () => {
+		expect(profile('claude').launch(['claude', '--debug', '--'], { prompt: 'x' }, none).argv).toEqual(['claude', '--debug', '--', 'x']);
+		expect(profile('claude').launch(['env', 'A=1', 'claude', '--disallowedTools', 'Agent'], { prompt: 'x' }, none).argv).toEqual(['env', 'A=1', 'claude', '--disallowedTools', 'Agent', '--', 'x']);
 	});
 	test('resume by id, else --continue; fresh gets a new id', () => {
 		expect(profile('claude').launch(['claude'], { resume: 'sid' }, { servers: {}, plugins: [], hookSettings: 'S' }).argv).toEqual(['claude', '--resume', 'sid', '--settings', 'S']);
@@ -251,4 +256,70 @@ describe('pasted prompts and codex notify', () => {
 		expect(s).toMatchObject({ phase: 'idle', sessionId: 'th-1', message: 'แก้แล้ว', at: 5 });
 		expect(applyHook(s, { type: 'agent-turn-complete' }, 6)).toMatchObject({ sessionId: 'th-1', message: 'Turn finished, waiting for you' });
 	});
+});
+
+test("agentOfProcess: a catalog agent by the name its process runs under (Orca's recognizeAgentProcess)", async () => {
+	const { agentOfProcess, PROFILES } = await import('./agentProfiles.ts');
+	const { agentIconKey } = await import('#lib/agent/agentIcons.ts');
+	for (const p of PROFILES)
+		for (const bin of p.bins) {
+			expect(agentOfProcess(bin)).toBe(bin);
+			expect(agentIconKey(bin)).not.toBeNull();
+		}
+	expect(agentOfProcess('/usr/local/bin/Kiro-CLI.exe')).toBe('kiro-cli');
+	expect(agentOfProcess('"claude"')).toBe('claude');
+	expect(agentOfProcess('dsh')).toBe('dsh-tui');
+	expect(agentOfProcess('zcode-cli')).toBe('zcode');
+	expect(agentOfProcess('codex-x86_64-unknown-linux-musl')).toBe('codex');
+	expect(agentOfProcess('qodercli-1.4.2')).toBe('qodercli');
+	expect(agentOfProcess('qoderclicn-2')).toBe('qoderclicn');
+	expect(agentOfProcess('grok-darwin-arm64')).toBe('grok');
+	expect(agentOfProcess('jcode-linux-x86_64.bin')).toBe('jcode');
+	expect(agentOfProcess('muse-bin-1.3.0')).toBe('muse');
+	for (const other of ['node', 'python3', 'vim', 'zsh', 'muse-tools', 'jcode-helper', 'qodercli-x', 'opencode-blinker', '', null, undefined]) expect(agentOfProcess(other)).toBeNull();
+});
+
+test("agentOfCommandLine: a CLI that runs as node or python is known by its script (Orca's recognizeAgentProcessFromCommandLine)", async () => {
+	const { agentOfCommandLine, foregroundProgram } = await import('./agentProfiles.ts');
+	const of = (line: string) => agentOfCommandLine(line.split(' '));
+	// A launcher named after the agent, and scripts inside the agent's own package.
+	expect(of('node /opt/homebrew/bin/gemini --yolo')).toBe('gemini');
+	expect(of('node --no-warnings /usr/local/lib/node_modules/@google/gemini-cli/dist/gemini.js')).toBe('gemini');
+	expect(of('node /usr/lib/node_modules/@openai/codex/bin/codex.js resume')).toBe('codex');
+	expect(of('node /Users/x/.local/share/cursor-agent/versions/2026.11.01/index.js')).toBe('cursor-agent');
+	expect(of('node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js')).toBe('claude');
+	expect(of('node /p/node_modules/.bin/../@qwen-code/qwen-code/cli.js')).toBe('qwen');
+	expect(of('node /p/node_modules/@moonshot-ai/kimi-code/dist/main.mjs')).toBe('kimi');
+	expect(of('node --require /x/hook.js /p/node_modules/@zcode/cli/dist/zcode.cjs')).toBe('zcode');
+	expect(of('node C:\\Users\\x\\AppData\\npm\\node_modules\\command-code\\dist\\index.mjs')).toBe('command-code');
+	// Python: a launcher, a module, a script in a bin folder, Hermes' inline bootstrap.
+	expect(of('python3 /Users/x/.local/bin/aider --model x')).toBe('aider');
+	expect(of('python3.12 -m aider.main')).toBe('aider');
+	expect(of('python /venv/lib/python3.12/site-packages/aider.py')).toBe('aider');
+	expect(agentOfCommandLine(['python3', '-I', '-c', 'import sys; import hermes_bootstrap; hermes_bootstrap.main()'])).toBe('hermes');
+	// The first word by its own name; a process title that replaced argv.
+	expect(of('claude')).toBe('claude');
+	expect(of('/usr/local/bin/codex resume')).toBe('codex');
+	// Not an agent: a generic script, a script merely named like one, inline source, prompt text, another program.
+	for (const line of [
+		'node /srv/app/cli.js',
+		'node /srv/app/index.js gemini',
+		'node /srv/tools/codex.js',
+		'node /srv/tools/gemini.js',
+		'node -e require("/opt/homebrew/bin/gemini")',
+		'node server.js claude',
+		'python3 -m http.server',
+		'python3 /srv/aider.py',
+		'python3 -c print(1)',
+		'python3 manage.py runserver',
+		'qoder open .',
+		'vim /opt/homebrew/bin/gemini',
+		'node',
+		''
+	])
+		expect([line, of(line)]).toEqual([line, null]);
+	expect(foregroundProgram({ name: 'node', args: ['node', '/opt/homebrew/bin/gemini'] })).toBe('gemini');
+	expect(foregroundProgram({ name: 'node', args: ['node', '/srv/app/server.js'] })).toBe('node');
+	expect(foregroundProgram({ name: 'node' })).toBe('node');
+	expect(foregroundProgram({ name: 'sleep', args: [] })).toBe('sleep');
 });

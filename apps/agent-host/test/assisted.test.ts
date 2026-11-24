@@ -2,7 +2,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { Options, PermissionResult, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { JUDGE_MODEL, judgeRequest, parseVerdict, patternReview, reviewToolCall, type AssistedReview, type JudgeQuery } from '../src/assisted.ts';
+import { JUDGE_MODEL, JUDGE_PROMPT, judgePrompt, judgeRequest, MAX_INSTRUCTIONS_CHARS, parseVerdict, patternReview, reviewToolCall, SANDBOX_BYPASS_NOTICE, type AssistedReview, type JudgeQuery } from '../src/assisted.ts';
+import { mcpPolicyParam } from '../src/host.ts';
 import { AgentHost, type QueryFn } from '../src/host.ts';
 import type { AgentEvent } from '../src/protocol.ts';
 
@@ -111,5 +112,55 @@ describe('Assisted permissions in a run', () => {
 		await t.answer('deny');
 		await t.until('result');
 		expect(t.log.permission?.behavior).toBe('deny');
+	});
+});
+
+describe('VS Code 1.144+ parts of Assisted permissions', () => {
+	test('a request to leave the sandbox is never reviewed (the sandbox-bypass exclusion)', async () => {
+		const seen: { prompt?: string } = {};
+		for (const input of [{ command: 'npm test', dangerouslyDisableSandbox: true }, { command: 'npm test', requestUnsandboxedExecution: true }]) {
+			const r = await reviewToolCall({ tool: 'Bash', input, cwd: '/w', query: judge('{"decision":"approve"}', seen) });
+			expect(r).toEqual({ verdict: 'needs_you', reason: SANDBOX_BYPASS_NOTICE });
+		}
+		expect(SANDBOX_BYPASS_NOTICE).toBe("Assisted permissions doesn't review requests to run outside the sandbox.");
+		expect(seen.prompt).toBeUndefined();
+	});
+
+	test('chat.permissions.assisted.instructions reach the reviewer only, after the default guidance', async () => {
+		expect(judgePrompt(null)).toBe(JUDGE_PROMPT);
+		expect(judgePrompt('   ')).toBe(JUDGE_PROMPT);
+		const own = judgePrompt('Approve docker compose up in this repo.');
+		expect(own.startsWith(JUDGE_PROMPT)).toBe(true);
+		expect(own).toContain('They take precedence over the guidance above');
+		expect(own).toContain('<user-instructions>\nApprove docker compose up in this repo.\n</user-instructions>');
+		expect(judgePrompt('x'.repeat(MAX_INSTRUCTIONS_CHARS + 50)).length).toBeLessThan(JUDGE_PROMPT.length + MAX_INSTRUCTIONS_CHARS + 400);
+		const seen: { options?: Options; prompt?: string } = {};
+		await reviewToolCall({ tool: 'Bash', input: { command: 'docker compose up' }, cwd: '/w', query: judge('{"decision":"approve","reason":"ok"}', seen), instructions: 'Approve docker compose up.' });
+		expect(String(seen.options?.systemPrompt)).toContain('Approve docker compose up.');
+		// The call itself is what the reviewer is asked about; the instructions are not in it.
+		expect(seen.prompt).not.toContain('Approve docker compose up.');
+	});
+
+	test('the host passes the instructions from start to the reviewer', async () => {
+		const got: (string | null | undefined)[] = [];
+		const out: unknown[] = [];
+		const h = new AgentHost({ query: session({}), write: (m) => out.push(m), newId: () => 'r', review: async (a) => (got.push(a.instructions), { verdict: 'approved', reason: 'ok' }) });
+		await h.handleLine(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'start', params: { runId: 1, cwd: '/w', prompt: 'x', permissionMode: 'assisted', assistedInstructions: 'Be strict.' } }));
+		for (let i = 0; i < 200 && !got.length; i++) await new Promise((r) => setTimeout(r, 5));
+		expect(got).toEqual(['Be strict.']);
+		const bad = await h.dispatch('start', { runId: 2, cwd: '/w', prompt: 'x', assistedInstructions: 5 }).catch((e: Error) => e.message);
+		expect(bad).toBe('assistedInstructions must be a string of at most 16 KB');
+	});
+});
+
+describe('the MCP policy for Claude Code (managedSettings)', () => {
+	test('lists of one-key matchers pass; anything else refuses the run', () => {
+		expect(mcpPolicyParam(null)).toBeNull();
+		expect(mcpPolicyParam({})).toBeNull();
+		expect(mcpPolicyParam({ allowedMcpServers: [{ serverUrl: 'https://mcp.example.com/mcp' }, { serverCommand: ['node', 'approved-server.js'] }] })).toEqual({
+			allowedMcpServers: [{ serverUrl: 'https://mcp.example.com/mcp' }, { serverCommand: ['node', 'approved-server.js'] }]
+		});
+		expect(mcpPolicyParam({ allowedMcpServers: [], deniedMcpServers: [{ serverName: 'x' }] })).toEqual({ allowedMcpServers: [], deniedMcpServers: [{ serverName: 'x' }] });
+		for (const bad of [[], { allowedMcpServers: [{ serverName: 'a', serverUrl: 'b' }] }, { deniedMcpServers: [{ serverCommand: [] }] }, { allowedMcpServers: 'x' }]) expect(() => mcpPolicyParam(bad)).toThrow('mcpPolicy must be');
 	});
 });

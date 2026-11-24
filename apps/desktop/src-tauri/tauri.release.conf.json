@@ -1,9 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "build": {
-    "beforeBuildCommand": "bun run build:sidecar && bun run build:ptyd && bun run build:cli && bun run build"
+    "beforeBuildCommand": "bun run build:sidecar && bun run build:ptyd && bun run build:ptyd-host && bun run build:cli && bun run build"
   },
   "bundle": {
-    "externalBin": ["binaries/kingu-agent-host", "binaries/kingu-ptyd", "binaries/kingu-cli"]
+    "externalBin": ["binaries/kingu-agent-host", "binaries/kingu-ptyd", "binaries/kingu-cli"],
+    "resources": {
+      "../../../snaps/": "snaps/",
+      "host-bin/": "host-bin/"
+    }
   }
 }

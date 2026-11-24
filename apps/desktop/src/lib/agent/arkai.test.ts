@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { arkaiDefault, arkaiGroups, needsKey, parseArkaiProviders, providerEntry, splitArkaiModel, withProvider, type ArkaiProviderInfo } from './arkai';
+import { arkaiDefault, arkaiGroups, needsKey, parseArkaiProviders, parseArkaiRouters, providerEntry, splitArkaiModel, withProvider, type ArkaiProviderInfo } from './arkai';
 import { setLocale } from '#lib/i18n/index.ts';
 
 const provider = (over: Partial<ArkaiProviderInfo>): ArkaiProviderInfo => ({
@@ -56,6 +56,23 @@ describe('Arkai models', () => {
 		expect(arkaiDefault(providers, 'claude-opus-5-5')).toBe('ollama/qwen3');
 		expect(arkaiDefault(providers, 'or/a/b')).toBe('or/a/b');
 		expect(arkaiDefault([], null)).toBeNull();
+	});
+
+	test('model routers follow each provider\'s models (VS Code 1.147)', () => {
+		setLocale('en');
+		const routers = parseArkaiRouters([{ name: 'daily-driver', label: 'Daily Driver', description: 'Haiku, then Opus' }, { name: 'Bad Name' }, { name: 'quick' }, null]);
+		expect(routers).toEqual([
+			{ name: 'daily-driver', label: 'Daily Driver', description: 'Haiku, then Opus' },
+			{ name: 'quick', label: 'quick', description: '' }
+		]);
+		const groups = arkaiGroups([provider({ id: 'anthropic', name: 'Anthropic', models: [{ id: 'claude-haiku-4-5' }] }), provider({ id: 'empty', models: [] })], 'anthropic/model-router:quick', routers);
+		expect(groups).toHaveLength(1);
+		expect(groups[0]!.models).toEqual([
+			{ value: 'anthropic/claude-haiku-4-5', label: 'claude-haiku-4-5', description: 'claude-haiku-4-5' },
+			{ value: 'anthropic/model-router:daily-driver', label: 'Daily Driver', description: 'model router · Haiku, then Opus' },
+			{ value: 'anthropic/model-router:quick', label: 'quick', description: 'model router' }
+		]);
+		expect(parseArkaiRouters('x')).toEqual([]);
 	});
 
 	test('a remote provider without a key needs one; a local one does not', () => {

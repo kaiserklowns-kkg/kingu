@@ -70,7 +70,7 @@ External
 | `kingu.agent.env.<id>` | ADE | env ต่อ CLI profile |
 | `kingu.agent.cmdOverrides` | ADE | binary แทนต่อ profile |
 | `kingu.agent.disabled` | ADE | ซ่อน TUI agent |
-| `kingu.agent.cliPermissions` | ADE | `manual` / `yolo` |
+| `kingu.agent.cliPermissions` | ADE | `manual` / `auto` / `yolo` |
 | `kingu.agent.permissionMode` | ทั้งคู่ | ค่าเริ่มต้นของสิทธิ์ (SDK mode) |
 | `kingu.agent.statusHooks` | ADE | hooks รายงานสถานะ CLI |
 | `kingu.agent.claudeAgentTeams` | ADE | Claude agent teams (in-process) |

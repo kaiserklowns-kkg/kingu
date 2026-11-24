@@ -7,7 +7,10 @@
 	// Another harness (VS Code 1.145's nested sessions with a different harness): the side chat is a
 	// new chat of that agent, with its own model and Manual permissions, told the quoted excerpt
 	// instead of the whole conversation (another agent cannot resume this one's session).
-	import { onDestroy, untrack } from 'svelte';
+	// `/side` and `/btw` (Orca 1.4.272, sideQuestion.ts) open it with no excerpt and a `question`,
+	// sent at once; `before` cuts the fork before a running request, so a side question asked while
+	// the agent works copies only finished turns and never derails the running one.
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import ChatList from './ChatList.svelte';
@@ -26,6 +29,8 @@
 		root = null,
 		parentRuntime = CLAUDE_RUNTIME,
 		canFork = true,
+		question = '',
+		before = null,
 		onclose,
 		onkeep
 	}: {
@@ -36,13 +41,17 @@
 		/** The chat's own agent; `canFork`: it can fork the chat (rewind), so a same-agent side chat knows the whole conversation. */
 		parentRuntime?: string;
 		canFork?: boolean;
+		/** `/btw <question>`: sent as the first question when the drawer opens. */
+		question?: string;
+		/** The request the fork is cut before (null: the whole chat). */
+		before?: number | null;
 		onclose: () => void;
 		/** Keep as Chat: the side chat is now a chat of the history; show it. */
 		onkeep: (id: string) => void;
 	} = $props();
 
 	let sideId = $state<string | null>(null);
-	let text = $state('');
+	let text = $state(untrack(() => question));
 	let busy = $state(false);
 	const run = $derived(sideId ? chats.run(sideId) : undefined);
 	const running = $derived(turnBusy(run));
@@ -64,7 +73,7 @@
 		busy = true;
 		try {
 			if (!sideId && forks) {
-				const id = await chats.fork(parentId, null, { side: true });
+				const id = await chats.fork(parentId, before, { side: true });
 				if (!id) return;
 				sideId = id;
 				if (await chats.send(id, { text: sideChatMessage(excerpt, question), images: [] })) text = '';
@@ -85,6 +94,11 @@
 			busy = false;
 		}
 	}
+
+	// `/btw <question>`: asked at once; on failure it stays in the drawer's input.
+	onMount(() => {
+		if (text.trim()) void send();
+	});
 
 	/** Kept as a chat: not discarded when the drawer goes. */
 	let kept = false;
@@ -123,7 +137,7 @@
 </script>
 
 <section
-	class="absolute inset-x-0 bottom-0 z-20 flex h-[60%] min-h-40 flex-col border-t border-(--vscode-widget-border) bg-(--vscode-sideBar-background) shadow-[0_-2px_8px_var(--vscode-widget-shadow)]"
+	class="kg-side-chat absolute inset-x-0 bottom-0 z-20 flex h-[60%] min-h-40 flex-col border-t border-(--vscode-widget-border) bg-(--vscode-sideBar-background) shadow-[0_-2px_8px_var(--vscode-widget-shadow)]"
 	aria-label={t('chatTranscript.side.header')}
 	data-chat-find-skip
 >

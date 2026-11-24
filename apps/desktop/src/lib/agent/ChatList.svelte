@@ -31,6 +31,8 @@
 		runMode?: RunModeControl;
 		/** Continue under a stopped last turn (Orca's): sends "continue". */
 		continue?: () => void;
+		/** An MCP App's `ui/message`: puts the text in the chat's input when it is empty; false otherwise. */
+		setInput?: (text: string) => boolean;
 	};
 </script>
 
@@ -59,6 +61,8 @@
 	import ChatMarkdown from './ChatMarkdown.svelte';
 	import ChatToolRow from './ChatToolRow.svelte';
 	import ArtifactCard from '#lib/artifacts/ArtifactCard.svelte';
+	import McpAppFrame from './McpAppFrame.svelte';
+	import { mcpApps } from './mcpApps.svelte.ts';
 	import { answersFor, parseAsk } from './ask';
 	import { buildTurns, foldSteps, hiddenTools, responseText, splitVerb, workedFor, type Part } from './chatParts';
 	import { timeAgo } from '#lib/ade/model.ts';
@@ -349,8 +353,8 @@
 					{/if}
 					{#each turn.parts as part, pi (pi)}
 						{@const key = `${ti}:${pi}`}
-						{#if folded && pi < end}
-							<!-- folded into "Worked for" -->
+						{#if folded && pi < end && part.kind !== 'mcpApp'}
+							<!-- folded into "Worked for" (an MCP App stays: its frame would load again) -->
 						{:else if part.kind === 'markdown'}
 							<ChatMarkdown text={part.text} streaming={part.streaming} {root} />
 						{:else if part.kind === 'thinking'}
@@ -411,6 +415,11 @@
 							</div>
 						{:else if part.kind === 'artifact'}
 							<ArtifactCard artifact={part.artifact} />
+						{:else if part.kind === 'mcpApp'}
+							<!-- chat.mcp.apps.enabled (VS Code's): MCP servers may show their UI for a tool call. -->
+							{#if chatId && mcpApps.enabled()}
+								<McpAppFrame app={part.app} {chatId} onmessage={actions.setInput} />
+							{/if}
 						{:else if part.kind === 'mcpRequest'}
 							{@const req = part.request}
 							<McpRequestCard request={req} action={part.action} onanswer={chatId && !run?.ended ? (a, content, remember) => mcpChat.answer(chatId, req, a, content, remember) : undefined} />

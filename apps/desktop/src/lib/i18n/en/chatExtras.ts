@@ -9,6 +9,7 @@ export const chatExtras = {
 	'chatExtras.ask.delete': 'it deletes files',
 	'chatExtras.ask.protected': 'it touches a protected file (.kinguignore)',
 	'chatExtras.ask.mcp': 'it calls an MCP tool',
+	'chatExtras.ask.unsandboxed': 'it runs outside the sandbox, with your full access to files and the network',
 	'chatExtras.feedback.helpful': 'Helpful',
 	'chatExtras.feedback.unhelpful': 'Not Helpful',
 	'chatExtras.feedback.thanks': 'Thanks for the feedback',

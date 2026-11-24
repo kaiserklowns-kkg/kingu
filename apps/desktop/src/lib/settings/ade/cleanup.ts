@@ -34,6 +34,15 @@ export const CLEANUP_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.workspaceCleanup.deleteChatHistory',
+		group: 'Workspace Cleanup',
+		type: 'boolean',
+		default: false,
+		description:
+			'ลบประวัติแชตของ workspace ที่ถูกลบไปแล้ว (Orca: deleteChatHistoryWithWorkspace) ปิดไว้ก่อน เมื่อเปิด Kingu จะลบแชตของ Kingu, transcript ของ Claude Code และ rollout ของ Codex ที่ทำงานใน task worktree ซึ่งโฟลเดอร์หายไปแล้วและไม่มี task นั้นในรายการ แชตของ workspace ที่ยังอยู่ แชตที่เพิ่งใช้ในชั่วโมงที่ผ่านมา และแชตที่ถูกเปิดต่อที่โฟลเดอร์อื่นจะถูกเก็บไว้ ลบแล้วกู้คืนไม่ได้ (Delete Kingu, Claude Code and Codex chats of task worktrees that no longer exist: off by default; chats of workspaces you still have, chats used in the last hour and chats resumed elsewhere are kept. Deleted chats cannot be recovered.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.workspaceCleanup.rules',
 		group: 'Workspace Cleanup',
 		type: 'json',

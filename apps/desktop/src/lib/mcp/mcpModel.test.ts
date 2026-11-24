@@ -84,6 +84,18 @@ describe('MCP Servers view rows', () => {
 	});
 });
 
+describe('the MCP server policy (chat.mcp.allowedServers / deniedServers, managed allowlist)', () => {
+	test('a blocked server is not passed to runs and its row says why', () => {
+		const why = 'This Model Context Protocol server is not in chat.mcp.allowedServers.';
+		const entries = [entry({ name: 'ok', source: 'user' }), entry({ name: 'no', source: 'user', blocked: why })];
+		expect(Object.keys(composeServers({}, entries, new Set()))).toEqual(['ok']);
+		const rows = mcpRows({}, entries, new Set(), { no: { name: 'no', status: 'connected', error: null, source: 'user', tools: [] } });
+		const no = rows.find((r) => r.name === 'no')!;
+		expect([no.blocked, rowState(no), no.live]).toEqual([why, 'blocked', null]);
+		expect(rowState(rows.find((r) => r.name === 'ok')!)).toBe('idle');
+	});
+});
+
 describe('Add Server…', () => {
 	test('splits a command line like a shell', () => {
 		expect(splitCommandLine(`npx -y "@scope/server x" 'a b' c\\ d ""`)).toEqual(['npx', '-y', '@scope/server x', 'a b', 'c d', '']);

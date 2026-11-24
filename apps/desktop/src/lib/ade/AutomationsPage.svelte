@@ -1,12 +1,14 @@
 <script lang="ts">
 	// Automations page (Agents layout center, from the side bar): each automation with its switch,
 	// next and last run (a link to the task it created), Run now, Edit and Delete; the editor form
-	// on top while open.
+	// on top while open. As in VS Code 1.145, disabled automations sit in a collapsed "Disabled
+	// automations" section below the active ones, and the schedule shows as its description.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import AutomationForm from './AutomationForm.svelte';
 	import { automations } from './automations.svelte.ts';
-	import { formatWhen } from './automations.ts';
+	import { formatWhen, scheduleLabel, zoneOf, type Automation } from './automations.ts';
 	import { parseSchedule } from './schedule.ts';
+	import { cronError } from './automationCron.ts';
 	import { adeLayout } from './adeLayout.svelte.ts';
 	import { adeTasks } from './tasks.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
@@ -14,6 +16,18 @@
 
 	function openTask(slug: string) {
 		adeLayout.show(slug);
+	}
+
+	let showDisabled = $state(false);
+	const activeList = $derived(automations.list.filter((a) => a.enabled));
+	const disabledList = $derived(automations.list.filter((a) => !a.enabled));
+
+	/** The schedule's problem, or null (Manual has none). */
+	function problemOf(a: Automation): string | null {
+		if (a.trigger === 'manual') return null;
+		if (a.trigger) return cronError(a.schedule, zoneOf(a)) ?? (a.schedule.trim() ? null : '—');
+		const p = parseSchedule(a.schedule);
+		return p.ok ? null : p.error;
 	}
 
 	/** A declined confirm leaves the switch as it was. */
@@ -37,6 +51,9 @@
 	</header>
 
 	<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+		{#if !automations.featureEnabled}
+			<div class="rounded border border-(--vscode-editorWarning-foreground) px-3 py-2 text-xs" role="status">{t('cron.page.featureOff')}</div>
+		{/if}
 		{#if !automations.globalEnabled}
 			<div class="flex items-center gap-2 rounded border border-(--vscode-editorWarning-foreground) px-3 py-2 text-xs" role="status">
 				<span class="flex-1">{t('legacyAde.automationsPage.allPaused')}</span>
@@ -57,21 +74,41 @@
 			</div>
 		{:else}
 			<ul class="space-y-2" aria-label={t('legacyAde.automationsPage.listLabel')}>
-				{#each automations.list as a (a.id)}
+				{#each activeList as a (a.id)}{@render card(a)}{/each}
+			</ul>
+			{#if disabledList.length}
+				<section aria-label={t('cron.page.disabled')}>
+					<button class="flex items-center gap-1 py-1 text-xs font-semibold" aria-expanded={showDisabled} onclick={() => (showDisabled = !showDisabled)}>
+						<Icon name={showDisabled ? 'chevronDown' : 'chevronRight'} size={12} />
+						{t('cron.page.disabled')}
+						<span class="font-normal text-(--vscode-descriptionForeground)">{disabledList.length}</span>
+					</button>
+					{#if showDisabled}
+						<ul class="space-y-2">
+							{#each disabledList as a (a.id)}{@render card(a)}{/each}
+						</ul>
+					{/if}
+				</section>
+			{/if}
+		{/if}
+	</div>
+</div>
+
+{#snippet card(a: Automation)}
 					{@const active = automations.isActive(a)}
 					{@const needsConfirm = a.enabled && !automations.consented(a)}
 					{@const next = automations.nextRun(a)}
-					{@const sched = parseSchedule(a.schedule)}
+					{@const problem = problemOf(a)}
 					{@const lastTask = a.last_task_slug ? adeTasks.find(a.last_task_slug) : undefined}
 					<li class="flex items-start gap-3 rounded border border-(--vscode-widget-border) px-3 py-2 text-xs">
 						<label class="mt-0.5 flex shrink-0 items-center" title={active ? t('legacyAde.automationsPage.turnOff') : t('legacyAde.automationsPage.turnOn')}>
 							<span class="sr-only">{t('legacyAde.automationsPage.enableName', { name: a.name })}</span>
-							<input type="checkbox" role="switch" checked={active} disabled={!sched.ok} onchange={(e) => toggle(a.id, e.currentTarget)} />
+							<input type="checkbox" role="switch" checked={active} disabled={!!problem || a.trigger === 'manual'} onchange={(e) => toggle(a.id, e.currentTarget)} />
 						</label>
 						<div class="min-w-0 flex-1 space-y-0.5">
 							<div class="flex items-center gap-2">
 								<span class="truncate text-[13px] font-medium" title={a.name}>{a.name}</span>
-								<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)">{a.schedule}</span>
+								<span class={['shrink-0 text-(--vscode-descriptionForeground)', !a.trigger && 'font-mono']} title={a.trigger && a.trigger !== 'manual' ? a.schedule : undefined}>{scheduleLabel(a)}</span>
 							</div>
 							<p class="truncate text-(--vscode-descriptionForeground)" title={a.prompt}>{a.prompt}</p>
 							<p class="text-(--vscode-descriptionForeground)">
@@ -90,8 +127,8 @@
 									{t('legacyAde.automationsPage.neverRun')}
 								{/if}
 							</p>
-							{#if !sched.ok}
-								<p class="text-(--vscode-errorForeground)">{t('legacyAde.automationsPage.invalidSchedule', { error: sched.error })}</p>
+							{#if problem}
+								<p class="text-(--vscode-errorForeground)">{t('legacyAde.automationsPage.invalidSchedule', { error: problem })}</p>
 							{:else if needsConfirm}
 								<p class="text-(--vscode-editorWarning-foreground)">{t('legacyAde.automationsPage.needsConfirm')}</p>
 							{/if}
@@ -105,8 +142,4 @@
 							<button class={ICON_BUTTON} aria-label={t('legacyAde.automationsPage.deleteName', { name: a.name })} title={t('legacyAde.automationsPage.delete')} onclick={() => automations.remove(a.id)}><Icon name="trash" size={14} /></button>
 						</div>
 					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
-</div>
+{/snippet}

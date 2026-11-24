@@ -12,8 +12,10 @@ import { killPty } from '#lib/terminal/pty.ts';
 import { cliKey, liveCliSessions, parseCliSessions, persist, restore, storeName } from '#lib/terminal/sessions.ts';
 import { isWorking } from './agentCli';
 import { applyHook, initialHookState, liveHold, type HookState } from './agentHooks';
+import { denyMessage, grantKey, scopedGrants, type GrantScope } from './permissionAsk';
 import { checkLiveness, type Liveness, type PtyListing } from './agentPresence';
 import { applyTitle, type TitleTrack } from './agentTitle';
+import { turnStart } from './hibernation';
 import { pasteText, profileOf, promptDue } from '#lib/ade/agentProfiles.ts';
 import { askKeysFor, isComplete, typeAskKeys, type AskSelection } from '#lib/agent/ask.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
@@ -51,6 +53,10 @@ class CliSessions {
 	/** Prompts to paste once their CLI is up (CLIs that take no prompt argument); kept in memory only. */
 	#typePrompts: Record<string, string> = {};
 	#sawOutput = new Set<string>();
+	/** Per session: the last key typed into its terminal, and when its latest working stretch began (hibernation.ts). */
+	#input: Record<string, number> = {};
+	#outputs: Record<string, number> = {};
+	#turn: Record<string, number | undefined> = {};
 	/** A session id a CLI reported (codex notify), for the task to save. */
 	onSessionId: ((slug: string, id: string) => void) | null = null;
 
@@ -77,6 +83,8 @@ class CliSessions {
 	load(tag: string, live: Set<string>) {
 		const { kept, gone } = liveCliSessions(restore(storeName(STORE, tag), parseCliSessions) ?? {}, tag, live);
 		for (const s of Object.values(gone)) if (s.hookToken) void invoke('agent_hook_clear', { token: s.hookToken }).catch(() => {});
+		// CLIs Kingu's exit took (a reboot, the terminal daemon gone): offered back (Orca 1.4.272's worker restart offers).
+		if (Object.keys(gone).length) void import('./workerResume.svelte.ts').then((m) => m.offerLostWorkers(Object.keys(gone))).catch((e) => clientLog('info', `worker resume: ${e}`));
 		this.sessions = kept;
 		this.hooks = {};
 		this.#offsets = {};
@@ -100,6 +108,9 @@ class CliSessions {
 		this.#typePrompts = {};
 		this.#sawOutput.clear();
 		this.#restored.clear();
+		this.#input = {};
+		this.#outputs = {};
+		this.#turn = {};
 		this.#tick();
 	}
 
@@ -138,6 +149,8 @@ class CliSessions {
 		else delete this.hooks[slug];
 		delete this.titles[slug];
 		delete this.#live[slug];
+		delete this.#input[slug];
+		delete this.#turn[slug];
 		this.#last[slug] = Date.now();
 		this.#tick();
 	}
@@ -154,6 +167,8 @@ class CliSessions {
 		delete this.sessions[slug];
 		delete this.#last[slug];
 		delete this.#typePrompts[slug];
+		delete this.#input[slug];
+		delete this.#turn[slug];
 		this.#sawOutput.delete(slug);
 		this.#restored.delete(slug);
 		this.#tick();
@@ -234,28 +249,45 @@ class CliSessions {
 	 * own allow / deny decision. Otherwise, or once that hook stopped waiting, Enter takes the
 	 * highlighted choice — "Yes"/"Allow once", the first option in claude, codex, gemini and cursor —
 	 * and Esc declines. Used by the card and the phone (mobile.svelte.ts). False when no prompt is open.
+	 *
+	 * `session`: allow for the rest of this CLI session, granting exactly these (the grants the card
+	 * or phone showed, `grantKey`); only the waiting hook can do that, so without it, or when the
+	 * prompt's grants are no longer these, nothing is answered (never a silent "once", never keys).
+	 * `scope`: how far those grants reach (`session` by default; `project` / `user` save Claude's
+	 * suggested allow rules to its settings, `session` then holds the rules shown, `scopedGrants`).
+	 * `message`: a reason for a deny, told to the agent when the hook takes the answer.
 	 */
-	async answerPermission(slug: string, allow: boolean): Promise<boolean> {
+	async answerPermission(slug: string, allow: boolean, opts: { session?: string[]; scope?: GrantScope; message?: string } = {}): Promise<boolean> {
 		const hook = this.hooks[slug];
 		const key = this.key(slug);
 		if (!key || !hook?.permission || hook.phase !== 'waiting') return false;
 		const hold = liveHold(hook, Date.now());
 		const token = this.sessions[slug]?.hookToken;
+		const session = allow ? opts.session : undefined;
+		const scope = opts.scope ?? 'session';
+		if (allow && opts.scope && !session) return false;
+		if (session) {
+			const now = hook.request?.unsandboxed ? [] : scopedGrants(hook.request?.grants ?? [], scope).map(grantKey);
+			if (!hold || !token || !session.length || session.length !== now.length || session.some((g, i) => g !== now[i])) return false;
+		}
+		const message = allow ? undefined : denyMessage(opts.message);
 		try {
-			const held = hold && token ? await invoke<boolean>('agent_permission_answer', { token, hold: hold.id, allow }).catch(() => false) : false;
+			const held = hold && token ? await invoke<boolean>('agent_permission_answer', { token, hold: hold.id, allow, session: session ?? null, message: message ?? null, scope: session ? scope : null }).catch((e) => (session ? Promise.reject(e) : false)) : false;
+			if (!held && session) return false;
 			if (!held) await invoke('pty_write', { key, data: allow ? '\r' : '\x1b' });
 		} catch (e) {
 			status.flash(t('ade.cli.answerFailed', { error: String(e) }), 8000);
 			return false;
 		}
 		const now = this.hooks[slug];
-		if (now?.permission) this.hooks[slug] = { ...now, phase: allow ? 'working' : 'idle', permission: false, hold: undefined, message: t('ade.cli.answered'), at: Date.now() };
+		if (now?.permission) this.hooks[slug] = { ...now, phase: allow ? 'working' : 'idle', permission: false, hold: undefined, request: undefined, message: t('ade.cli.answered'), at: Date.now() };
 		this.#last[slug] = Date.now();
 		return true;
 	}
 
 	/** Output arrived (throttled: one state write per 500ms per task). */
 	output(slug: string) {
+		this.#outputs[slug] = (this.#outputs[slug] ?? 0) + 1;
 		this.#sawOutput.add(slug);
 		const t = Date.now();
 		if (t - (this.#last[slug] ?? 0) > 500) this.#last[slug] = t;
@@ -294,6 +326,25 @@ class CliSessions {
 		return this.#last[slug];
 	}
 
+	/** Output chunks of the task's terminal, unthrottled (hibernation's two-look confirmation; not reactive). */
+	outputs(slug: string): number {
+		return this.#outputs[slug] ?? 0;
+	}
+
+	/** A key was typed into the session's terminal: a draft keeps its CLI from hibernating. */
+	input(slug: string) {
+		if (this.sessions[slug]) this.#input[slug] = Date.now();
+	}
+
+	lastInput(slug: string): number | undefined {
+		return this.#input[slug];
+	}
+
+	/** When the session's latest working stretch began, once a hook event said so. */
+	turnAt(slug: string): number | undefined {
+		return this.#turn[slug];
+	}
+
 	working(slug: string): boolean {
 		return isWorking(this.#last[slug], this.now);
 	}
@@ -311,7 +362,14 @@ class CliSessions {
 				this.#offsets[slug] = r.offset;
 				if (!r.events.length) continue;
 				const before = this.hooks[slug]?.sessionId;
-				this.hooks[slug] = r.events.reduce<HookState>((st, ev) => applyHook(st, ev, Date.now()), this.hooks[slug] ?? initialHookState(Date.now()));
+				let hook = this.hooks[slug] ?? initialHookState(Date.now());
+				for (const ev of r.events) {
+					const now = Date.now();
+					const next = applyHook(hook, ev, now);
+					this.#turn[slug] = turnStart(this.#turn[slug], hook.phase, next.phase, now);
+					hook = next;
+				}
+				this.hooks[slug] = hook;
 				const id = this.hooks[slug].sessionId;
 				if (id && id !== before) this.onSessionId?.(slug, id);
 			}

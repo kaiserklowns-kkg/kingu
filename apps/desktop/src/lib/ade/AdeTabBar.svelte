@@ -16,7 +16,7 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { adeLayout } from './adeLayout.svelte';
 	import { pickSession } from './agentsMode.svelte';
-	import { statusLabel } from './model';
+	import { statusLabel, timeAgo } from './model';
 	import { adeTasks } from './tasks.svelte';
 	import { statusDot } from './ui';
 	import { sessionsAttentionLabel } from '#lib/workbench/titlebar.ts';
@@ -28,6 +28,8 @@
 	import NewTabMenu, { type NewTabItem } from './NewTabMenu.svelte';
 	import QuickCommandDialog from './QuickCommandDialog.svelte';
 	import { quickPromptArgv } from './quickPrompt';
+	import { paneAgentLaunch } from './paneLaunch';
+	import { trustPaneFolder } from './paneTrust';
 	import { CUSTOM_PICK, KNOWN_BINS, pickerItems } from './agentProfiles';
 	import { enabledBins } from './agentCli';
 	import { isMarkdownEditor } from './adeMarkdown.ts';
@@ -38,6 +40,7 @@
 	import { rowCardStatus, rowText } from './agentPresence';
 	import CardStatusDot from './CardStatusDot.svelte';
 	import { paneProgram } from './paneProgram.svelte';
+	import { paneSleep } from './paneSleep.svelte';
 	import { programLabel, withPercent } from './programStatus';
 	import ProgressRing from './ProgressRing.svelte';
 	import { t as tr } from '#lib/i18n/index.ts';
@@ -143,6 +146,8 @@
 			null
 		);
 	}
+	// Orca's trust presets: the folder is trusted for the CLI before it starts (kingu.agent.trustWorkspace).
+	const trustPane = (argv: string[]) => trustPaneFolder(key, argv, { enabled: settings.get<boolean>('kingu.agent.trustWorkspace'), remote: !!workspace.remote });
 	function runCreate(id: string) {
 		// A region's "+" opens the new tab in that region's group (new tabs join the active group).
 		if (group && shownTab !== activeTab) adeLayout.select(key, shownTab);
@@ -151,7 +156,11 @@
 		else if (id === 'openMarkdown') void adeLayout.openMarkdown(key);
 		else if (id.startsWith('agent:')) {
 			const bin = id.slice(6);
-			adeLayout.newTerminal(key, { title: pickerItems(found, '').find((r) => r.id === bin)?.label ?? bin, run: [bin] });
+			// Each agent starts as its own settings say (launch command, args, env, override), like Orca's agent tabs.
+			const launch = paneAgentLaunch(bin, (k) => settings.get(k));
+			if ('error' in launch) return void status.error(launch.error, 10000);
+			const title = pickerItems(found, '').find((r) => r.id === bin)?.label ?? bin;
+			void trustPane(launch.argv).then(() => adeLayout.newTerminal(key, { title, run: launch.argv, launch: launch.launch }));
 		} else adeLayout.newTerminal(key);
 	}
 
@@ -220,9 +229,10 @@
 	function runQuick(q: Quick) {
 		if (q.kind === 'prompt') {
 			const cli = promptAgent(q.label) || settings.get<string>('kingu.agent.cli') || 'claude';
-			const argv = quickPromptArgv(cli, q.command);
-			if (!argv) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: cli }), 8000);
-			adeLayout.newTerminal(key, { title: q.label, run: argv });
+			if (!quickPromptArgv(cli, q.command)) return void status.error(tr('legacyAde.quickCommand.noPrompt', { agent: cli }), 8000);
+			const launch = paneAgentLaunch(cli, (k) => settings.get(k), q.command);
+			if ('error' in launch) return void status.error(launch.error, 10000);
+			void trustPane(launch.argv).then(() => adeLayout.newTerminal(key, { title: q.label, run: launch.argv, launch: launch.launch }));
 		} else {
 			runCommandLine(q);
 		}
@@ -324,8 +334,8 @@
 	{#if adeLayout.board && !group}
 		<div class={[TAB, ACTIVE]}>
 			<span class={ACCENT}></span>
-			{#if adeLayout.page === 'now'}<Icon name="agent" size={14} /> Now{:else if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else if adeLayout.page === 'issues'}<Icon name="bug" size={14} /> Issues{:else}<Icon name="tasks" size={14} /> Tasks{/if}
-			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={tr('legacyAde.adeTabBar.closePage', { page: adeLayout.page === 'now' ? 'Now' : adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks' })} onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
+			{#if adeLayout.page === 'now'}<Icon name="agent" size={14} /> Now{:else if adeLayout.page === 'inbox'}<Icon name="bellDot" size={14} /> Inbox{:else if adeLayout.page === 'automations'}<Icon name="clock" size={14} /> Automations{:else if adeLayout.page === 'issues'}<Icon name="bug" size={14} /> Issues{:else}<Icon name="tasks" size={14} /> Tasks{/if}
+			<button class="grid size-5 place-items-center rounded-md hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={tr('legacyAde.adeTabBar.closePage', { page: adeLayout.page === 'now' ? 'Now' : adeLayout.page === 'inbox' ? 'Inbox' : adeLayout.page === 'automations' ? 'Automations' : adeLayout.page === 'issues' ? 'Issues' : 'Tasks' })} onclick={() => (adeLayout.board = false)}><Icon name="close" size={13} /></button>
 		</div>
 	{:else}
 		<div
@@ -379,7 +389,13 @@
 						{@const row = t.kind === 'terminal' ? paneAgents.tabRow(key, t.id) : undefined}
 						<!-- OSC 7501 (Orca's progress ring): a reported percentage turns a live state glyph into a ring filled that far. -->
 						{@const program = t.kind === 'terminal' && !row ? paneProgram.tab(key, t.id) : undefined}
-						{#if row}
+						<!-- A hibernated agent's pane (paneSleep.svelte.ts): the tab keeps its agent (Orca reads it from the sleeping record) and says it sleeps. -->
+						{@const asleep = t.kind === 'terminal' && !row ? paneSleep.tab(key, t.id) : undefined}
+						{#if asleep}
+							{@const label = tr('adeAttempts.pane.sleeping', { ago: timeAgo(asleep.at, adeTasks.now) })}
+							<span class="grid size-3 shrink-0 place-items-center text-(--vscode-descriptionForeground)" role="status" aria-label={label} title={label}><Icon name="sleep" size={11} /></span>
+							<AgentIcon agent={asleep.agent} size={14} />
+						{:else if row}
 							{@const percent = paneProgram.agentProgress(row.id, row.state)}
 							{#if percent !== undefined}
 								<span class="grid size-3 shrink-0 place-items-center" title={withPercent(rowText(row), percent)}><ProgressRing {percent} tone={row.state === 'working' ? 'working' : 'attention'} label={withPercent(rowText(row), percent)} /></span>

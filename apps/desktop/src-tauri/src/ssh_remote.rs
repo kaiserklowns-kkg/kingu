@@ -602,8 +602,12 @@ pub async fn ssh_remote_hook_read(targets: State<'_, Targets>, projects: State<'
 /// Removes a finished session's hook file on the host.
 #[tauri::command]
 pub async fn ssh_remote_hook_clear(targets: State<'_, Targets>, projects: State<'_, Projects>, host: String, root: String, token: String) -> Result<(), String> {
+  // The run's browser relay ends with its terminal (ssh_browser_relay.rs).
+  crate::ssh_browser_relay::stop_run(&token);
   let t = target(&targets, &projects, &host, &root, &root)?;
-  run(t, format!("rm -f {}", hook_file_expr(&token)?), None, ssh_hosts::REMOTE_TIMEOUT_MS).await.map(drop)
+  // With it go a permission hold's leftover marker and answer files (`<token>.<hold>.wait|answer`).
+  let file = hook_file_expr(&token)?;
+  run(t, format!("f={file}; rm -f \"$f\" \"${{f%.jsonl}}\".*.wait \"${{f%.jsonl}}\".*.answer \"${{f%.jsonl}}\".*.answer.tmp"), None, ssh_hosts::REMOTE_TIMEOUT_MS).await.map(drop)
 }
 
 /// Pushes the worktree's branch on the host, then opens the pull request (GitLab: merge request)

@@ -17,6 +17,11 @@ describe('session history resume commands', () => {
 		expect(resumeArgv('cline', 'cl-1')).toEqual(['cline', '--id', 'cl-1']);
 		expect(resumeArgv('devin', 'dv')).toEqual(['devin', '--resume', 'dv']);
 		expect(resumeArgv('hermes', '20261121_ab12')).toEqual(['hermes', '--resume', '20261121_ab12']);
+		// A session of a state.db store names its profile (Orca's hermesStateDbProfileArgs).
+		expect(resumeArgv('hermes', 's1', '/h/.hermes/state.db#s1')).toEqual(['hermes', '-p', 'default', '--resume', 's1']);
+		expect(resumeArgv('hermes', 's1', '/h/.hermes/profiles/work/state.db#s1')).toEqual(['hermes', '-p', 'work', '--resume', 's1']);
+		expect(resumeArgv('hermes', 's1', '/h/.hermes/profiles/Bad Name/state.db#s1')).toEqual(['hermes', '--resume', 's1']);
+		expect(resumeArgv('hermes', 's1', '/h/.hermes/sessions/session_s1.json')).toEqual(['hermes', '--resume', 's1']);
 		expect(resumeArgv('jcode', 'j-1')).toEqual(['jcode', '--resume', 'j-1']);
 		expect(resumeArgv('openclaw', 'oc-1')).toEqual(['openclaw', '--resume', 'oc-1']);
 		expect(resumeArgv('zcode', 'z1')).toEqual(['zcode', '--resume', 'z1']);

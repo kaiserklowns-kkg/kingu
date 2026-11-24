@@ -160,7 +160,7 @@ export function parsePanelTerminals(raw: unknown): PanelTerminalsState | null {
 }
 
 export type AdeTerminalsState = {
-	terminals: Record<string, { id: string; n: number; title?: string; run?: string[]; layout?: PaneNode; pane?: string; expanded?: string }[]>;
+	terminals: Record<string, { id: string; n: number; title?: string; run?: string[]; launch?: { agent: string; argv: string[] }; layout?: PaneNode; pane?: string; expanded?: string }[]>;
 	active: Record<string, string>;
 	seq: number;
 };
@@ -184,6 +184,8 @@ export function parseAdeTerminals(raw: unknown): AdeTerminalsState | null {
 					n: t.n as number,
 					title: optString(t.title),
 					run: optArgv(t.run),
+					// The agent launch the tab was opened with, without its prompt (ade/hibernation.ts resumes with it).
+					...(isObject(t.launch) && typeof t.launch.agent === 'string' && /^[a-z0-9-]{1,40}$/.test(t.launch.agent) && isArgv(t.launch.argv) && t.launch.argv.length ? { launch: { agent: t.launch.agent, argv: t.launch.argv } } : {}),
 					...(typeof t.color === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(t.color) ? { color: t.color } : {}),
 					// One pane left that is not the tab's first keeps its tree: the tree names its PTY.
 					...(layout && (layout.type === 'split' || layout.id !== t.id) ? { layout } : {}),

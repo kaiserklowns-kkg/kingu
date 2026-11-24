@@ -1,11 +1,28 @@
 //! The floating workspace's browser tabs (Orca's): real child webviews of the main window,
 //! placed by the panel's browser tab. A page gets its own webview with no Tauri API, and only
 //! http(s) navigation is allowed.
+//!
+//! The boundary between a page, the app and an agent (checked against Orca 1.4.269):
+//! - A web page cannot call the app: Tauri answers IPC only for local origins, and the one local
+//!   page a tab can show, the new-tab page, is served with a policy that lets no script of its own run.
+//! - An agent reaches a tab only through [`agent`]: a chat run started with `kingu.browser.agentTools`
+//!   on, on a page it opened (its own in-memory store) or one the user shared, after the agent host
+//!   asked the user to open or navigate it (VS Code 1.147's browser tools and grants). The `kingu`
+//!   command itself has no browser method, and no agent touches a profile's cookies.
+//! - The one way page content reaches an agent is Design Mode, and only for a pick the user armed
+//!   on that tab ([`floating_browser_pick`]): a page that sends a pick on its own is ignored
+//!   (Orca's `browser-grab-session-controller.ts` settles only the operation it armed).
+//! - Session cookies kept across a restart are sealed with a Keychain key (session_cookies.rs).
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 /// Orca's cookie import into a browser profile (Chrome / Edge / a cookie file).
 pub mod cookies;
+/// Orca's session cookies kept across a restart.
+pub mod session_cookies;
+/// Agent browser use (VS Code 1.147's browser tools): pages an agent opens or the user shares.
+pub mod agent;
 
 use tauri::http::{header, Request, Response};
 use tauri::{
@@ -78,13 +95,22 @@ h2 {{ margin: 0 0 20px; font-size: 12px; font-weight: 600; letter-spacing: .12em
 }
 
 /// The new-tab page's URL (Tauri serves custom schemes as `http://<scheme>.localhost` on Windows).
+/// The new-tab page is a local origin to Tauri (its scheme is registered by the app), so unlike a
+/// web page it could call the app. It is static: no script of its own may run on it.
+const NEW_TAB_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
+
 fn new_tab_url() -> String {
   if cfg!(any(windows, target_os = "android")) { format!("http://{SCHEME}.localhost/") } else { format!("{SCHEME}://localhost/") }
 }
 
 pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, _req: Request<Vec<u8>>) -> Response<Vec<u8>> {
+  handle_page()
+}
+
+fn handle_page() -> Response<Vec<u8>> {
   Response::builder()
     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+    .header(header::CONTENT_SECURITY_POLICY, NEW_TAB_POLICY)
     .body(new_tab_page().into_bytes())
     .unwrap_or_else(|_| Response::new(Vec::new()))
 }
@@ -206,10 +232,38 @@ pub fn pick_script(on: bool) -> String {
   PICK_SCRIPT.replace("__ON__", if on { "true" } else { "false" }).replace("__BASE__", &serde_json::to_string(&pick_url()).unwrap_or_default())
 }
 
+/// The tabs whose Design Mode the user turned on: only their next pick is taken.
+static ARMED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+fn arm(label: &str, on: bool) {
+  let mut armed = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+  if on {
+    armed.insert(label.to_owned());
+  } else {
+    armed.remove(label);
+  }
+}
+
+fn armed(label: &str) -> bool {
+  ARMED.lock().unwrap_or_else(|e| e.into_inner()).contains(label)
+}
+
+/// Takes the tab's armed pick: true once, for the tab the user armed. A pick from any other tab
+/// (a page navigating to the pick address by itself) is refused.
+pub fn take_pick(label: &str) -> bool {
+  ARMED.lock().unwrap_or_else(|e| e.into_inner()).remove(label)
+}
+
 /// Orca's Design Mode on (or off) in a browser tab.
 #[tauri::command]
 pub fn floating_browser_pick(app: AppHandle, label: String, on: bool) -> Result<(), String> {
-  webview(&app, &label)?.eval(pick_script(on)).map_err(|e| e.to_string())
+  let wv = webview(&app, &label)?;
+  // Armed before the picker runs, and never left armed when it could not start.
+  arm(&label, on);
+  wv.eval(pick_script(on)).map_err(|e| {
+    arm(&label, false);
+    e.to_string()
+  })
 }
 
 /// A browser profile's own cookies and storage (Orca's browser profiles): a WebKit data store per
@@ -284,25 +338,34 @@ pub async fn floating_browser_open(
   height: f64,
   profile: Option<String>,
 ) -> Result<(), String> {
-  if app.get_webview(&label).is_some() {
-    return Ok(());
+  if let Some(wv) = app.get_webview(&label) {
+    // Already open, or a page an agent opened off screen (agent.rs): placed where its tab is.
+    wv.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    return wv.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string());
   }
   let url = parsed(&url)?;
   let start = if url.as_str() == "about:blank" { Url::parse(&new_tab_url()).map_err(|e| e.to_string())? } else { url };
   let window = app.get_window("main").ok_or("no main window")?;
+  // The profile's saved session cookies go back before its first page loads.
+  session_cookies::before_open(&app, &label, profile.as_deref().unwrap_or("")).await;
   let emitter = app.clone();
   let tab = label.clone();
   let (picker, pick_tab) = (app.clone(), label.clone());
   let (loader, load_tab) = (app.clone(), label.clone());
   let downloads = app.path().download_dir().ok();
+  let tab_label = label.clone();
   let mut builder = WebviewBuilder::new(label, WebviewUrl::External(start))
     .on_navigation(move |u| {
       if let Some(data) = picked(u) {
-        let _ = picker.emit("browser-pick", serde_json::json!({ "label": pick_tab, "element": data }));
+        // Only the pick the user armed on this tab; the address itself never loads.
+        if take_pick(&pick_tab) {
+          let _ = picker.emit("browser-pick", serde_json::json!({ "label": pick_tab, "element": data }));
+        }
         return false;
       }
       allowed(u)
     })
+    .initialization_script(EDITS_SCRIPT)
     // Orca's downloads: into the Downloads folder, each reported to the tab's surface.
     .on_download(move |_wv, event| {
       match event {
@@ -319,14 +382,21 @@ pub async fn floating_browser_open(
       true
     })
     .on_page_load(move |_wv, payload| {
+      agent::page_event(&tab, payload.event() == tauri::webview::PageLoadEvent::Finished, Some(payload.url().as_str()));
       if payload.event() != tauri::webview::PageLoadEvent::Finished {
+        // A new document has no picker: a pick armed on the last one is over.
+        arm(&tab, false);
         return;
       }
       let url = payload.url();
       remember(url);
+      session_cookies::nudge();
       let _ = emitter.emit("floating-browser", serde_json::json!({ "label": tab, "url": url.to_string() }));
     });
-  if let Some(id) = profile.as_deref().and_then(profile_store) {
+  if agent::is_agent_label(tab_label.as_str()) {
+    // A page an agent opened keeps a store of its own, never a profile's cookies.
+    builder = builder.incognito(true);
+  } else if let Some(id) = profile.as_deref().and_then(profile_store) {
     builder = builder.data_store_identifier(id);
   }
   window.add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
@@ -537,6 +607,56 @@ pub fn floating_browser_show(app: AppHandle, label: String, visible: bool) -> Re
   .map_err(|e| e.to_string())
 }
 
+/// Runs in every page before its own scripts: remembers that the user edited something in this
+/// document (Orca's `dirty`, kept until the next document), so Memory Saver leaves the page alone.
+const EDITS_SCRIPT: &str = "addEventListener('input', (e) => { if (e.isTrusted) window.__kinguEdited = true; }, true);";
+
+/// Why Memory Saver may not free the page, or `clean` (Orca's `readBrowserGuestDiscardProtection`,
+/// the reasons a WKWebView page can answer for itself): only web pages; not one the user edited,
+/// with child frames (their edits are not seen), in picture-in-picture, showing a PDF or playing media.
+const PROTECTION_SCRIPT: &str = r#"(() => { try {
+  if (!/^https?:$/.test(location.protocol)) return 'url';
+  if (window.__kinguEdited) return 'edits';
+  if (window.frames.length > 0) return 'frames';
+  if (document.pictureInPictureElement) return 'picture-in-picture';
+  if (document.contentType === 'application/pdf') return 'pdf';
+  for (const m of document.querySelectorAll('video, audio')) { if (!m.paused && !m.ended) return 'audio'; }
+  return 'clean';
+} catch (_) { return 'unknown'; } })()"#;
+
+/// The page's answer to [`PROTECTION_SCRIPT`] (a JSON string): anything else is `unknown`, which
+/// is never freed.
+pub fn protection(answer: Option<&str>) -> &'static str {
+  const REASONS: [&str; 7] = ["clean", "url", "edits", "frames", "picture-in-picture", "pdf", "audio"];
+  let said = answer.and_then(|a| serde_json::from_str::<String>(a).ok());
+  REASONS.iter().find(|r| said.as_deref() == Some(**r)).copied().unwrap_or("unknown")
+}
+
+/// Orca's Memory Saver asks before it frees a hidden tab's page: `clean` when nothing would be
+/// lost by loading the page again, else the reason it stays (`unknown` when the page did not say).
+#[tauri::command]
+pub async fn floating_browser_discardable(app: AppHandle, label: String) -> Result<String, String> {
+  let wv = webview(&app, &label)?;
+  if armed(&label) {
+    return Ok("picking".into());
+  }
+  // Orca's Memory Saver leaves a page in use alone; an agent's page keeps its logins in memory only.
+  if agent::in_use(&label) {
+    return Ok("agent".into());
+  }
+  #[cfg(any(debug_assertions, feature = "devtools"))]
+  if wv.is_devtools_open() {
+    return Ok("devtools".into());
+  }
+  let (tx, rx) = std::sync::mpsc::channel::<String>();
+  wv.eval_with_callback(PROTECTION_SCRIPT, move |answer| {
+    let _ = tx.send(answer);
+  })
+  .map_err(|e| e.to_string())?;
+  let answer = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(3)).ok()).await.map_err(|e| e.to_string())?;
+  Ok(protection(answer.as_deref()).to_owned())
+}
+
 /// The page in the system's browser (a site that refuses to be embedded still opens here).
 #[tauri::command]
 pub fn floating_browser_open_external(url: String) -> Result<(), String> {
@@ -545,6 +665,9 @@ pub fn floating_browser_open_external(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn floating_browser_close(app: AppHandle, label: String) -> Result<(), String> {
+  arm(&label, false);
+  agent::closed(&label);
+  session_cookies::closed(&label);
   match app.get_webview(&label) {
     Some(wv) => wv.close().map_err(|e| e.to_string()),
     None => Ok(()),
@@ -584,6 +707,64 @@ mod tests {
     assert!(pick_script(true).contains("if (!true) return;") && pick_script(false).contains("if (!false) return;"));
     assert!(profile_store("") .is_none());
     assert_ne!(profile_store("work"), profile_store("personal"));
+  }
+
+  #[test]
+  fn a_pick_is_taken_only_from_the_tab_the_user_armed_and_only_once() {
+    assert!(!take_pick("t-unarmed"));
+    arm("t-a", true);
+    assert!(armed("t-a") && !armed("t-b"));
+    assert!(!take_pick("t-b"));
+    assert!(take_pick("t-a"));
+    assert!(!take_pick("t-a"));
+    arm("t-a", true);
+    arm("t-a", false);
+    assert!(!take_pick("t-a"));
+  }
+
+  /// The boundary in the module doc: what agents run (`kingu`, its skill) asks the app for no
+  /// browser tab, page or cookie. The agent host's browser tools reach tabs only through
+  /// `agent::dispatch`, which needs a chat run's session token and `kingu.browser.agentTools`.
+  #[test]
+  fn the_agents_command_reaches_no_browser_tab() {
+    let protocol = include_str!("../../../../crates/kingu-cli/src/protocol.rs");
+    let methods: Vec<&str> = protocol.lines().filter(|l| l.trim_start().starts_with("pub const METHOD_")).filter_map(|l| l.split('"').nth(1)).collect();
+    assert!(methods.len() >= 10 && methods.contains(&"task.create"), "{methods:?}");
+    for m in &methods {
+      let low = m.to_ascii_lowercase();
+      assert!(!["browser", "cookie", "webview", "page.", "tab."].iter().any(|w| low.contains(w)), "{m}: a browser method needs a grant the user gives");
+    }
+    assert!(!crate::cli_server::SKILL_MD.to_ascii_lowercase().contains("browser tab"));
+    // The socket's browser methods are the agent module's, and it refuses a request without a session first.
+    assert!(agent::METHODS.iter().all(|m| m.starts_with("browser.") && !methods.contains(m)));
+    let server = include_str!("cli_server.rs");
+    assert!(server.contains("agent::METHODS.contains(&m) => crate::floating_browser::agent::dispatch"));
+    let dispatch = include_str!("floating_browser/agent.rs").split("pub fn dispatch(").nth(1).unwrap();
+    let (session_check, enabled_check, first_step) = (dispatch.find("r.session(&token)").unwrap(), dispatch.find("enabled(app)").unwrap(), dispatch.find("Step::parse").unwrap());
+    assert!(session_check < enabled_check && enabled_check < first_step);
+  }
+
+  #[test]
+  fn the_new_tab_page_runs_no_script_of_its_own() {
+    let res = handle_page();
+    let policy = res.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
+    assert!(policy.contains("default-src 'none'") && !policy.contains("script-src"));
+    assert!(!String::from_utf8(res.into_body()).unwrap().contains("<script"));
+  }
+
+  #[test]
+  fn only_a_page_that_says_clean_is_freed() {
+    assert_eq!(protection(Some(r#""clean""#)), "clean");
+    assert_eq!(protection(Some(r#""edits""#)), "edits");
+    assert_eq!(protection(Some(r#""audio""#)), "audio");
+    assert_eq!(protection(Some(r#""anything""#)), "unknown");
+    assert_eq!(protection(Some("null")), "unknown");
+    assert_eq!(protection(Some("clean")), "unknown");
+    assert_eq!(protection(None), "unknown");
+    for reason in ["url", "edits", "frames", "picture-in-picture", "pdf", "audio", "clean"] {
+      assert!(PROTECTION_SCRIPT.contains(&format!("'{reason}'")), "{reason}");
+    }
+    assert!(EDITS_SCRIPT.contains("isTrusted"));
   }
 
   #[test]

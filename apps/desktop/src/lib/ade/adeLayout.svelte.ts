@@ -49,7 +49,7 @@ import { browserTitle } from '#lib/workbench/floating.ts';
 import { t } from '#lib/i18n/index.ts';
 import { ask } from '#lib/workbench/messageBox.ts';
 
-export type CenterPage = 'now' | 'board' | 'automations' | 'issues';
+export type CenterPage = 'now' | 'inbox' | 'board' | 'automations' | 'issues';
 /** Worktree key: '' for the folder itself (Orca's "primary" worktree), else the task slug. */
 export const PRIMARY = '';
 /** The native view label of a worktree's browser tab (AdeBrowser.svelte, browser commands). */
@@ -548,6 +548,12 @@ class AdeLayout {
 		return g ? shownTree(g) : null;
 	}
 
+	/** The tabs on screen in a worktree: the one each region shows, or the active tab when it is not split. */
+	shownTabs(key: string): string[] {
+		const g = this.groupsOf(key);
+		return g ? Object.values(g.shown) : [this.activeTab(key)];
+	}
+
 	/** The tabs of one group's strip, in strip order. */
 	groupTabs(key: string, group: string): AdeTab[] {
 		const g = this.groupsOf(key);
@@ -656,10 +662,10 @@ class AdeLayout {
 	}
 
 	/** A terminal in that worktree; `run` is typed into its shell (an agent CLI, a Snap task). `background`: open it without switching to it. */
-	newTerminal(key: string, opts: { title?: string; run?: string[]; type?: string; typeEnter?: boolean; background?: boolean; index?: number; color?: string } = {}): string {
+	newTerminal(key: string, opts: { title?: string; run?: string[]; launch?: { agent: string; argv: string[] }; type?: string; typeEnter?: boolean; background?: boolean; index?: number; color?: string } = {}): string {
 		const list = this.terminals[key] ?? [];
 		const n = list.reduce((m, t) => Math.max(m, t.n), 0) + 1;
-		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.type ? { type: opts.type, ...(opts.typeEnter === false ? { typeEnter: false as const } : {}) } : {}), ...(opts.color ? { color: opts.color } : {}) };
+		const tab: TerminalTab = { id: `t${++this.#seq}`, n, title: opts.title, run: opts.run, ...(opts.launch ? { launch: opts.launch } : {}), ...(opts.type ? { type: opts.type, ...(opts.typeEnter === false ? { typeEnter: false as const } : {}) } : {}), ...(opts.color ? { color: opts.color } : {}) };
 		const at = opts.index === undefined ? list.length : Math.min(Math.max(opts.index, 0), list.length);
 		this.terminals[key] = [...list.slice(0, at), tab, ...list.slice(at)];
 		if (opts.background) {

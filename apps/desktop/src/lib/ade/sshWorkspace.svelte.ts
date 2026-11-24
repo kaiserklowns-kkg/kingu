@@ -16,6 +16,7 @@ import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { projectName } from './projects';
 import { baseChoices, type ChangeRow, type RemoteHits, type RemotePoll, type RemoteBranches, type RemoteDiff, type RemoteFile, type RemoteListing, type RemoteStatus } from './sshRemote';
 import type { RemoteProject } from './sshProjects';
+import { sshConnections } from './sshConnections.svelte';
 
 type Dir = { listing: RemoteListing | null; loading: boolean; error: string | null };
 type OpenFile = { rel: string; text: string; saved: string; loading: boolean; error: string | null; note: string | null; saving: boolean };
@@ -97,6 +98,14 @@ class SshWorkspace {
 	 */
 	async #poll() {
 		if (!this.current || this.#polling || this.busy || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) return;
+		// Only a connected host is polled: one that dropped is being redialled (sshConnections), one
+		// the user disconnected stays so, and one nobody dialled yet is dialled first.
+		const host = this.current.project.host;
+		const conn = sshConnections.state(host).status;
+		if (conn !== 'connected') {
+			if (conn === 'disconnected') void sshConnections.connect(host, false);
+			return;
+		}
 		this.#polling = true;
 		const at = this.current;
 		const rel = this.file && !this.file.loading && !this.file.note ? this.file.rel : null;
@@ -114,7 +123,8 @@ class SshWorkspace {
 				this.#lastSum = r.sum;
 			} else this.#lastSum = null;
 		} catch {
-			// Unreachable for now; the next round tries again.
+			// Unreachable for now; the next round tries again, and the connection is checked.
+			void sshConnections.suspect(host);
 		} finally {
 			this.#polling = false;
 		}

@@ -10,7 +10,7 @@
 {#if status === 'working'}
 	<span class="size-2.5 animate-spin rounded-full border-2 border-yellow-500 border-t-transparent"></span>
 {:else if status === 'permission'}
-	<span class="text-violet-400"><Icon name="question" size={12} filled /></span>
+	<span class="text-amber-400"><Icon name="question" size={12} filled /></span>
 {:else if status === 'failed'}
 	<span class="size-1.5 rounded-full bg-red-500"></span>
 {:else if status === 'done' || status === 'active'}

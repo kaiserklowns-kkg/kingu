@@ -15,12 +15,13 @@
 	import CliSetting from './pages/CliSetting.svelte';
 	import SupportSetting from './pages/SupportSetting.svelte';
 	import ThemeGrid from './pages/ThemeGrid.svelte';
+	import GitHubAccountSetting from './pages/GitHubAccountSetting.svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { PANE_SETTING_IDS } from './orcaPane';
 	import { settingSchemas } from './schemas.svelte';
 	import { AGENT_CATALOG_IDS } from './panes';
 
-	const PANE_COMPONENTS = { cli: CliSetting, support: SupportSetting, themes: ThemeGrid };
+	const PANE_COMPONENTS = { cli: CliSetting, support: SupportSetting, themes: ThemeGrid, githubAccount: GitHubAccountSetting };
 	const EXCLUDE = [...PANE_SETTING_IDS, ...AGENT_CATALOG_IDS];
 	const restCount = (groups: readonly string[]) => settingSchemas.all.filter((s) => groups.includes(s.group) && !EXCLUDE.includes(s.id)).length;
 

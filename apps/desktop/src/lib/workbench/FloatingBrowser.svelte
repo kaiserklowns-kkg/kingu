@@ -13,8 +13,11 @@
 	import { sshHosts } from '#lib/ade/sshHosts.svelte.ts';
 
 	let { id, url = '' }: { id: string; url?: string } = $props();
-	const label = untrack(() => floating.browserLabel(id));
-	const visible = $derived(floating.open && floating.active === id && !quick.visible && !systemSettings.visible);
+	// A page an agent opened keeps the label Rust gave its webview.
+	const label = untrack(() => floating.tabs.find((t) => t.id === id)?.agent ?? floating.browserLabel(id));
+	// In view for Memory Saver: Quick Input or Settings passing over the page is not leaving the tab.
+	const viewed = $derived(floating.open && floating.active === id);
+	const visible = $derived(viewed && !quick.visible && !systemSettings.visible);
 	// A worktree on an SSH host is open: its localhost pages come from that host (kingu.browser.sshRouting).
 	const host = $derived(settings.get<boolean>('kingu.browser.sshRouting') !== false ? (sshWorkspace.current?.project.host ?? null) : null);
 	const route = $derived(
@@ -31,4 +34,4 @@
 	);
 </script>
 
-<BrowserSurface {label} {url} {visible} {route} onTitle={(title) => floating.rename(id, title)} onNewTab={() => floating.newBrowser()} />
+<BrowserSurface {label} {url} {visible} {viewed} {route} onTitle={(title) => floating.rename(id, title)} onNewTab={() => floating.newBrowser()} />

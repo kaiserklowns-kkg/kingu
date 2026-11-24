@@ -1,6 +1,11 @@
 //! Automations (Orca-style): agent tasks that start on a schedule, kept per repository in
 //! `<root>/.kingu/automations.json`. The webview owns the list, parses schedules and runs them
 //! while Kingu is open; Rust validates the whole list and writes it atomically, like tasks.json.
+//!
+//! VS Code 1.145's triggers (`trigger`: manual, hourly, daily, weekdays, weekly, cron) keep their
+//! five-field expression in `schedule` and the IANA zone it is evaluated in (`time_zone`); the
+//! webview evaluates them (ade/automationCron.ts, a port of VS Code's
+//! src/vs/platform/agentHost/common/automationCron.ts). Rust checks their shape only.
 
 use crate::i18n::msg::AgentMsg;
 use crate::tr;
@@ -19,6 +24,9 @@ const MAX_PROMPT: usize = 64 * 1024;
 const MAX_SCHEDULE: usize = 120;
 const MAX_REASON: usize = 500;
 pub const MODES: &[&str] = &["terminal", "timeline"];
+/// VS Code's local automation intervals (`AutomationInterval` without `once` and `custom`).
+pub const TRIGGERS: &[&str] = &["manual", "hourly", "daily", "weekdays", "weekly", "cron"];
+const MAX_TIME_ZONE: usize = 64;
 
 /// A due run that did not start (the previous run still working, or missed with catch-up off).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -64,6 +72,28 @@ pub struct Automation {
   pub next_run_at: Option<u64>,
   #[serde(default)]
   pub last_skip: Option<Skip>,
+  /// VS Code's trigger kind; `None` = Kingu's own schedule text. Left out of the file when unset,
+  /// so an automation saved before triggers existed is written back unchanged.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub trigger: Option<String>,
+  /// IANA time zone of a trigger's expression (`Asia/Bangkok`); `None` = the machine's own.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub time_zone: Option<String>,
+}
+
+/// A five-field cron shape: fields of digits, letters (month and weekday names), `*`, `,`, `-`, `/`.
+fn cron_shaped(expression: &str) -> bool {
+  let fields: Vec<_> = expression.split_whitespace().collect();
+  fields.len() == 5 && fields.iter().all(|f| f.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '*' | ',' | '-' | '/')))
+}
+
+/// An IANA zone name: `Area/Location`, `UTC`, `Etc/GMT+7`.
+fn zone_shaped(zone: &str) -> bool {
+  !zone.is_empty()
+    && zone.len() <= MAX_TIME_ZONE
+    && !zone.starts_with('/')
+    && !zone.contains("..")
+    && zone.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
 }
 
 fn yes() -> bool {
@@ -124,6 +154,19 @@ pub fn validate(list: &[Automation]) -> Result<(), String> {
     {
       return Err(tr!(AgentMsg::AutomationUnknownMode, id = a.id, mode));
     }
+    if let Some(trigger) = &a.trigger {
+      if !TRIGGERS.contains(&trigger.as_str()) {
+        return Err(tr!(AgentMsg::AutomationUnknownTrigger, id = a.id, trigger));
+      }
+      if trigger != "manual" && !cron_shaped(&a.schedule) {
+        return Err(tr!(AgentMsg::AutomationBadSchedule, id = a.id));
+      }
+    }
+    if let Some(zone) = &a.time_zone
+      && !zone_shaped(zone)
+    {
+      return Err(tr!(AgentMsg::AutomationBadTimeZone, id = a.id));
+    }
     if let Some(slug) = &a.last_task_slug {
       validate_slug(slug).map_err(|e| tr!(AgentMsg::AutomationBadLastTask, id = a.id, detail = e))?;
     }
@@ -164,7 +207,49 @@ mod tests {
       last_due_at: Some(3),
       next_run_at: Some(4),
       last_skip: Some(Skip { at: 5, reason: "งานก่อนหน้ายังทำงานอยู่".into() }),
+      trigger: None,
+      time_zone: None,
     }
+  }
+
+  fn cron(id: &str, expression: &str) -> Automation {
+    Automation { schedule: expression.into(), trigger: Some("cron".into()), time_zone: Some("Asia/Bangkok".into()), ..automation(id) }
+  }
+
+  #[test]
+  fn keeps_vscode_triggers_and_their_zone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manual = Automation { schedule: "manual".into(), trigger: Some("manual".into()), time_zone: None, ..automation("m") };
+    let list = vec![cron("c", "0 9,17 * * MON-FRI"), Automation { schedule: "30 * * * *".into(), trigger: Some("hourly".into()), ..automation("h") }, manual];
+    save(tmp.path(), &list).unwrap();
+    assert_eq!(load(tmp.path()).unwrap(), list);
+    let text = std::fs::read_to_string(tmp.path().join(".kingu/automations.json")).unwrap();
+    assert!(text.contains(r#""trigger": "cron""#) && text.contains(r#""time_zone": "Asia/Bangkok""#));
+  }
+
+  #[test]
+  fn an_older_automation_is_written_back_without_trigger_fields() {
+    let tmp = tempfile::tempdir().unwrap();
+    save(tmp.path(), &[automation("a")]).unwrap();
+    let text = std::fs::read_to_string(tmp.path().join(".kingu/automations.json")).unwrap();
+    assert!(!text.contains("trigger") && !text.contains("time_zone"), "{text}");
+  }
+
+  #[test]
+  fn rejects_bad_triggers_expressions_and_zones() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bad = |a: Automation| save(tmp.path(), &[a]).is_err();
+    assert!(bad(Automation { trigger: Some("once".into()), ..cron("a", "0 9 * * *") }));
+    assert!(bad(cron("a", "0 9 * *")), "four fields");
+    assert!(bad(cron("a", "0 9 * * * *")), "a seconds field");
+    assert!(bad(cron("a", "@daily")));
+    assert!(bad(cron("a", "0 9 * * $(rm)")));
+    assert!(bad(Automation { time_zone: Some("../etc/passwd".into()), ..cron("a", "0 9 * * *") }));
+    assert!(bad(Automation { time_zone: Some("/UTC".into()), ..cron("a", "0 9 * * *") }));
+    assert!(bad(Automation { time_zone: Some("Asia/Bangkok;x".into()), ..cron("a", "0 9 * * *") }));
+    assert!(bad(Automation { time_zone: Some(String::new()), ..cron("a", "0 9 * * *") }));
+    assert!(!bad(cron("a", "*/30 8-17 1,15 jan-jun 0-7/2")));
+    assert!(!bad(Automation { time_zone: Some("Etc/GMT+7".into()), ..cron("a", "0 9 * * *") }));
   }
 
   #[test]

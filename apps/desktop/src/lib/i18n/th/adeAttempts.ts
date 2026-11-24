@@ -49,6 +49,8 @@ export const adeAttempts = {
 	'adeAttempts.badge.dispatched': 'งานย่อยที่ agent ของ {task} ส่งมา',
 	'adeAttempts.badge.hibernated': 'agent พักไว้เมื่อ {ago} กดทำงานต่อเพื่อใช้ session เดิม',
 	'adeAttempts.badge.resume': 'ให้ agent ทำงานต่อ',
+	// AdeTabBar.svelte: a terminal tab whose agent was hibernated
+	'adeAttempts.pane.sleeping': 'agent พักไว้เมื่อ {ago} เปิดแท็บนี้แล้วจะทำงานต่อใน session เดิมเอง',
 	// AgentsLayout.svelte
 	'adeAttempts.hibernated.text': 'agent ว่างอยู่นาน Kingu จึงปิดไว้เมื่อ {ago} เพื่อคืนหน่วยความจำ session ยังเก็บไว้อยู่',
 	'adeAttempts.hibernated.resuming': 'กำลังให้ agent ทำงานต่อใน session เดิม…',

@@ -170,19 +170,51 @@
 	// --- Comments -----------------------------------------------------------------------------
 	let comments = $state<PrComment[]>([]);
 	let commentsError = $state('');
+	// Orca 207212b6b (use-checks-panel-controller-state.tsx `commentsLoaded`): false until a read of
+	// this PR's comments settles, so an unread list shows placeholders, never "No comments yet".
+	let commentsRead = $state(false);
 	let audience = $state<'all' | 'humans' | 'bots'>('all');
 	let draft = $state('');
 	let composing = $state(false);
+	// Comments reset only when the read would read something else (another task or PR number);
+	// a refresh of the same PR keeps what was loaded (use-checks-panel-review-data.tsx `commentsReadIdentity`).
+	const commentsIdentity = $derived(`${slug}#${pr?.number ?? ''}`);
+	let readIdentity = '';
+	$effect.pre(() => {
+		const id = commentsIdentity;
+		if (id === readIdentity) return;
+		readIdentity = id;
+		comments = [];
+		commentsError = '';
+		commentsRead = false;
+	});
 	async function loadComments() {
+		const id = commentsIdentity;
 		try {
 			const r = await invoke<{ comments: PrComment[]; reviews: PrComment[] }>('forge_pr_comments', { slug: slug || null, number: pr?.number ?? null });
+			if (id !== readIdentity) return;
 			comments = [...(r.comments ?? []), ...(r.reviews ?? []).filter((x) => x.body?.trim())].sort((a, b) => Date.parse(a.createdAt ?? a.submittedAt ?? '') - Date.parse(b.createdAt ?? b.submittedAt ?? ''));
 			commentsError = '';
 		} catch (e) {
+			if (id !== readIdentity) return;
 			// Checks still show without comments; say why the comments are missing.
 			commentsError = String(e);
+		} finally {
+			if (id === readIdentity) commentsRead = true;
 		}
 	}
+	/** Orca `coldComments`: the first read of an open PR's comments, with no refresh error to show instead. */
+	const coldComments = $derived(!!pr && !commentsRead && !commentsError && !error);
+	/** Orca ChecksPanelLoadingAnnouncement: said once, 400 ms into a cold read, for screen readers. */
+	let announce = $state(false);
+	$effect(() => {
+		if (!workspace.root || !(!loaded || coldComments)) return void (announce = false);
+		const timer = setTimeout(() => (announce = true), 400);
+		return () => {
+			clearTimeout(timer);
+			announce = false;
+		};
+	});
 	const isBot = (c: PrComment) => /\[bot\]$|bot$|^github-actions|dependabot|renovate|codecov|coderabbit/i.test(c.author?.login ?? '');
 	const shown = $derived(comments.filter((c) => audience === 'all' || (audience === 'bots') === isBot(c)));
 	const countFor = (id: 'all' | 'humans' | 'bots') => comments.filter((c) => id === 'all' || (id === 'bots') === isBot(c)).length;
@@ -478,6 +510,11 @@
 							<button role="radio" aria-checked={audience === id} class={['flex h-7 items-center justify-center gap-1 rounded-md text-[11px] font-medium', audience === id ? 'bg-(--vscode-list-inactiveSelectionBackground) text-(--vscode-foreground) shadow-xs' : MUTED]} onclick={() => (audience = id)}>{label} {countFor(id)}</button>
 						{/each}
 					</div>
+				{:else if coldComments && !composing}
+					<!-- Orca comments-list-loading.tsx `CommentsAudienceLoading`: the tabs' shape while unread. -->
+					<div class="skeleton-in grid grid-cols-3 rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background) p-0.5" aria-hidden="true">
+						{#each ['w-7', 'w-12', 'w-8'] as w (w)}<div class="flex h-7 items-center justify-center"><span class="block h-2 rounded bg-(--vscode-descriptionForeground)/15 {w}"></span></div>{/each}
+					</div>
 				{/if}
 			</div>
 			<div class="flex flex-col gap-2 px-3 py-2">
@@ -505,7 +542,23 @@
 						{@render reactions(c)}
 					</div>
 				{:else}
-					{#if commentsError}<p class="py-5 text-center text-[11px] text-(--vscode-errorForeground)" title={commentsError}>{tr('forge.checks.commentsFailed')}</p>{:else if !composing}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? tr('forge.checks.noBotComments') : audience === 'humans' ? tr('forge.checks.noHumanComments') : tr('forge.checks.noComments')}</p>{/if}
+					{#if coldComments && !composing}
+						<!-- Orca `CommentsListLoading`: two comment cards' shape, fading in after 150 ms (none with reduced motion). -->
+						<div class="skeleton-in flex flex-col gap-2" aria-hidden="true">
+							{#each ['w-3/5', 'w-2/5'] as w (w)}
+								<div class="overflow-clip rounded-lg border border-(--vscode-widget-border) bg-(--vscode-editor-background)">
+									<div class="flex items-center gap-2 border-b border-(--vscode-widget-border)/60 px-3 py-2">
+										<span class="block size-5 shrink-0 rounded-full bg-(--vscode-descriptionForeground)/20"></span>
+										<span class="block h-2.5 w-20 max-w-1/2 rounded bg-(--vscode-descriptionForeground)/20"></span>
+									</div>
+									<div class="px-4 py-2.5">
+										<div class="flex h-5 items-center"><span class="block h-2.5 w-4/5 rounded bg-(--vscode-descriptionForeground)/20"></span></div>
+										<div class="flex h-5 items-center"><span class="block h-2.5 rounded bg-(--vscode-descriptionForeground)/20 {w}"></span></div>
+									</div>
+								</div>
+							{/each}
+						</div>
+					{:else if commentsError}<p class="py-5 text-center text-[11px] text-(--vscode-errorForeground)" title={commentsError}>{tr('forge.checks.commentsFailed')}</p>{:else if !composing && commentsRead}<p class="py-5 text-center text-[11px] {MUTED}">{audience === 'bots' ? tr('forge.checks.noBotComments') : audience === 'humans' ? tr('forge.checks.noHumanComments') : tr('forge.checks.noComments')}</p>{/if}
 				{/each}
 				{#if composing}
 					<div class="rounded-md border border-(--vscode-widget-border) bg-(--vscode-editor-background)">
@@ -532,3 +585,22 @@
 {#if actionMenu}
 	<PopupMenu items={actionItems} label={ft('forge.checks.actionsMenu', forge)} x={actionMenu.x} y={actionMenu.y} onRun={(n) => n.type === 'item' && runAction(n.id)} onClose={() => (actionMenu = null)} />
 {/if}
+
+<span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{announce ? tr('forge.checks.loadingReview') : ''}</span>
+
+<style>
+	/* Orca's `animate-in fade-in-0 fill-mode-backwards delay-150 motion-reduce:animate-none`. */
+	.skeleton-in {
+		animation: skeleton-in 150ms ease-out 150ms backwards;
+	}
+	@keyframes skeleton-in {
+		from {
+			opacity: 0;
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.skeleton-in {
+			animation: none;
+		}
+	}
+</style>

@@ -14,8 +14,10 @@ import { listenWindow } from '#lib/workbench/windowEvents.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { adeTasks } from './tasks.svelte';
 import { cliSessions } from './cliSessions.svelte';
+import { liveHold } from './agentHooks';
 import { runtime } from './runtime.svelte';
-import { isIpv4, liveRow, refreshDue, sortDevices, LIVE_HEARTBEAT_MS, type LiveTask, type MobileAnswer, type MobileStatus, type Pairing } from './mobile';
+import { answerScope, isIpv4, liveRequest, liveRow, refreshDue, sortDevices, LIVE_HEARTBEAT_MS, type LiveTask, type MobileAnswer, type MobileStatus, type Pairing } from './mobile';
+import { permissionGrants } from './permissionGrants.svelte';
 
 type MobileRequest = { id: number; root: string; slug: string; text: string; answer?: MobileAnswer };
 
@@ -132,7 +134,10 @@ async function onRequest(req: MobileRequest) {
 	const a = req.answer;
 	if (req.root !== workspace.root) error = t('mobile.notThisWindow');
 	else if (a) {
-		const ok = a.kind === 'question' ? await cliSessions.answer(req.slug, a.selections ?? []) : await cliSessions.answerPermission(req.slug, a.kind === 'allow');
+		const ok =
+			a.kind === 'question'
+				? await cliSessions.answer(req.slug, a.selections ?? [])
+				: await cliSessions.answerPermission(req.slug, a.kind !== 'deny', { session: answerScope(a.kind) ? (a.grants ?? []) : undefined, scope: answerScope(a.kind), message: a.message ?? undefined });
 		if (!ok) error = t('mobile.answerFailed');
 	} else if (!(await adeTasks.followUp(req.slug, req.text))) error = t('mobile.sendFailed', { slug: req.slug });
 	await invoke('mobile_reply', { id: req.id, error }).catch(() => {});
@@ -143,7 +148,12 @@ function liveRows(): LiveTask[] {
 	const now = Date.now();
 	return Object.keys(cliSessions.sessions).flatMap((slug) => {
 		const r = runtime.get(slug);
-		return r ? [liveRow(slug, { ...r, ask: cliSessions.hooks[slug]?.ask }, now)] : [];
+		const hook = cliSessions.hooks[slug];
+		const token = cliSessions.sessions[slug]?.hookToken;
+		const hold = liveHold(hook, now);
+		const held = !!token && !!hold;
+		const scopes = held && hook?.request?.grants.some((g) => g.kind === 'rule') ? permissionGrants.scopesOf(token, hold?.id) : undefined;
+		return r ? [liveRow(slug, { ...r, ask: hook?.ask, request: liveRequest(hook?.request, held, { project: scopes?.project?.tracked, user: scopes?.user?.tracked }) }, now)] : [];
 	});
 }
 

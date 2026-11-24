@@ -44,6 +44,7 @@
 	import Board from './Board.svelte';
 	import NowPage from './NowPage.svelte';
 	import AutomationsPage from './AutomationsPage.svelte';
+	import InboxPage from './InboxPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import CliQuestion from './CliQuestion.svelte';
@@ -63,6 +64,7 @@
 	import { cliSessions } from './cliSessions.svelte';
 	import { attempts } from './attempts.svelte';
 	import { paneAgents } from './paneAgents.svelte';
+	import { paneSleep } from './paneSleep.svelte';
 	import { paneProgram } from './paneProgram.svelte';
 	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
@@ -342,6 +344,8 @@
 		<div class={rects ? 'absolute' : 'contents'} style={place(regionOf(key, activeTab))}>
 		{#if adeLayout.page === 'now'}
 			<NowPage />
+		{:else if adeLayout.page === 'inbox'}
+			<InboxPage />
 		{:else if adeLayout.page === 'automations'}
 			<AutomationsPage />
 		{:else if adeLayout.page === 'issues'}
@@ -501,7 +505,10 @@
 					onoutput={() => cliSessions.output(s)}
 					ontitle={(title) => cliSessions.title(s, title)}
 					onbell={() => terminalBells.ring(s, 'main')}
-					onprogram={(e) => paneProgram.apply(cliSessions.ptyKey(s, sess.startedAt), e)}
+					onprogram={(e) => {
+						paneProgram.apply(cliSessions.ptyKey(s, sess.startedAt), e);
+						if (e.type === 'input') cliSessions.input(s);
+					}}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 					onopenurl={(url, system) => openLinkInApp(s, url, system)}
 				/>
@@ -526,24 +533,31 @@
 					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
 					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} active={activePane(t)} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
 						{#snippet pane(p)}
+							{@const pk = adeLayout.ptyKey(k, p)}
+							<!-- A sleeping pane (paneSleep.svelte.ts): its shell stays with the agent's last screen; a new shell (the old one is gone) types the agent's resume instead of the tab's own command. -->
+							{@const wake = paneSleep.typeOf(pk)}
 							<Terminal
-								key={adeLayout.ptyKey(k, p)}
+								key={pk}
 								slug={k || undefined}
-								run={p === t.id ? t.run : undefined}
-								type={p === t.id ? t.type : undefined}
-								typeEnter={t.typeEnter !== false}
-								cwdFrom={adeLayout.cwdFrom(k, p)}
+								run={wake || p !== t.id ? undefined : t.run}
+								type={wake ?? (p !== t.id ? undefined : t.type)}
+								typeEnter={!!wake || t.typeEnter !== false}
+								cwdFrom={wake ? undefined : adeLayout.cwdFrom(k, p)}
 								flavor="ade"
 								keyLabels={PANE_KEYS}
 								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
 								onoutput={() => paneAgents.output(adeLayout.ptyKey(k, p))}
 								ontitle={(title) => paneAgents.title(adeLayout.ptyKey(k, p), title)}
-								onprogram={(e) => paneProgram.apply(adeLayout.ptyKey(k, p), e)}
+								onprogram={(e) => {
+									paneProgram.apply(pk, e);
+									if (e.type === 'input') paneAgents.input(pk);
+								}}
 								onbell={() => terminalBells.ring(k, t.id)}
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}
 								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}
 								onopenurl={(url, system) => openLinkInApp(k, url, system)}
+								onconnect={(how) => paneSleep.connected(pk, how)}
 							/>
 						{/snippet}
 					</PaneSplitView>

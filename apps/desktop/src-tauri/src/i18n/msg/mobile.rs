@@ -184,9 +184,61 @@ crate::i18n::messages! {
       en: "Allow presses Enter on the agent's highlighted choice (usually \"Yes\"); Deny presses Esc.",
       th: "อนุญาต = กด Enter ที่ตัวเลือกที่ agent ไฮไลต์ไว้ (ปกติคือ \"Yes\") ส่วนปฏิเสธ = กด Esc",
     },
+    PermissionHintHeld {
+      en: "Your answer goes to the agent as its own allow / deny decision.",
+      th: "คำตอบนี้ส่งถึง agent เป็นการอนุญาต / ปฏิเสธของมันเอง",
+    },
     Allow {
-      en: "Allow",
-      th: "อนุญาต",
+      en: "Allow once",
+      th: "อนุญาตครั้งนี้",
+    },
+    AllowSession {
+      en: "Allow for this session",
+      th: "อนุญาตตลอด session นี้",
+    },
+    AllowProject {
+      en: "Always allow in this project",
+      th: "อนุญาตเสมอในโปรเจกต์นี้",
+    },
+    AllowUser {
+      en: "Always allow",
+      th: "อนุญาตเสมอ",
+    },
+    AlwaysRules {
+      en: "\"Always allow\" has Claude save these rules to its settings (this project's local settings, or your user settings), for later sessions too. Revoke them on the desktop: Agents: Permission Grants.",
+      th: "\"อนุญาตเสมอ\" จะให้ Claude บันทึกกฎต่อไปนี้ลงการตั้งค่า (การตั้งค่า local ของโปรเจกต์นี้ หรือการตั้งค่าผู้ใช้) ใช้กับ session ถัดไปด้วย ยกเลิกได้บนเดสก์ท็อปที่ Agents: Permission Grants",
+    },
+    TrackedProject {
+      en: "Git would track this project's settings file: a commit would share the rule.",
+      th: "git จะติดตามไฟล์การตั้งค่าของโปรเจกต์นี้: ถ้า commit กฎนี้จะถูกแชร์ออกไป",
+    },
+    TrackedUser {
+      en: "Git would track your user settings file: a commit would share the rule.",
+      th: "git จะติดตามไฟล์การตั้งค่าผู้ใช้ของคุณ: ถ้า commit กฎนี้จะถูกแชร์ออกไป",
+    },
+    SessionGrants {
+      en: "Allowing for this session also grants, until the agent exits:",
+      th: "อนุญาตตลอด session นี้จะให้สิทธิ์ต่อไปนี้ด้วย จนกว่า agent จะปิด:",
+    },
+    GrantRule {
+      en: "Run without asking",
+      th: "ใช้ได้โดยไม่ถาม",
+    },
+    GrantDir {
+      en: "Work in the folder",
+      th: "ทำงานในโฟลเดอร์",
+    },
+    GrantMode {
+      en: "Edit files without asking",
+      th: "แก้ไฟล์ได้โดยไม่ถาม",
+    },
+    Unsandboxed {
+      en: "This command asks to run outside the agent's sandbox.",
+      th: "คำสั่งนี้ขอรันนอก sandbox ของ agent",
+    },
+    DenyReason {
+      en: "Why not? (optional, told to the agent)",
+      th: "เหตุผลที่ปฏิเสธ (ไม่บังคับ จะบอก agent)",
     },
     Deny {
       en: "Deny",

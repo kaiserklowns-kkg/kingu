@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { anchorButton, anchorRect, browserTitle, browserUrl, buttonPos, defaultBrowserZoom, isNewTabPage, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect, pickedPrompt, pickedSource } from './floating';
+import { anchorButton, anchorRect, browserTitle, browserUrl, buttonPos, clampButton, defaultBrowserZoom, defaultButton, keepButtonClear, usableButtonViewport, isNewTabPage, clampRect, DEFAULT_BOUNDS, DEFAULT_BUTTON, defaultRect, maximizedRect, rectFromAnchor, resizeRect, pickedPrompt, pickedSource } from './floating';
 
 test('default panel sits bottom right, 920×560', () => {
 	expect(defaultRect(1440, 900)).toEqual({ width: 920, height: 560, left: 496, top: 256 });
@@ -23,6 +23,56 @@ test('button anchoring and clamping', () => {
 	expect(buttonPos(DEFAULT_BUTTON, 1440, 900)).toEqual({ left: 1380, top: 792 });
 	expect(anchorButton({ left: 20, top: 50 }, 1440, 900)).toEqual({ anchorX: 'left', anchorY: 'top', offsetX: 20, offsetY: 50 });
 	expect(buttonPos({ anchorX: 'left', anchorY: 'top', offsetX: -5, offsetY: 0 }, 1440, 900)).toEqual({ left: 8, top: 36 });
+});
+
+describe("the toggle keeps clear of page parts (Orca's floating-terminal-trigger-position)", () => {
+	const VW = 1440;
+	const VH = 900;
+	const at = buttonPos(DEFAULT_BUTTON, VW, VH); // 1380..1416 × 792..828
+
+	test('the default spot is bottom right, or top right under the title bar in a narrow window', () => {
+		expect(defaultButton(1440)).toEqual(DEFAULT_BUTTON);
+		expect(defaultButton(439)).toEqual({ anchorX: 'right', anchorY: 'top', offsetX: 24, offsetY: 72 });
+		expect(buttonPos(defaultButton(400), 400, 700)).toEqual({ left: 340, top: 72 });
+	});
+
+	test('a spot that covers nothing stays put', () => {
+		expect(keepButtonClear(at, [], VW, VH)).toBe(at);
+		const beside = { left: 0, top: 700, right: 1300, bottom: 860, paneBottom: 878 };
+		expect(keepButtonClear(at, [beside], VW, VH)).toBe(at);
+	});
+
+	test('it shows above a composer with no room below it in its pane', () => {
+		// The chat composer down to the status bar: the Send button sits under the default spot.
+		const composer = { left: 1000, top: 760, right: 1430, bottom: 860, paneBottom: 878 };
+		expect(keepButtonClear(at, [composer], VW, VH)).toEqual({ left: 1380, top: 760 - 8 - 36 });
+	});
+
+	test('it shows below a box first when the pane has room', () => {
+		const box = { left: 1000, top: 700, right: 1430, bottom: 800, paneBottom: 900 };
+		expect(keepButtonClear(at, [box], VW, VH)).toEqual({ left: 1380, top: 808 });
+		// The window bounds the pane: a pane running past it leaves no room below.
+		expect(keepButtonClear(at, [{ ...box, paneBottom: 2000 }], VW, 850)).toEqual({ left: 1380, top: 656 });
+	});
+
+	test('a spot that lands on another box is skipped', () => {
+		const covered = { left: 1000, top: 780, right: 1430, bottom: 840, paneBottom: 850 };
+		const over = { left: 1000, top: 700, right: 1430, bottom: 760, paneBottom: 900 };
+		// Above `covered` (736) hits `over`; below `over` (768) hits `covered`; above `over` is clear.
+		expect(keepButtonClear(at, [covered, over], VW, VH)).toEqual({ left: 1380, top: 656 });
+	});
+
+	test('with no clear spot, the first one, kept in the window', () => {
+		const tall = { left: 1000, top: 40, right: 1430, bottom: 880, paneBottom: 900 };
+		expect(keepButtonClear(at, [tall], VW, VH)).toEqual(clampButton({ left: 1380, top: 40 - 8 - 36 }, VW, VH));
+		expect(keepButtonClear(at, [tall], VW, VH).top).toBe(36);
+	});
+
+	test('a window too small to place the button in saves nothing', () => {
+		expect(usableButtonViewport(51, 100)).toBe(false);
+		expect(usableButtonViewport(52, 79)).toBe(false);
+		expect(usableButtonViewport(52, 80)).toBe(true);
+	});
 });
 
 test('resizing from the west edge keeps the east edge', () => {

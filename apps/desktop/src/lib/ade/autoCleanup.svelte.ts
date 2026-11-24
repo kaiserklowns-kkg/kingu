@@ -7,7 +7,7 @@ import { settings } from '#lib/settings/settings.svelte.ts';
 import { status } from '#lib/workbench/status.svelte.ts';
 import { workspace } from '#lib/workbench/workspace.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
-import { AUTO_FIRST_MS, autoRunDue } from './autoCleanup';
+import { AUTO_FIRST_MS, autoRulesOn, autoRunDue } from './autoCleanup';
 import { cleanup } from './cleanup.svelte';
 
 export const AUTO_CLEANUP_ID = 'kingu.workspaceCleanup.auto';
@@ -16,9 +16,11 @@ const POLL_MS = 5 * 60 * 1000;
 
 async function tick() {
 	cleanup.reloadActivity();
+	const state = { enabled: settings.get<boolean>(AUTO_CLEANUP_ID) === true, rulesOn: cleanup.rulesOn };
 	const due = autoRunDue({
-		enabled: settings.get<boolean>(AUTO_CLEANUP_ID) === true,
-		rulesOn: cleanup.rulesOn,
+		...state,
+		// Chat history of deleted workspaces has its own switch: with only that on, the run applies no rule.
+		chatHistoryOn: cleanup.chatHistoryOn,
 		hasFolder: workspace.root !== null,
 		busy: cleanup.open || cleanup.scanning || cleanup.running,
 		lastRunAt: cleanup.lastRunAt,
@@ -26,7 +28,7 @@ async function tick() {
 	});
 	if (!due) return;
 	try {
-		const receipt = await cleanup.runRules('auto');
+		const receipt = await cleanup.runRules('auto', { rules: autoRulesOn(state) });
 		const count = receipt.removed.length + receipt.archived.length;
 		if (count) status.flash(t('workspaceCleanup.auto.flash', { count }), 8000);
 	} catch {

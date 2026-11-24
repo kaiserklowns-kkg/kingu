@@ -64,6 +64,16 @@ describe('jump palette (Orca worktree-jump)', () => {
 		expect(items.at(-1)?.label).toBe('Create "docs"');
 		expect(jumpItems('zzz', { name: 'repo', branch: 'main' }, tasks, fuzzy, L).map((i) => i.id)).toEqual([`${JUMP_CREATE}zzz`]);
 	});
+	test('words in another order, across title and branch, or one typo away still find the worktree (Orca palette-match)', () => {
+		const find = (q: string) => jumpItems(q, { name: 'repo', branch: 'main' }, tasks, fuzzy, L).map((i) => i.id);
+		expect(find('login fix')).toEqual(['fix-login', `${JUMP_CREATE}login fix`]);
+		expect(find('tests kingu')).toEqual(['add-tests', `${JUMP_CREATE}tests kingu`]);
+		expect(find('logon')).toEqual(['fix-login', `${JUMP_CREATE}logon`]);
+		expect(find('login zzz')).toEqual([`${JUMP_CREATE}login zzz`]);
+		// An in-order match keeps its place above a token match.
+		const mixed = [task('docs-old', 'done', 1, { title: 'docs old' }), task('old-docs', 'done', 2)];
+		expect(jumpItems('old docs', { name: 'repo', branch: 'main' }, mixed, fuzzy, L).map((i) => i.id)).toEqual(['old-docs', 'docs-old', `${JUMP_CREATE}old docs`]);
+	});
 	test('an emoji-named task matches by its shortcode', () => {
 		const emoji = [task('ship', 'review', 3, { title: '🚀 ship', branch: 'feature/x' })];
 		expect(jumpItems('rocket', { name: 'repo', branch: 'main' }, emoji, fuzzy, L)[0].id).toBe('ship');

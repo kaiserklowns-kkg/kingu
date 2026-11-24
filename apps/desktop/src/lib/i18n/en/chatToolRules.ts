@@ -13,5 +13,14 @@ export const chatToolRules = {
 	'chatToolRules.assistedApproved': 'Approved by Assisted permissions: {reason}',
 	'chatToolRules.assistedAsked': 'Assisted permissions asks you: {reason}',
 	'chatToolRules.assistedUnavailable': 'The Assisted reviewer could not decide, so it asks you: {reason}',
-	'chatToolRules.approvedByMany': 'Auto approved by rules {rules}'
+	'chatToolRules.approvedByMany': 'Auto approved by rules {rules}',
+	'chatToolRules.ask.sandboxRetry': 'the sandbox blocked the command, and it can run again once you allow what it needed',
+	'chatToolRules.sandbox.session': 'Allow for This Session',
+	'chatToolRules.sandbox.sessionHint': 'Adds it to the sandbox of this chat\'s run only, then runs the command again in the sandbox',
+	'chatToolRules.sandbox.user': 'Allow for This User',
+	'chatToolRules.sandbox.userHint': 'Saves it to {setting} in your user settings, then runs the command again in the sandbox',
+	'chatToolRules.sandbox.skip': 'Skip',
+	'chatToolRules.sandbox.skipHint': 'Do not change the sandbox; the agent is told the command stays blocked',
+	'chatToolRules.sandbox.blockedBy': 'Blocked by',
+	'chatToolRules.sandbox.saveFailed': 'Could not save to your settings: {error}'
 } as const;

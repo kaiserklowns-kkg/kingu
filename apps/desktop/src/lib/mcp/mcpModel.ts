@@ -25,6 +25,8 @@ export type McpEntry = {
 	hash: string;
 	trusted: boolean;
 	error: string | null;
+	/** Why the MCP server policy keeps it from running (Rust agent/mcp_policy.rs: `chat.mcp.*`, the managed allowlist). */
+	blocked?: string | null;
 };
 
 /** One server of a live session (the `mcp_status` event). */
@@ -46,6 +48,8 @@ export type McpRow = {
 	/** A server of the same name earlier in precedence is used instead. */
 	shadowed: boolean;
 	error: string | null;
+	/** Why the MCP server policy keeps it from running; null: it may run. */
+	blocked?: string | null;
 	live: McpLive | null;
 };
 
@@ -74,7 +78,7 @@ export function composeServers(snapServers: McpServers, entries: readonly McpEnt
 	for (const [name, s] of Object.entries(snapServers)) if (!disabled.has(mcpId('snap', name))) out[name] = s;
 	for (const source of PASSED) {
 		for (const e of entries) {
-			if (e.source !== source || !e.server || e.error || !e.trusted || disabled.has(mcpId(source, e.name)) || !validServerName(e.name)) continue;
+			if (e.source !== source || !e.server || e.error || e.blocked || !e.trusted || disabled.has(mcpId(source, e.name)) || !validServerName(e.name)) continue;
 			if (!(e.name in out)) out[e.name] = e.server;
 		}
 	}
@@ -110,13 +114,14 @@ export function mcpRows(snapServers: McpServers, entries: readonly McpEntry[], d
 				needsTrust: source !== 'user' && !e.trusted && !e.error,
 				shadowed,
 				error: e.error,
+				blocked: e.blocked ?? null,
 				live: null
 			});
 		}
 	}
 	// Live status by name: the row that actually runs under that name.
 	for (const row of rows) {
-		if (row.shadowed || !row.enabled || row.needsTrust || row.error || taken.has(row.name)) continue;
+		if (row.shadowed || !row.enabled || row.needsTrust || row.error || row.blocked || taken.has(row.name)) continue;
 		if (live[row.name]) {
 			row.live = live[row.name];
 			taken.add(row.name);
@@ -130,11 +135,12 @@ export function mcpRows(snapServers: McpServers, entries: readonly McpEntry[], d
 	return rows;
 }
 
-export type McpState = 'running' | 'starting' | 'failed' | 'needsAuth' | 'off' | 'untrusted' | 'invalid' | 'idle';
+export type McpState = 'running' | 'starting' | 'failed' | 'needsAuth' | 'off' | 'untrusted' | 'invalid' | 'blocked' | 'idle';
 
 /** One word for the status dot and label. `idle`: on, but no session has reported it yet. */
 export function rowState(r: McpRow): McpState {
 	if (r.error) return 'invalid';
+	if (r.blocked) return 'blocked';
 	if (!r.enabled) return 'off';
 	if (r.needsTrust) return 'untrusted';
 	switch (r.live?.status) {

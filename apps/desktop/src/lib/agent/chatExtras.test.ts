@@ -17,6 +17,7 @@ describe('safety asks in the chat', () => {
 		expect(guardAskedText({ check: 'delete', paths: ['a.txt', 'b.txt'] })).toBe('Kingu asks first: it deletes files (a.txt, b.txt)');
 		expect(guardAskedText({ check: 'delete', paths: ['*'] })).toBe('Kingu asks first: it deletes files');
 		expect(guardAskedText({ check: 'mcp', paths: [] })).toBe('Kingu asks first: it calls an MCP tool');
+		expect(guardAskedText({ check: 'unsandboxed', paths: [] })).toBe('Kingu asks first: it runs outside the sandbox, with your full access to files and the network');
 		expect(guardAskedText({ check: 'outside_cwd', paths: ['1', '2', '3', '4'] })).toBe('Kingu asks first: it writes outside the project folder (1, 2, 3, …)');
 		setLocale('th');
 		expect(guardAskedText({ check: 'protected', paths: ['.env'] })).toBe('Kingu ขอถามก่อน: จะยุ่งกับไฟล์ที่ป้องกันไว้ (.kinguignore) (.env)');

@@ -544,24 +544,33 @@
 <svelte:window onkeyup={onKeyUp} />
 
 {#if quick.visible}
-	<!-- VS Code: 600px wide (or 62% of the window), just below the title bar, no backdrop. -->
+	<!-- VS Code: 600px wide (or 62% of the window), just below the title bar, no backdrop. Above the
+	     modal dialogs (z-[65]: SSH Hosts, Cleanup, …) that open it, so a click on an item reaches it
+	     instead of the dialog's backdrop, which would close the dialog and cancel the question. -->
 	<div
 		role="dialog"
 		aria-label="Quick open"
 		tabindex="-1"
 		style:top={quickInputTop(quick.alignment)}
-		class="fixed left-1/2 z-50 w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
+		class="fixed left-1/2 z-[70] w-[min(600px,62vw)] -translate-x-1/2 rounded-xl border border-(--vscode-widget-border) bg-(--vscode-quickInput-background) p-2 text-(--vscode-quickInput-foreground) shadow-2xl shadow-black/50"
 		onfocusout={(e) => {
 			// workbench.quickOpen.closeOnFocusLost
 			if (!e.currentTarget.contains(e.relatedTarget as Node | null) && settings.get<boolean>('workbench.quickOpen.closeOnFocusLost')) cancel();
 		}}
 	>
+		{#if quick.picker?.title}
+			<div class="mb-1 truncate px-1 text-xs font-semibold">{quick.picker.title}</div>
+		{/if}
+		{#if quick.picker?.message?.length}
+			<p id="quick-input-message" class="mb-2 max-h-48 overflow-y-auto px-1 text-xs leading-relaxed break-words whitespace-pre-wrap text-(--vscode-descriptionForeground) select-text"><!-- pre-wrap: no whitespace around the runs -->{#each quick.picker.message as run, k (k)}{#if run.mono}<code class="font-mono break-all text-(--vscode-quickInput-foreground)">{run.text}</code>{:else}{run.text}{/if}{/each}</p>
+		{/if}
 		<input
 			bind:this={input}
 			bind:value={quick.value}
 			type={quick.picker?.password ? 'password' : 'text'}
 			oninput={() => (index = 0)}
 			onkeydown={onKey}
+			aria-describedby={quick.picker?.message?.length ? 'quick-input-message' : undefined}
 			aria-label={t('legacyWorkbench.quickInput.searchAria')}
 			{placeholder}
 			class="h-8 w-full rounded-lg border border-(--vscode-focusBorder) bg-(--vscode-input-background) px-2.5 text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"

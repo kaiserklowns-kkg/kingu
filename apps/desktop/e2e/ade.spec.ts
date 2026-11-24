@@ -157,7 +157,9 @@ test('Add Command saves a quick command for every project or this one', async ({
 	await promptForm.getByRole('button', { name: 'Save' }).click();
 	await page.getByRole('button', { name: /^Run Review in a new terminal/ }).click();
 	await expect(page.getByRole('tab', { name: /Review/ })).toBeVisible();
-	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.spawns.at(-1)?.run)).toEqual(['claude', 'Review the open diff']);
+	// A prompt's agent starts as a new agent tab does (paneLaunch.ts): with its default env (Orca's agentDefaultEnv),
+	// and the prompt after `--` so no flag reads it as its value (Orca 907b43c04).
+	await expect.poll(async () => page.evaluate(() => (window as any).__e2e.spawns.at(-1)?.run)).toEqual(['env', 'DISABLE_AUTOUPDATER=1', 'claude', '--', 'Review the open diff']);
 	await page.getByRole('button', { name: 'Quick Commands', exact: true }).click();
 	await expect(menu.getByText('Prompts', { exact: true })).toBeVisible();
 	// Edit it to run Codex instead of the default agent.

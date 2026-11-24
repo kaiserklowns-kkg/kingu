@@ -18,6 +18,10 @@
 // (session.ts). Servers connect in the background; `onChange` reports each change as an
 // `mcp_status` list. Everything is closed when the run ends.
 //
+// MCP Apps (SEP-1865): `initialize` announces the UI extension, each tool's `_meta.ui` is kept
+// (`uiMeta`), tools only for apps are not offered to the model but stay callable by their app
+// (`appTool`), and a model call returns the server's raw result too (`callRaw`): mcpApps.ts.
+//
 // Never log tool arguments, results or headers: they may hold secrets and file contents.
 
 import { pathToFileURL } from 'node:url';
@@ -25,6 +29,7 @@ import type { McpServerLive, McpServerParams } from '../protocol.ts';
 import { JsonRpcPeer, linesOf, RpcCallError, type Pipes } from '../runtimes/rpc.ts';
 import { spawnChild, type SpawnFn } from '../runtimes/session.ts';
 import type { ToolDef } from './messages.ts';
+import { declaresSkills, listSkills, McpSkillRegistry, SKILLS_EXTENSION } from './mcpSkills.ts';
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -56,9 +61,48 @@ export type ServerHandlers = {
 	sample?: (params: unknown) => Promise<unknown>;
 };
 
-/** The client capabilities `initialize` announces for these handlers. */
-export function clientCapabilities(h: ServerHandlers = {}): Obj {
-	return { roots: { listChanged: false }, ...(h.elicit ? { elicitation: {} } : {}), ...(h.sample ? { sampling: {} } : {}) };
+/** MCP Apps (SEP-1865): the extension and the one UI type VS Code announces (mcpServerRequestHandler.ts). */
+export const UI_EXTENSION = 'io.modelcontextprotocol/ui';
+export const UI_MIME_TYPE = 'text/html;profile=mcp-app';
+
+/**
+ * The client capabilities `initialize` announces for these handlers, Skills over MCP (SEP-2640)
+ * when on, and MCP Apps (SEP-1865) when `apps`: the chat renders `ui://` resources (arkai/mcpApps.ts).
+ */
+export function clientCapabilities(h: ServerHandlers = {}, skills = false, apps = false): Obj {
+	const extensions: Obj = { ...(skills ? { [SKILLS_EXTENSION]: {} } : {}), ...(apps ? { [UI_EXTENSION]: { mimeTypes: [UI_MIME_TYPE] } } : {}) };
+	return {
+		roots: { listChanged: false },
+		...(h.elicit ? { elicitation: {} } : {}),
+		...(h.sample ? { sampling: {} } : {}),
+		...(Object.keys(extensions).length ? { extensions } : {})
+	};
+}
+
+/** A tool's MCP Apps metadata (VS Code `McpUiToolMeta`): its UI resource and who may call it. */
+export type McpUiToolMeta = { resourceUri: string | null; visibility: ('model' | 'app')[] };
+
+/**
+ * `_meta.ui` (or the older flat `_meta["ui/resourceUri"]` / `_meta["ui/visibility"]`), as VS Code
+ * reads it (mcpServer.ts): visibility defaults to both; a resource must be a `ui://` URI.
+ */
+export function uiMeta(tool: Obj): McpUiToolMeta {
+	const meta = isObj(tool._meta) ? tool._meta : {};
+	const ui = isObj(meta.ui) ? meta.ui : {};
+	const visibility = Array.isArray(ui.visibility) ? ui.visibility : meta['ui/visibility'];
+	const uri = typeof ui.resourceUri === 'string' ? ui.resourceUri : meta['ui/resourceUri'];
+	return {
+		resourceUri: typeof uri === 'string' && uri.startsWith('ui://') && uri.length <= 2048 ? uri : null,
+		visibility: Array.isArray(visibility) ? (['model', 'app'] as const).filter((v) => visibility.includes(v)) : ['model', 'app']
+	};
+}
+
+/**
+ * Whether the model may call a tool: an MCP Apps tool (ext-apps `_meta.ui.visibility`) that is
+ * only for its app (`["app"]`) is not offered; its app calls it (`McpHub.appTool`).
+ */
+export function modelVisible(tool: Obj): boolean {
+	return uiMeta(tool).visibility.includes('model');
 }
 
 /** What a server may ask of Arkai: `ping`, `roots/list` (the run's folder), and what `h` handles. */
@@ -370,7 +414,7 @@ export class SseConnection extends HttpBase {
 	}
 }
 
-export type McpToolInfo = { name: string; description: string; inputSchema: Obj };
+export type McpToolInfo = { name: string; description: string; inputSchema: Obj; ui: McpUiToolMeta };
 
 /** A tool call's result as text for the model: text parts joined; images and other parts named. */
 export function resultText(r: unknown): { content: string; isError: boolean } {
@@ -391,7 +435,10 @@ export const MAX_LISTED = 500;
 
 /** One server: initialized, its tools listed. */
 export class McpClient {
+	/** The tools the model is offered. */
 	tools: McpToolInfo[] = [];
+	/** Every tool an MCP App of this server may call (`visibility` has `app`), app-only ones too. */
+	appTools: McpToolInfo[] = [];
 	/** The server's capabilities from `initialize` (`resources`, `prompts`, …). */
 	serverCaps: Obj = {};
 
@@ -412,20 +459,29 @@ export class McpClient {
 	private async listTools() {
 		const tools: McpToolInfo[] = [];
 		let cursor: string | undefined;
+		let pages = 0;
 		do {
 			const page = await this.conn.request('tools/list', cursor ? { cursor } : {}, { timeoutMs: REQUEST_TIMEOUT_MS });
 			for (const t of isObj(page) && Array.isArray(page.tools) ? page.tools.filter(isObj) : []) {
 				if (typeof t.name !== 'string' || !t.name) continue;
 				const schema = isObj(t.inputSchema) ? t.inputSchema : {};
-				tools.push({ name: t.name, description: typeof t.description === 'string' ? t.description : '', inputSchema: { ...schema, type: 'object', properties: isObj(schema.properties) ? schema.properties : {} } });
+				tools.push({ name: t.name, description: typeof t.description === 'string' ? t.description : '', inputSchema: { ...schema, type: 'object', properties: isObj(schema.properties) ? schema.properties : {} }, ui: uiMeta(t) });
 			}
 			cursor = isObj(page) && typeof page.nextCursor === 'string' && page.nextCursor ? page.nextCursor : undefined;
-		} while (cursor && tools.length < MAX_TOOLS);
-		this.tools = tools.slice(0, MAX_TOOLS);
+		} while (cursor && tools.length < 2 * MAX_TOOLS && ++pages < 100);
+		this.tools = tools.filter((t) => t.ui.visibility.includes('model')).slice(0, MAX_TOOLS);
+		this.appTools = tools.filter((t) => t.ui.visibility.includes('app')).slice(0, MAX_TOOLS);
 	}
 
 	async call(tool: string, args: Obj, signal: AbortSignal): Promise<{ content: string; isError: boolean }> {
-		return resultText(await this.conn.request('tools/call', { name: tool, arguments: args }, { signal, timeoutMs: CALL_TIMEOUT_MS }));
+		const { content, isError } = await this.callRaw(tool, args, signal);
+		return { content, isError };
+	}
+
+	/** A call with the server's own `CallToolResult` (`raw`) besides its text for the model; `meta`: the request's `_meta`. */
+	async callRaw(tool: string, args: Obj, signal: AbortSignal, meta?: Obj): Promise<{ content: string; isError: boolean; raw: Obj }> {
+		const r = await this.conn.request('tools/call', { name: tool, arguments: args, ...(meta ? { _meta: meta } : {}) }, { signal, timeoutMs: CALL_TIMEOUT_MS });
+		return { ...resultText(r), raw: isObj(r) ? r : {} };
 	}
 
 	/** Every page of a list method's `key` entries (objects), up to MAX_LISTED; [] when the server lacks `cap`. */
@@ -469,6 +525,10 @@ export type HubOptions = {
 	connect?: (name: string, s: McpServerParams, handlers: ServerHandlers) => McpConnection;
 	/** What the run answers for each server (elicitation, sampling); absent: neither is offered. */
 	handlers?: (server: string) => ServerHandlers;
+	/** Skills over MCP (`chat.agentHost.mcpSkills.enabled`): servers that declare them get them listed. */
+	skills?: boolean;
+	/** MCP Apps: the UI extension is announced (Arkai runs always, as VS Code does; the chat renders the apps). */
+	apps?: boolean;
 };
 
 type Entry = { status: 'pending' | 'connected' | 'failed' | 'needs-auth'; error: string | null; client: McpClient | null };
@@ -476,8 +536,10 @@ type Entry = { status: 'pending' | 'connected' | 'failed' | 'needs-auth'; error:
 /** A run's MCP servers: connected in the background, their tools offered, calls routed, all closed at the end. */
 export class McpHub {
 	private entries = new Map<string, Entry>();
-	private tools = new Map<string, { server: string; tool: string; def: ToolDef }>();
+	private tools = new Map<string, { server: string; tool: string; def: ToolDef; ui: McpUiToolMeta }>();
 	private closed = false;
+	/** The servers' skills (SEP-2640), listed as each connects. */
+	readonly skills = new McpSkillRegistry();
 	/** Settles once every server connected or failed. */
 	readonly ready: Promise<void>;
 
@@ -495,16 +557,27 @@ export class McpHub {
 		let client: McpClient | null = null;
 		try {
 			const handlers = this.o.handlers?.(name) ?? {};
-			client = new McpClient(name, connect(name, s, handlers), clientCapabilities(handlers));
+			client = new McpClient(name, connect(name, s, handlers), clientCapabilities(handlers, this.o.skills === true, this.o.apps === true));
 			await client.connect();
 			if (this.closed) return client.close();
+			if (this.o.skills && declaresSkills(client.serverCaps)) {
+				// A listing that fails leaves the server's tools usable; its skills are just not offered.
+				try {
+					const { skills, refused } = await listSkills(client);
+					this.skills.set(name, skills);
+					this.o.log(`mcp ${name}: ${skills.length} skills${refused ? `, ${refused} refused` : ''}`);
+				} catch {
+					this.o.log(`mcp ${name}: skills/list failed`);
+				}
+				if (this.closed) return client.close();
+			}
 			entry.client = client;
 			entry.status = 'connected';
 			for (const t of client.tools) {
 				let exposed = exposedName(name, t.name);
 				for (let n = 2; this.tools.has(exposed); n++) exposed = `${exposedName(name, t.name).slice(0, MAX_NAME - String(n).length - 1)}_${n}`;
 				const description = (t.description || `${t.name} (MCP server ${name})`).slice(0, MAX_DESCRIPTION);
-				this.tools.set(exposed, { server: name, tool: t.name, def: { name: exposed, description, parameters: t.inputSchema } });
+				this.tools.set(exposed, { server: name, tool: t.name, def: { name: exposed, description, parameters: t.inputSchema }, ui: t.ui });
 			}
 			this.o.log(`mcp ${name}: connected, ${client.tools.length} tools`);
 		} catch (e) {
@@ -540,20 +613,37 @@ export class McpHub {
 		return this.tools.has(name);
 	}
 
-	/** Server `name`'s client, once connected. */
+	/** Server `name`'s client, once connected and its skills listed. */
 	client(name: string): McpClient | null {
 		return this.entries.get(name)?.client ?? null;
 	}
 
 	async call(name: string, args: Obj, signal: AbortSignal): Promise<{ content: string; isError: boolean }> {
+		const { content, isError } = await this.callRaw(name, args, signal);
+		return { content, isError };
+	}
+
+	/** A model's call, with the server's `CallToolResult` (`raw`, null when it never answered) for an MCP App. */
+	async callRaw(name: string, args: Obj, signal: AbortSignal): Promise<{ content: string; isError: boolean; raw: Obj | null }> {
 		const t = this.tools.get(name);
 		const client = t && this.entries.get(t.server)?.client;
-		if (!t || !client) return { content: `The MCP tool ${name} is not available.`, isError: true };
+		if (!t || !client) return { content: `The MCP tool ${name} is not available.`, isError: true, raw: null };
 		try {
-			return await client.call(t.tool, args, signal);
+			return await client.callRaw(t.tool, args, signal);
 		} catch (e) {
-			return { content: `MCP server ${t.server}: ${e instanceof Error ? e.message : String(e)}`, isError: true };
+			return { content: `MCP server ${t.server}: ${e instanceof Error ? e.message : String(e)}`, isError: true, raw: null };
 		}
+	}
+
+	/** The server, tool and UI resource (`ui://`) of a model-offered tool that renders an MCP App; null otherwise. */
+	appOf(name: string): { server: string; tool: string; resourceUri: string } | null {
+		const t = this.tools.get(name);
+		return t?.ui.resourceUri ? { server: t.server, tool: t.tool, resourceUri: t.ui.resourceUri } : null;
+	}
+
+	/** Server `server`'s tool `tool` when an MCP App may call it (VS Code: `visibility & App`, else "Tool not found"). */
+	appTool(server: string, tool: string): McpToolInfo | null {
+		return this.entries.get(server)?.client?.appTools.find((t) => t.name === tool) ?? null;
 	}
 
 	close() {

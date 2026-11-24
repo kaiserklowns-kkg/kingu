@@ -4,6 +4,11 @@
 // notifications and team sync like any other. Safety: each automation is off until the user
 // enables it (a native confirm), that consent is remembered on this machine only (a repository can
 // ship an enabled automations.json), and `kingu.automations.enabled` stops them all.
+// VS Code 1.145 (agents/run/automations.md, automationCron.ts): a Trigger of Manual, Hourly,
+// Daily, Weekdays, Weekly or Cron, evaluated in a saved time zone; `chat.automations.enabled`
+// (VS Code's switch, on by default) hides the feature and stops dispatching. Scheduled runs happen
+// only while Kingu is open; a time missed while it was closed starts one catch-up run on the next
+// start (or none, with catch-up off), as VS Code's local automations do.
 
 import { invoke } from '@tauri-apps/api/core';
 import { ask } from '#lib/workbench/messageBox.ts';
@@ -18,9 +23,10 @@ import { untrack } from 'svelte';
 import { adeLayout } from './adeLayout.svelte.ts';
 import { notify } from './agentNotify.svelte.ts';
 import type { RunMode } from './agentCli.ts';
-import { consentKey, decide, formatWhen, newAutomation, nextRunOf, runTitle, type Automation, type Decision } from './automations.ts';
+import { consentKey, decide, formatWhen, isScheduled, newAutomation, nextRunOf, runTitle, scheduleLabel, type Automation, type Decision } from './automations.ts';
+import { cronError, MANUAL_SCHEDULE, type TriggerKind } from './automationCron.ts';
 import { uniqueSlug } from './model.ts';
-import { parseSchedule, upcoming } from './schedule.ts';
+import { parseSchedule } from './schedule.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { notifications } from '#lib/workbench/notifications.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
@@ -30,7 +36,11 @@ const TICK_MS = 30_000;
 /** After a folder loads, wait for restored agent CLIs to report before judging "still working". */
 const SETTLE_MS = 10_000;
 
-export type AutomationInput = { name: string; prompt: string; schedule: string; base: string | null; mode: RunMode | null; catch_up: boolean };
+/**
+ * `trigger` null: Kingu's own schedule text; else VS Code's trigger with `schedule` its expression.
+ * `enabled`: the form's Enabled box (cleared by default); turning it on still asks first.
+ */
+export type AutomationInput = { name: string; prompt: string; schedule: string; base: string | null; mode: RunMode | null; catch_up: boolean; trigger?: TriggerKind | null; time_zone?: string | null; enabled?: boolean };
 
 function readConsent(): Record<string, string> {
 	try {
@@ -54,6 +64,8 @@ class AdeAutomations {
 	/** The editor form: a new automation (`id: null`) or the one being edited. */
 	editing = $state<{ id: string | null } | null>(null);
 	globalEnabled = $derived(settings.get<boolean>('kingu.automations.enabled') !== false);
+	/** VS Code's `chat.automations.enabled`: off hides Automations and dispatches nothing. */
+	featureEnabled = $derived(settings.get<boolean>('chat.automations.enabled') !== false);
 	/** Enabled and confirmed on this machine. */
 	activeCount = $derived(this.list.filter((a) => this.isActive(a)).length);
 
@@ -139,9 +151,9 @@ class AdeAutomations {
 	/** Native confirm before an automation may spend tokens on its own. */
 	async #confirmEnable(a: Automation): Promise<boolean> {
 		const now = Date.now();
-		const next = upcoming(a.schedule, now, now);
+		const next = nextRunOf({ ...a, enabled: true, enabled_at: now, last_due_at: null }, now);
 		const mode = 'terminal';
-		return ask(t('adeTasks.automations.enableAsk', { name: a.name, schedule: a.schedule, next: formatWhen(next, now), base: a.base ?? t('adeTasks.automations.folderBranch'), mode }), {
+		return ask(t('adeTasks.automations.enableAsk', { name: a.name, schedule: scheduleLabel(a), next: formatWhen(next, now), base: a.base ?? t('adeTasks.automations.folderBranch'), mode }), {
 			title: t('adeTasks.automations.enableTitle'),
 			kind: 'warning',
 			okLabel: t('adeTasks.automations.enableOk'),
@@ -153,6 +165,11 @@ class AdeAutomations {
 		if (!input.name.trim()) return t('adeTasks.automations.nameRequired');
 		if (input.name.trim().length > 100) return t('adeTasks.automations.nameTooLong');
 		if (!input.prompt.trim()) return t('adeTasks.automations.promptRequired');
+		if (input.trigger === 'manual') return null;
+		if (input.trigger) {
+			if (!input.schedule.trim()) return t('cron.error.required');
+			return cronError(input.schedule, input.time_zone || 'UTC');
+		}
 		const parsed = parseSchedule(input.schedule);
 		return parsed.ok ? null : parsed.error;
 	}
@@ -165,16 +182,37 @@ class AdeAutomations {
 			return false;
 		}
 		const now = Date.now();
+		const schedule = input.trigger === 'manual' ? MANUAL_SCHEDULE : input.schedule.trim().replace(/\s+/g, input.trigger ? ' ' : '$&');
 		if (id === null) {
 			const taken = new Set(this.list.map((a) => a.id));
-			const a = newAutomation({ ...input, id: uniqueSlug(`auto-${input.name}`, taken) }, now);
+			const a = newAutomation({ ...input, schedule, id: uniqueSlug(`auto-${input.name}`, taken) }, now);
 			await this.#save([...this.list, a]);
-			status.flash(t('adeTasks.automations.created', { name: a.name }), 6000);
+			// The Enabled box asks like the switch does; declined, it stays off.
+			if (input.enabled && isScheduled(a)) await this.setEnabled(a.id, true);
+			else status.flash(t('adeTasks.automations.created', { name: a.name }), 6000);
 			return true;
 		}
 		const old = this.find(id);
 		if (!old) return false;
-		const next: Automation = { ...old, name: input.name.trim(), prompt: input.prompt.trim(), schedule: input.schedule.trim(), base: input.base || null, mode: input.mode, catch_up: input.catch_up };
+		const trigger = input.trigger === undefined ? old.trigger : input.trigger;
+		const next: Automation = {
+			...old,
+			name: input.name.trim(),
+			prompt: input.prompt.trim(),
+			schedule,
+			base: input.base || null,
+			mode: input.mode,
+			catch_up: input.catch_up,
+			trigger: trigger ?? null,
+			time_zone: trigger ? (input.time_zone ?? old.time_zone ?? null) : null
+		};
+		if (!trigger) {
+			delete next.trigger;
+			delete next.time_zone;
+		}
+		const wantOn = input.enabled === true && !this.isActive(old) && isScheduled(next);
+		if ((input.enabled === false && old.enabled) || !isScheduled(next)) next.enabled = false;
+		if (wantOn) next.enabled = false;
 		if (next.enabled && this.#root && consentKey(this.#root, next) !== consentKey(this.#root, old)) {
 			if (await this.#confirmEnable(next)) {
 				this.#setConsent(next, id);
@@ -185,6 +223,7 @@ class AdeAutomations {
 			}
 		}
 		await this.#save(this.list.map((a) => (a.id === id ? next : a)));
+		if (wantOn) await this.setEnabled(id, true);
 		return true;
 	}
 
@@ -196,6 +235,8 @@ class AdeAutomations {
 			await this.#patch(id, { enabled: false });
 			return;
 		}
+		// Manual runs only on Run now: there is nothing to turn on.
+		if (!isScheduled(a)) return;
 		if (!(await this.#confirmEnable(a))) return;
 		this.#setConsent(a, id);
 		await this.#patch(id, { enabled: true, enabled_at: Date.now() });
@@ -245,18 +286,19 @@ class AdeAutomations {
 		const root = this.#root;
 		if (this.#ticking || !this.loaded || !adeTasks.loaded || !root || root !== workspace.root || Date.now() < this.#readyAt) return;
 		const active = (list: Automation[]) => list.map((a) => ({ ...a, enabled: this.isActive(a) }));
-		if (!decide(active(this.list), this.now, this.#handled, isWorking, this.globalEnabled).length) return;
+		const on = this.globalEnabled && this.featureEnabled;
+		if (!decide(active(this.list), this.now, this.#handled, isWorking, on).length) return;
 		this.#ticking = true;
 		try {
 			const fresh = await invoke<Automation[]>('automations_load');
 			if (root !== workspace.root) return;
 			this.list = fresh;
-			const decisions = decide(active(fresh), Date.now(), this.#handled, isWorking, this.globalEnabled);
+			const decisions = decide(active(fresh), Date.now(), this.#handled, isWorking, this.globalEnabled && this.featureEnabled);
 			// Claim each window in the file before starting anything.
-			for (const d of decisions) this.#handled[d.id] = d.due;
+			for (const d of decisions) this.#handled[d.id] = d.handled ?? d.due;
 			const at = Date.now();
 			const handle = (a: Automation, d: Decision): Automation =>
-				d.action === 'skip' ? { ...a, last_due_at: d.due, last_skip: { at, reason: d.reason } } : { ...a, last_due_at: d.due };
+				d.action === 'skip' ? { ...a, last_due_at: d.handled ?? d.due, last_skip: { at, reason: d.reason } } : { ...a, last_due_at: d.handled ?? d.due };
 			await this.#save(fresh.map((a) => {
 				const d = decisions.find((x) => x.id === a.id);
 				return d ? handle(a, d) : a;
@@ -303,7 +345,7 @@ class AdeAutomations {
 	pickAndRun() {
 		quick.pick({
 			placeholder: t('adeTasks.automations.pickPlaceholder'),
-			items: this.list.map((a) => ({ id: a.id, label: a.name, description: this.isActive(a) ? a.schedule : t('adeTasks.automations.scheduleOff', { schedule: a.schedule }) })),
+			items: this.list.map((a) => ({ id: a.id, label: a.name, description: this.isActive(a) ? scheduleLabel(a) : t('adeTasks.automations.scheduleOff', { schedule: scheduleLabel(a) }) })),
 			onAccept: (item) => void this.runNow(item.id)
 		});
 	}
@@ -323,10 +365,10 @@ export function installAutomations(): () => void {
 		});
 	});
 	const timer = setInterval(() => void automations.tick(), TICK_MS);
-	const hasRoot = () => workspace.root !== null;
+	const hasRoot = () => workspace.root !== null && automations.featureEnabled;
 	const unregister = [
 		commands.register({ id: 'kingu.automations.new', title: 'Automations: New…', category: 'Agents', when: hasRoot, run: () => automations.openPage({ id: null }) }),
-		commands.register({ id: 'kingu.automations.runNow', title: 'Automations: Run Now…', category: 'Agents', when: () => automations.list.length > 0, run: () => automations.pickAndRun() }),
+		commands.register({ id: 'kingu.automations.runNow', title: 'Automations: Run Now…', category: 'Agents', when: () => automations.featureEnabled && automations.list.length > 0, run: () => automations.pickAndRun() }),
 		commands.register({ id: 'kingu.automations.pauseAll', title: 'Automations: Pause All', category: 'Agents', when: () => automations.globalEnabled, run: () => automations.pauseAll() }),
 		commands.register({ id: 'kingu.automations.show', title: 'Automations: Show', category: 'Agents', when: hasRoot, run: () => automations.openPage() })
 	];

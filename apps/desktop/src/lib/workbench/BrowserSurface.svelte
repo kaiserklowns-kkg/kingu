@@ -7,16 +7,20 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { BROWSER_ZOOMS, browserTitle, browserUrl, defaultBrowserZoom, isNewTabPage, loopbackPort, onLocalPort, readHistory, recordHistory, BROWSER_ACTION, type PickedElement } from './floating';
+	import { browserMemorySaver, memorySaverPolicy } from './browserMemorySaver';
 	import { notifications } from './notifications.svelte';
 	import { quick } from './quick.svelte';
 	import { status } from './status.svelte';
 	import Icon from './Icon.svelte';
 	import { t } from '#lib/i18n/index.ts';
+	import { agentBrowser } from './agentBrowser.svelte';
+	import { isAgentLabel } from './agentBrowser';
 
 	let {
 		label,
 		url: initial = '',
 		visible,
+		viewed,
 		onTitle,
 		onNavigate,
 		onPick,
@@ -31,6 +35,8 @@
 		label: string;
 		url?: string;
 		visible: boolean;
+		/** The user has this tab in view (overlays that only cover the native view aside): what Memory Saver counts. Absent: `visible`. */
+		viewed?: boolean;
 		onTitle?: (title: string) => void;
 		/** The page finished loading `url` (the ADE saves it, so the tab reopens there). */
 		onNavigate?: (url: string) => void;
@@ -63,6 +69,10 @@
 	let address = $state(untrack(() => initial));
 	const viaHost = $derived(route && loopbackPort(browserUrl(address, settings.get('kingu.browser.searchEngine'))) !== null ? route.via : null);
 	let opened = $state(false);
+	/** Orca's Memory Saver freed the page: the native view is closed until the tab is shown again. */
+	let freed = $state(false);
+	/** Places (or opens) the native view; set once mounted. */
+	let resync = () => {};
 	/** Focused once on the new-tab page: the page load takes the keyboard after showing. */
 	let focusedOnce = false;
 	let box: HTMLDivElement;
@@ -74,7 +84,7 @@
 		const send = () => {
 			frameId = 0;
 			const r = el.getBoundingClientRect();
-			if (r.width < 1 || r.height < 1) return;
+			if (r.width < 1 || r.height < 1 || freed) return;
 			const at = { label, x: r.left, y: r.top, width: r.width, height: r.height };
 			const first = !opened;
 			// A remote host's loopback page opens blank, then loads once its forward is up.
@@ -82,8 +92,11 @@
 			const call = opened ? invoke('floating_browser_bounds', at) : invoke('floating_browser_open', { ...at, url: later ? 'about:blank' : browserUrl(address, settings.get('kingu.browser.searchEngine')), profile: profile || null });
 			if (later) void call.then(() => go());
 			opened = true;
-			// kingu.browser.defaultZoom (Orca's Default Zoom): a new page starts at it.
-			if (first && baseZoom !== 1) void call.then(() => setZoom(baseZoom));
+			// kingu.browser.defaultZoom (Orca's Default Zoom): a new page starts at it; a page Memory
+			// Saver freed comes back at the zoom its tab had.
+			const startZoom = restored ? zoom : baseZoom;
+			restored = false;
+			if (first && startZoom !== 1) void call.then(() => setZoom(startZoom));
 			void call.catch((e) => status.error(String(e)));
 		};
 		const sync = () => {
@@ -101,6 +114,7 @@
 			// The app serves the new-tab page; the address bar stays blank for it.
 			const url = isNewTabPage(e.payload.url) ? '' : e.payload.url;
 			address = url;
+			agentBrowser.surface(label, url, browserTitle(url));
 			onTitle?.(browserTitle(url));
 			onNavigate?.(url);
 			if (url) recordHistory(url);
@@ -110,8 +124,14 @@
 				if (visible) bar?.focus();
 			}
 		});
+		resync = sync;
 		sync();
+		agentBrowser.listen();
+		agentBrowser.surface(label, browserUrl(address, settings.get('kingu.browser.searchEngine')), browserTitle(address));
 		return () => {
+			resync = () => {};
+			agentBrowser.gone(label);
+			browserMemorySaver().close(label);
 			observer.disconnect();
 			style.disconnect();
 			window.removeEventListener('resize', sync);
@@ -126,6 +146,39 @@
 		// shortcut: only Settings and Quick Input hide it; other dialogs are small enough to miss it.
 		if (!opened) return;
 		void invoke('floating_browser_show', { label, visible }).catch(() => {});
+	});
+
+	// Orca's Memory Saver: a tab out of view for kingu.browser.memorySaverHours has its page freed
+	// (the native view closes, the tab and its address stay) unless the page says it would lose
+	// something; the page loads again when the tab is shown.
+	let restored = false;
+	/** The freed view's close, still on its way: the page opens again only after it. */
+	let closing: Promise<unknown> = Promise.resolve();
+	async function free(): Promise<boolean> {
+		if (!opened || freed || visible || picking) return false;
+		const reason = await invoke<string>('floating_browser_discardable', { label });
+		// Shown, or closed, while the page was being asked.
+		if (reason !== 'clean' || !opened || freed || visible || picking) return false;
+		freed = true;
+		opened = false;
+		closing = invoke('floating_browser_close', { label }).catch(() => {});
+		await closing;
+		return true;
+	}
+	$effect(() => {
+		browserMemorySaver().configure(memorySaverPolicy(settings.get('kingu.browser.memorySaver'), settings.get('kingu.browser.memorySaverHours')));
+	});
+	$effect(() => {
+		browserMemorySaver().report(label, viewed ?? visible, free);
+	});
+	$effect(() => {
+		if (!visible || !untrack(() => freed)) return;
+		void closing.then(() => {
+			if (!freed) return;
+			freed = false;
+			restored = true;
+			resync();
+		});
 	});
 
 	function go() {
@@ -204,7 +257,8 @@
 	// Downloads (Orca's downloads shelf, kept to a notice): into the Downloads folder, with Show in Finder.
 	$effect(() => {
 		const offPick = listen<{ label: string; element: PickedElement }>('browser-pick', (e) => {
-			if (e.payload.label !== label) return;
+			// Only the pick this tab's Design Mode asked for (Rust takes it from an armed tab only).
+			if (e.payload.label !== label || !picking) return;
 			picking = false;
 			// Orca's captureSelectionScreenshot: the element's box cropped from the page (the picker took
 			// its outline away first). A missing screenshot is not fatal: the details go without it.
@@ -244,6 +298,15 @@
 	}
 
 	const BTN = 'grid size-6 shrink-0 place-items-center rounded text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)';
+
+	// VS Code 1.147's browser use: the tab shows while agents may use it (who opened it, what the
+	// agent does now) with Stop; Share with Agent hands a user's tab to agents (asked first).
+	const indicator = $derived(agentBrowser.indicator(label));
+	const shared = $derived(indicator !== null && indicator.kind !== 'stopped');
+	function toggleShare() {
+		if (shared) void agentBrowser.stop(label);
+		else void agentBrowser.share(label, browserUrl(address, settings.get('kingu.browser.searchEngine')));
+	}
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-(--vscode-editor-background)">
@@ -286,6 +349,10 @@
 		{#if onPick}
 			<button class={[BTN, picking && 'bg-(--vscode-toolbar-activeBackground,var(--vscode-toolbar-hoverBackground)) text-(--vscode-focusBorder)']} aria-label="Design mode" aria-pressed={picking} title="Design mode: click an element to send it to the agent (Esc stops)" onclick={togglePick}><Icon name="crosshair" size={14} /></button>
 		{/if}
+		<button class={BTN} aria-label={t('agentBrowser.screenshot')} title={t('agentBrowser.screenshot')} onclick={() => void agentBrowser.screenshotToChat(label)}><Icon name="image" size={14} /></button>
+		{#if agentBrowser.enabled && !isAgentLabel(label)}
+			<button class={[BTN, shared && 'text-(--vscode-focusBorder)']} aria-label={shared ? t('agentBrowser.unshare') : t('agentBrowser.share')} aria-pressed={shared} title={shared ? t('agentBrowser.unshare') : t('agentBrowser.share')} onclick={toggleShare}><Icon name="robot" size={14} /></button>
+		{/if}
 		<button class={BTN} aria-label="Developer tools" title="Developer tools (⌥⌘I)" onclick={devtools}><Icon name="code" size={14} /></button>
 		{#if onNewTab}
 			<button class={BTN} aria-label="New tab" title="New tab (⇧⌘B)" onclick={onNewTab}><Icon name="plus" size={14} /></button>
@@ -312,7 +379,24 @@
 			<button class={BTN} aria-label="Close find" title="Close (Esc)" onclick={() => (finding = false)}><Icon name="close" size={14} /></button>
 		</div>
 	{/if}
-	<div class="min-h-0 flex-1 {padding}">
+	{#if indicator}
+		<div
+			class={['flex h-7 shrink-0 items-center gap-2 px-3 text-[12px]', indicator.kind === 'stopped' ? 'text-(--vscode-descriptionForeground)' : 'bg-(--vscode-inputValidation-infoBackground,var(--vscode-editorWidget-background)) text-(--vscode-foreground)']}
+			role="status"
+			aria-label={t('agentBrowser.statusLabel')}
+			data-floating-terminal-no-drag
+		>
+			{#if indicator.kind === 'driving'}<span class="size-2 shrink-0 animate-pulse rounded-full bg-(--vscode-focusBorder)" aria-hidden="true"></span>{/if}
+			<span class="min-w-0 flex-1 truncate">
+				{indicator.kind === 'driving' ? (indicator.action ? t('agentBrowser.drivingAction', { action: indicator.action }) : t('agentBrowser.driving')) : indicator.kind === 'stopped' ? t('agentBrowser.stopped') : indicator.agentOpened ? t('agentBrowser.agentPage') : t('agentBrowser.shared')}
+			</span>
+			<button class="h-5 shrink-0 rounded px-1.5 hover:bg-(--vscode-toolbar-hoverBackground)" onclick={() => void agentBrowser.showLog(label)}>{t('agentBrowser.log')}</button>
+			{#if indicator.kind !== 'stopped'}
+				<button class="h-5 shrink-0 rounded bg-(--vscode-button-background) px-2 text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)" title={t('agentBrowser.stopTitle')} onclick={() => void agentBrowser.stop(label)}>{t('agentBrowser.stop')}</button>
+			{/if}
+		</div>
+	{/if}
+	<div class={['min-h-0 flex-1', padding, shared && 'p-[2px] outline-2 -outline-offset-2 outline-(--vscode-focusBorder)', indicator?.kind === 'driving' && 'outline-dashed']} data-agent-shared={shared ? 'true' : undefined}>
 		<div class="h-full w-full {frame}" bind:this={box}></div>
 	</div>
 </div>

@@ -17,10 +17,27 @@ import { slugOfTaskKey } from './keys';
 import { normalizeRepoWorkspaceCleanupPolicy, normalizeWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
 import { applyRechecked, candidateVerdict, cleanupReceipt, cleanupPreview, cleanupTargets, evaluateScan, type CleanupCandidate, type CleanupProgress, type CleanupScan, type CleanupSize, type CleanupTaskContext, type CleanupVerdict } from './workspaceCleanupScan';
 import { hasEnabledWorkspaceCleanupRule } from './workspaceCleanupPolicy';
-import { activityKey, parseStoredActivity, serializeActivity, withActivity, withActivityLock, type CleanupActivity, type CleanupSource, type StoredActivity } from './autoCleanup';
+import {
+	activityKey,
+	chatSweepDue,
+	normalizeChatHistory,
+	normalizeCodexUsage,
+	parseStoredActivity,
+	serializeActivity,
+	withActivity,
+	withActivityLock,
+	type ChatHistorySweep,
+	type CleanupActivity,
+	type CleanupSource,
+	type CodexHistoryUsage,
+	type StoredActivity
+} from './autoCleanup';
+import { chats } from '#lib/agent/chats.svelte.ts';
 
 const RULES_ID = 'kingu.workspaceCleanup.rules';
 const PROJECT_ID = 'kingu.workspaceCleanup.project';
+/** Delete the chat history of deleted workspaces (Orca `deleteChatHistoryWithWorkspace`); off by default. Rust reads it again before every removal. */
+export const CHAT_HISTORY_ID = 'kingu.workspaceCleanup.deleteChatHistory';
 
 /** null when storage is unavailable, so a failure never wipes what this window holds. */
 function readStored(root: string | null): StoredActivity | null {
@@ -70,6 +87,12 @@ class Cleanup {
 		)
 	);
 	rulesOn = $derived(this.policy.source !== 'project-off' && hasEnabledWorkspaceCleanupRule(this.policy.rules));
+	chatHistoryOn = $derived(settings.get<boolean>(CHAT_HISTORY_ID) === true);
+	/** What Codex's own chat history takes, for the badge beside the switch; null until read, or when it cannot be measured. */
+	codexUsage = $state.raw<CodexHistoryUsage | null>(null);
+	#usageRead = 0;
+	/** When this window last swept chat history, by folder; not stored, so the first run after a start always sweeps (as Orca). */
+	#chatSweptAt = new Map<string, number>();
 	verdicts: Map<string, CleanupVerdict> = $derived(this.scan ? evaluateScan(this.scan, this.policy, (slug) => this.taskContext(slug)) : new Map());
 
 	taskContext(slug: string): CleanupTaskContext {
@@ -137,16 +160,23 @@ class Cleanup {
 	}
 
 	/** Adds a run to Activity (the dialog acts on tasks itself; the others go through `runRules`). */
-	async record(root: string | null, source: CleanupSource, removed: string[], archived: string[], failed: { slug: string; error: string }[], kept: number) {
+	async record(root: string | null, source: CleanupSource, removed: string[], archived: string[], failed: { slug: string; error: string }[], kept: number, chatHistory?: ChatHistorySweep) {
 		await this.#serial(root, () => {
 			const stored = this.#storedFor(root);
-			const activity = withActivity(stored.activity, { at: Date.now(), source, removed, archived, failed, kept });
+			const activity = withActivity(stored.activity, { at: Date.now(), source, removed, archived, failed, kept, ...(chatHistory ? { chatHistory } : {}) });
 			writeStored(root, { activity, lastRunAt: stored.lastRunAt });
 			if (root !== workspace.root) return;
 			this.#activityRoot = root;
 			this.activity = activity;
 			this.lastRunAt = stored.lastRunAt;
 		});
+	}
+
+	/** Measures Codex's chat history (Rust walks file metadata only); a failed walk shows no badge. */
+	async readCodexUsage() {
+		const read = ++this.#usageRead;
+		const usage = await invoke<unknown>('workspace_cleanup_codex_history_usage').then(normalizeCodexUsage, () => null);
+		if (read === this.#usageRead) this.codexUsage = usage;
 	}
 
 	/** Measures every task worktree (`du`, one after another): slow, so the dialog asks after the Git facts are shown. */
@@ -251,22 +281,59 @@ class Cleanup {
 	/**
 	 * `kingu cleanup run`: a fresh scan, the same decision as the dialog, then each task the rules
 	 * act on is removed (its own guards and branch setting) or archived. Nothing the evaluator keeps
-	 * is touched, so an unattended run cannot do more than the preview showed.
+	 * is touched, so an unattended run cannot do more than the preview showed. With the chat history
+	 * setting on, the run then sweeps the chats of deleted workspaces (`rules: false`: only that).
 	 */
-	async runRules(source: CleanupSource = 'cli') {
+	async runRules(source: CleanupSource = 'cli', { rules = true }: { rules?: boolean } = {}) {
 		if (this.running) throw new Error('A cleanup run is already going');
 		this.running = true;
 		// The run belongs to the folder open now: switching folders mid-run must not record elsewhere.
 		const root = workspace.root;
 		try {
 			await this.#markRun(root, Date.now());
-			return await this.#run(source, root);
+			// A failed rule run still sweeps chats (Orca: "sweep chats even when rule evaluation fails"), then fails as before.
+			let failure: unknown = null;
+			const ran = rules ? await this.#run(root).catch((e: unknown) => ((failure = e), null)) : { removed: [], archived: [], failed: [], kept: 0 };
+			const chatHistory = await this.#sweepChatHistory(source, root);
+			if (ran || chatHistory) await this.record(root, source, ran?.removed ?? [], ran?.archived ?? [], ran?.failed ?? [], ran?.kept ?? 0, chatHistory);
+			if (!ran) throw failure;
+			return { ...cleanupReceipt(ran.removed, ran.archived, ran.failed, ran.kept), ...(chatHistory ? { chatHistory } : {}) };
 		} finally {
 			this.running = false;
 		}
 	}
 
-	async #run(source: CleanupSource, root: string | null) {
+	/**
+	 * Deletes the chat history of the open folder's deleted workspaces: Claude Code transcripts and Codex
+	 * rollouts in Rust, Kingu's own chats one by one through the chat store (Rust proves each again). Undefined when the
+	 * setting is off, the sweep is not due, or the scan failed (the next run tries again).
+	 */
+	async #sweepChatHistory(source: CleanupSource, root: string | null): Promise<ChatHistorySweep | undefined> {
+		if (!root || workspace.root !== root) return undefined;
+		if (!chatSweepDue(this.chatHistoryOn, source, this.#chatSweptAt.get(root) ?? null, Date.now())) return undefined;
+		try {
+			const swept = await invoke<{ chats?: unknown }>('workspace_cleanup_chat_sweep');
+			const result = normalizeChatHistory(swept);
+			if (!result) return undefined;
+			for (const id of Array.isArray(swept.chats) ? swept.chats : []) {
+				if (workspace.root !== root || typeof id !== 'string') break;
+				try {
+					const freed = await chats.forgetDeleted(id);
+					if (freed === null) continue;
+					result.deleted++;
+					result.freedBytes += freed;
+				} catch {
+					result.failed++;
+				}
+			}
+			this.#chatSweptAt.set(root, Date.now());
+			return result;
+		} catch {
+			return undefined;
+		}
+	}
+
+	async #run(root: string | null) {
 		const scan = await this.rescan();
 		if (!scan) throw new Error(workspace.root !== root ? 'The folder changed; cleanup stopped' : (this.error ?? 'No folder is open'));
 		const verdicts = evaluateScan(scan, this.policy, (slug) => this.taskContext(slug));
@@ -284,9 +351,7 @@ class Cleanup {
 			}
 			return adeTasks.removeConfirmed(slug, { deleteBranch: adeTasks.defaultBranchRemoval(slug), force: false });
 		});
-		const kept = verdicts.size - targets.length + skipped;
-		await this.record(root, source, removed, archived, failed, kept);
-		return cleanupReceipt(removed, archived, failed, kept);
+		return { removed, archived, failed, kept: verdicts.size - targets.length + skipped };
 	}
 
 	/** The dialog with just `slugs` (the losing attempts of a best-of-N group). */

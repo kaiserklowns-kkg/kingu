@@ -5,7 +5,9 @@
 //! (`kingu_cli::protocol`): `status` and `task.list` are answered here; `task.create`,
 //! `task.open` and `open` go to the window as a `kingu-cli:request` event, which answers through
 //! `cli_reply` (cliBridge.svelte.ts); `notify` posts a notification; `artifact.publish` and
-//! `artifact.list` are answered here (artifacts/, also the agent host's `artifact_publish` tool).
+//! `artifact.list` are answered here (artifacts/, also the agent host's `artifact_publish` tool);
+//! `browser.*` are the agent host's browser tools (floating_browser/agent.rs), refused without a
+//! chat run's session token (the `kingu` command has no such method).
 //! A `task.create` from inside a task's worktree is a dispatched sub-task (agent/orchestration.rs).
 //!
 //! The bundled `kingu-cli` binary is linked as `<app data>/cli/bin/kingu`; that folder goes first
@@ -470,9 +472,14 @@ fn ask_window(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, 
 }
 
 /// [`ask_window`] waiting `wait` for the answer instead of the usual 30 seconds.
-fn ask_window_for(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, wait: Duration) -> Result<Value, RpcError> {
+pub(crate) fn ask_window_for(app: &AppHandle, cwd: Option<&Path>, method: &str, params: Value, wait: Duration) -> Result<Value, RpcError> {
   let label = window(app, cwd).map(|w| w.label().to_string());
   ask_label(app, label, false, method, params, false, Some(wait))
+}
+
+/// [`ask_window_for`] for a window already chosen (an agent's browser page, floating_browser/agent.rs).
+pub(crate) fn ask_label_for(app: &AppHandle, label: &str, method: &str, params: Value, wait: Duration) -> Result<Value, RpcError> {
+  ask_label(app, Some(label.to_owned()), false, method, params, false, Some(wait))
 }
 
 /// Hands a request to window `label` (none: every window) and waits for its `cli_reply`.
@@ -748,6 +755,8 @@ fn dispatch(app: &AppHandle, method: &str, params: &Value) -> Result<Value, RpcE
         .collect();
       Ok(json!({ "root": root.display().to_string(), "artifacts": rows }))
     }
+    // The agent host's browser tools (floating_browser/agent.rs): only with a chat run's session token.
+    m if crate::floating_browser::agent::METHODS.contains(&m) => crate::floating_browser::agent::dispatch(app, m, params).map_err(|e| rpc(ERR_FAILED, e)),
     protocol::METHOD_NOTIFY => {
       let (title, body) = check_notify(params)?;
       crate::notify::show(app, title, body).map_err(|e| rpc(ERR_FAILED, e))?;

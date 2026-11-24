@@ -21,6 +21,7 @@
 	import { fileIcon } from '#lib/workbench/fileIcons.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { suggestionLabel, usableSuggestion, withRule } from './toolRules.ts';
+	import { grantedValue, grantSetting } from './sandboxGrant.ts';
 
 	/** The chat's run mode, changed from the card's Allowlist menu (the Agent panel's chats). */
 	export type RunModeControl = { current: AgentApproval; options: readonly AgentApproval[]; pick: (a: AgentApproval) => void; locked?: boolean };
@@ -98,6 +99,24 @@
 		answer('allow');
 	}
 
+	// VS Code 1.147's "retry with updated sandbox permissions" (agent-host sandbox/retry.ts): the
+	// sandbox stopped the command; "Allow for This Session" adds what it needed to this run's sandbox,
+	// "Allow for This User" saves it to the user's chat.agent.sandbox.* settings first (VS Code's
+	// client does the same, `sandboxPathGrantSaved`), then the host runs it again in the sandbox.
+	const grant = $derived(request.sandbox_grant ?? null);
+	async function allowUser() {
+		if (sent || !grant) return;
+		ruleError = null;
+		const setting = grantSetting(grant);
+		try {
+			await settings.set(setting, grantedValue(settings.userValue(setting), grant), 'user');
+		} catch (e) {
+			ruleError = t('chatToolRules.sandbox.saveFailed', { error: e instanceof Error ? e.message : String(e) });
+			return;
+		}
+		answer('allow_user');
+	}
+
 	function pick(id: string) {
 		menuOpen = false;
 		if (id.startsWith('run:')) runMode?.pick(id.slice(4) as AgentApproval);
@@ -118,7 +137,25 @@
 <div class="flex flex-col gap-1">
 	<div class="text-(--vscode-descriptionForeground)" role="status">{t('composer.approve.pending')}</div>
 	<div class="rounded-[8px] border border-(--vscode-chat-requestBorder) bg-(--vscode-editorWidget-background) text-xs text-(--vscode-foreground)" role="group" aria-label={t('chatView.permission.title', { tool: request.tool })}>
-		{#if command !== null}
+		{#if grant}
+			<div class="space-y-1.5 border-b border-(--vscode-widget-border) px-2.5 py-1.5" data-testid="sandbox-grant">
+				<div class="flex items-center gap-1.5 font-medium">
+					<Codicon id="shield" size={13} />
+					<span class="min-w-0">{request.title ?? t('chatView.permission.title', { tool: request.tool })}</span>
+				</div>
+				{#if command !== null}
+					<pre class="max-h-24 overflow-auto rounded-md bg-(--vscode-textCodeBlock-background,var(--vscode-input-background)) px-2 py-1 font-mono break-all whitespace-pre-wrap"><span class="text-(--vscode-descriptionForeground) select-none">$ </span>{command}</pre>
+				{/if}
+				{#if request.detail}<div class="whitespace-pre-line text-(--vscode-descriptionForeground)">{request.detail.split('\n\nBlocked by ')[0]!.replaceAll('`', '')}</div>{/if}
+				{#if grant.blocked.length}
+					<ul class="space-y-0.5" aria-label={t('chatToolRules.sandbox.blockedBy')} data-testid="sandbox-blocked-by">
+						{#each grant.blocked as b, i (i)}
+							<li class="text-(--vscode-descriptionForeground)"><span class="font-medium text-(--vscode-foreground)">{t('chatToolRules.sandbox.blockedBy')}</span> <code class="font-mono">{b.target}</code>: {b.rule}</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
+		{:else if command !== null}
 			<div class="flex min-w-0 items-center gap-1.5 px-2.5 py-1.5" title={command}>
 				<span class="shrink-0 font-mono text-(--vscode-descriptionForeground)" aria-hidden="true">›_</span>
 				<span class="min-w-0 truncate">{description ?? request.title ?? t('chatView.permission.title', { tool: request.tool })}</span>
@@ -165,6 +202,25 @@
 				{#if request.detail}<div class="text-(--vscode-descriptionForeground)">{request.detail}</div>{/if}
 			</div>
 		{/if}
+		{#if grant}
+			<div class="flex flex-wrap items-center justify-end gap-1.5 px-2 py-1.5">
+				<button class={[BTN, 'text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)']} title={t('chatToolRules.sandbox.skipHint')} disabled={sent} onclick={() => answer('deny')}
+					>{t('chatToolRules.sandbox.skip')}{#if keys}<span class={KEY}>Esc</span>{/if}</button
+				>
+				<button
+					class={[BTN, 'border border-(--vscode-button-border,var(--vscode-widget-border)) text-(--vscode-foreground) hover:bg-(--vscode-toolbar-hoverBackground)']}
+					title={t('chatToolRules.sandbox.userHint', { setting: grantSetting(grant) })}
+					disabled={sent}
+					onclick={() => void allowUser()}>{t('chatToolRules.sandbox.user')}</button
+				>
+				<button
+					class={[BTN, 'bg-(--vscode-button-background) text-(--vscode-button-foreground) hover:bg-(--vscode-button-hoverBackground)']}
+					title={t('chatToolRules.sandbox.sessionHint')}
+					disabled={sent}
+					onclick={() => answer('allow_always')}>{t('chatToolRules.sandbox.session')}{#if keys}<span class={KEY}>⏎</span>{/if}</button
+				>
+			</div>
+		{:else}
 		<div class="flex items-center gap-1.5 px-2 py-1.5">
 			{#if rows.length}
 				<div class="relative flex min-w-0">
@@ -201,6 +257,7 @@
 				onclick={() => answer('allow')}>{t('composer.approve.run')}{#if keys}<span class={KEY}>⏎</span>{/if}</button
 			>
 		</div>
+		{/if}
 		{#if ruleError}<div class="px-2.5 pb-1.5 text-(--vscode-errorForeground)" role="alert">{ruleError}</div>{/if}
 	</div>
 </div>

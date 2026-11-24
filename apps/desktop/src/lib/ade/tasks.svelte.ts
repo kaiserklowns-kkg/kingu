@@ -981,7 +981,8 @@ class AdeTasks {
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		// A hibernated CLI (hibernation.svelte.ts) is awake again.
 		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
-		let argv = applyLaunchSpec(launch.argv, spec);
+		// A launch with a prompt must not stop at the CLI's update screen (Orca's suppressStartupUpdatePrompt).
+		let argv = applyLaunchSpec(launch.argv, spec, 'prompt' in how);
 		// Orca's codexTerminalServerIsolation: this codex gets its own app-server, not the shared one.
 		const noDaemon = profile.id === 'codex' ? noDaemonProgram(argv, (k) => settings.get(k)) : null;
 		if (noDaemon && (await invoke<boolean>('codex_supports_no_daemon', { program: noDaemon }).catch(() => false))) argv = withNoDaemon(argv);

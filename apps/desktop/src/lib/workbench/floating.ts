@@ -58,8 +58,57 @@ export function rectFromAnchor(b: AnchoredBounds, vw: number, vh: number): Rect 
 export function buttonPos(a: Anchor, vw: number, vh: number): { left: number; top: number } {
 	const left = a.anchorX === 'right' ? vw - BUTTON - a.offsetX : a.offsetX;
 	const top = a.anchorY === 'bottom' ? vh - BUTTON - a.offsetY : a.offsetY;
-	return { left: clamp(left, MARGIN, vw - BUTTON - MARGIN), top: clamp(top, TITLEBAR, vh - BUTTON - MARGIN) };
+	return clampButton({ left, top }, vw, vh);
 }
+
+/**
+ * Orca's default trigger spot (floating-terminal-trigger-position.ts): bottom right, but in a
+ * window narrower than 440px the top right, just under the title bar, so it covers no composer.
+ */
+export function defaultButton(vw: number): Anchor {
+	const narrow = vw < 440;
+	return { anchorX: 'right', anchorY: narrow ? 'top' : 'bottom', offsetX: DEFAULT_BUTTON.offsetX, offsetY: narrow ? TITLEBAR + BUTTON : DEFAULT_BUTTON.offsetY };
+}
+
+/** Orca's `hasUsableFloatingTerminalTriggerViewport`: a window big enough to place the button in. */
+export const usableButtonViewport = (vw: number, vh: number) => vw >= BUTTON + MARGIN * 2 && vh >= BUTTON + TITLEBAR + MARGIN;
+
+/** A page part the toggle must never cover (Orca's FloatingTerminalTriggerKeepClearRect), in viewport px. */
+export type KeepClearRect = {
+	left: number;
+	top: number;
+	right: number;
+	bottom: number;
+	/** Bottom of the pane holding the box: the button may only go below the box above this. */
+	paneBottom: number;
+};
+
+export const KEEP_CLEAR_GAP = 8;
+
+/**
+ * Orca's `keepFloatingTerminalTriggerClear`: where the button shows. Its own spot, or the nearest
+ * clear spot below, else above, a page part it would cover; it keeps its left.
+ */
+export function keepButtonClear(p: { left: number; top: number }, keepClear: readonly KeepClearRect[], vw: number, vh: number): { left: number; top: number } {
+	const covers = (top: number, r: KeepClearRect) => p.left < r.right && p.left + BUTTON > r.left && top < r.bottom && top + BUTTON > r.top;
+	const covered = keepClear.filter((r) => covers(p.top, r));
+	if (covered.length === 0) return p;
+	// Below a covered box first, then above it, then beside the others: moving off one box can land on another.
+	const spots = [...covered, ...keepClear.filter((r) => !covered.includes(r))].flatMap((r) => {
+		const below = r.bottom + KEEP_CLEAR_GAP;
+		// The pane may run past the window, which the button must stay inside too.
+		const floor = Math.min(r.paneBottom, vh) - MARGIN;
+		const above = r.top - KEEP_CLEAR_GAP - BUTTON;
+		return below + BUTTON <= floor ? [below, above] : [above];
+	});
+	const lowest = vh - BUTTON - MARGIN;
+	// A spot the window clamp would move could land back on a box, so only spots it keeps count.
+	const clear = spots.find((top) => top >= TITLEBAR && top <= lowest && !keepClear.some((r) => covers(top, r)));
+	return clampButton({ left: p.left, top: clear ?? spots[0] }, vw, vh);
+}
+
+/** The button kept inside the window and under the title bar. */
+export const clampButton = (p: { left: number; top: number }, vw: number, vh: number) => ({ left: clamp(p.left, MARGIN, vw - BUTTON - MARGIN), top: clamp(p.top, TITLEBAR, vh - BUTTON - MARGIN) });
 
 export function anchorButton(p: { left: number; top: number }, vw: number, vh: number): Anchor {
 	const right = p.left + BUTTON / 2 > vw / 2;

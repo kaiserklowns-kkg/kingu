@@ -51,6 +51,16 @@ export const REPO_SETTINGS: SettingSchema[] = [
 		scope: 'local'
 	},
 	{
+		id: 'kingu.repo.ghAccount',
+		group: 'Repository',
+		type: 'json',
+		schema: { anyOf: [{ type: 'null' }, { type: 'object', properties: { host: { type: 'string', minLength: 1 }, user: { type: 'string', minLength: 1 } }, additionalProperties: false }] },
+		default: null,
+		description:
+			'บัญชี GitHub ของ repository นี้ (Orca: repo.ghAccount) ทุกคำสั่ง gh ที่ Kingu รันให้ repository นี้ (PR, checks, issue, GitHub Projects) ได้ token อายุสั้นของ login นั้นใน keyring ของ gh ถ้า login หายไปจะไม่ถอยไปใช้ login หลัก ต้องใช้ gh 2.40 ขึ้นไป เลือกในแท็บ Repository (This repository\'s GitHub account: each gh call Kingu makes for it gets a short-lived token of that gh keyring login, never the ambient one. Needs gh 2.40+. Pick it in the Repository tab.)',
+		scope: 'local'
+	},
+	{
 		id: 'kingu.repo.symlinkPaths',
 		group: 'Repository',
 		type: 'array',

@@ -13,12 +13,20 @@
 // - A file change's files are snapshotted when its item starts, before the patch is applied.
 // - Reasoning effort (../effort.ts): each `turn/start` carries the chat's `effort` and a reasoning
 //   summary; the levels the thread's model takes come from `model/list` (an `effort_options` event).
+// - Kingu's browser tools (../browserMcp.ts): its loopback MCP server, in the thread's `config`
+//   (url and the run's secret header), as Orca adds a bot's tools; not when the user's own
+//   config.toml has a server of that name.
 
 import pkg from '../../package.json' with { type: 'json' };
 import { RpcCallError, JsonRpcPeer, linesOf } from './rpc.ts';
 import { ProcessSession, OPEN_TIMEOUT_MS, spawnChild, type SpawnFn, type TurnEnd } from './session.ts';
 import { codexDecision, codexPolicy, codexToolResult, codexToolView, isObj, num, planTodos, str } from './tools.ts';
 import { elicitAsk } from '../mcpAsks.ts';
+import { BROWSER_SERVER } from '../browser.ts';
+import { codexBrowserConfig, codexHasServer } from '../browserMcp.ts';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { codexEffort, codexLevels, normalizeLevel, type Effort } from '../effort.ts';
 import type { ModelOption, PermissionMode, Usage } from '../protocol.ts';
 
@@ -76,7 +84,8 @@ export class CodexSession extends ProcessSession {
 		await this.peer.request('initialize', { clientInfo: { name: 'kingu_desktop', title: 'Kingu', version: pkg.version } }, OPEN_TIMEOUT_MS);
 		this.peer.notify('initialized');
 		// The enabled skills (../skills.ts) as developer instructions: Codex's own config stays untouched.
-		const params = { ...codexPolicy(this.mode), ...(this.init.skillIndex ? { developerInstructions: this.init.skillIndex } : {}) };
+		const config = this.browserConfig();
+		const params = { ...codexPolicy(this.mode), ...(this.init.skillIndex ? { developerInstructions: this.init.skillIndex } : {}), ...(config ? { config } : {}) };
 		let r: Obj | null = null;
 		if (this.init.resume) {
 			try {
@@ -92,6 +101,24 @@ export class CodexSession extends ProcessSession {
 		if (!this.sessionId) throw new Error('codex opened no thread');
 		this.threadModel = str(r?.model);
 		void this.listEfforts();
+	}
+
+	/** The browser tools' server as thread config; null without them (or when the name is the user's). */
+	private browserConfig(): Record<string, unknown> | null {
+		const grant = this.init.browserMcp;
+		if (!grant) return null;
+		const home = this.init.env.CODEX_HOME || join(this.init.env.HOME || homedir(), '.codex');
+		let toml = '';
+		try {
+			toml = readFileSync(join(home, 'config.toml'), 'utf8');
+		} catch {
+			// No config of the user's: nothing to clash with.
+		}
+		if (codexHasServer(toml, BROWSER_SERVER)) {
+			this.log(`browser tools left out: the Codex config has its own mcp_servers.${BROWSER_SERVER}`);
+			return null;
+		}
+		return codexBrowserConfig(BROWSER_SERVER, grant);
 	}
 
 	/** The proven models (`model/list`), as a `models` event; then the thread model's effort levels (`effort_options`). */

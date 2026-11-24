@@ -697,6 +697,12 @@ pub fn read_droid(path: &Path) -> Option<Session> {
   if s.title.is_empty() {
     s.title = first_prompt.map_or_else(|| "Untitled session".into(), |t| short(&t, 120));
   }
+  // Droid keeps the model only in the transcript's `<name>.settings.json` sibling: the `system` /
+  // `completion` records that carry it exist on `droid exec` output, never in the transcript
+  // (Orca `enrichDroidSessionFromSettings`).
+  if let Some(settings) = std::fs::read(path.with_extension("settings.json")).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).filter(Value::is_object) {
+    s.model = str_field(&settings, "model");
+  }
   Some(s)
 }
 
@@ -1256,6 +1262,10 @@ fn grok_user_text(v: &Value) -> Option<String> {
   Some(t)
 }
 
+/// The `synthetic_reason`s of user rows Grok itself shows as prompts; any other reason is a row its
+/// runtime injected (Orca's `GROK_PROMPT_SYNTHETIC_REASONS`, scanners/grok/session-scanner-grok-parser.ts).
+const GROK_PROMPT_REASONS: [&str; 5] = ["interjection", "scheduler_fired", "agent_message", "parent_agent_message", "parent_human_message"];
+
 /// One Grok session (`<sessions>/<encoded cwd>/<id>/summary.json` with `chat_history.jsonl` beside
 /// it, Orca `parseGrokSessionFile`): the summary gives the id, folder, title, model, branch, count
 /// and times; the history the `user` / `assistant` turns.
@@ -1295,6 +1305,11 @@ pub fn read_grok(summary_path: &Path) -> Option<Session> {
   for line in text.lines() {
     let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
     let role = v.get("type").and_then(Value::as_str).unwrap_or("");
+    // Rows Grok's runtime injects as the user (reminders, auto-continue, task wakes) are not turns:
+    // they must not become the title, the preview or a counted message (Orca #45830).
+    if role == "user" && v.get("synthetic_reason").and_then(Value::as_str).map(str::trim).is_some_and(|r| !r.is_empty() && !GROK_PROMPT_REASONS.contains(&r)) {
+      continue;
+    }
     let Some(content) = v.get("content") else { continue };
     let t = match role {
       "user" => grok_user_text(content),
@@ -1644,6 +1659,391 @@ pub fn list_hermes(root: &Path, sessions: &Path, limit: usize) -> Vec<Session> {
   newest_of(root, session_json_files(sessions), limit, read_hermes)
 }
 
+/// Hermes sessions of `root` in a Hermes home (`$HERMES_HOME`, else `~/.hermes`): its `state.db`
+/// stores (Orca's scanner since 1.4.26x: Hermes writes the `session_*.json` snapshots only on
+/// request now), or, for a home that has none yet, those snapshots.
+pub fn list_hermes_home(root: &Path, home: &Path, limit: usize) -> Vec<Session> {
+  if hermes_state_dbs(home).is_empty() { list_hermes(root, &home.join("sessions"), limit) } else { list_hermes_state(root, home, limit) }
+}
+
+// ---- Hermes state.db (Orca ai-vault scanners/hermes: hermes-state-db-*.ts, session-scanner-hermes-*.ts) ----
+//
+// Hermes keeps every surface's sessions (CLI, TUI, gateway, ACP) in one `state.db` per profile: the
+// root's own and `profiles/<name>/state.db`. The rules below are the ones Orca took from Hermes'
+// own picker: which rows list, how a compressed session's continuations chain into one
+// conversation, which copy of a message shows.
+
+/// One `sessions` row; columns an older Hermes lacks read as NULL (Orca `sessionSelect`).
+#[derive(Debug, Clone, Default)]
+struct HermesRow {
+  id: String,
+  parent: Option<String>,
+  started_at: f64,
+  source: Option<String>,
+  session_key: Option<String>,
+  model: Option<String>,
+  model_config: Option<Value>,
+  cwd: Option<String>,
+  title: Option<String>,
+  ended_at: Option<f64>,
+  end_reason: Option<String>,
+  last_activity_at: Option<f64>,
+  hidden: bool,
+  archived: bool,
+}
+
+const HERMES_SESSION_COLUMNS: &[&str] = &["id", "parent_session_id", "started_at", "source", "session_key", "model", "model_config", "cwd", "title", "ended_at", "end_reason", "last_activity_at", "hidden", "archived"];
+/// A parent that ended this way starts a new conversation in its child (Orca `RESET_END_REASONS`).
+const HERMES_RESET_END_REASONS: &[&str] = &["session_reset", "session_switch", "idle", "daily", "suspended", "resume_pending_expired"];
+const HERMES_LOCAL_POLICY_PREFIX: &str = "gateway.local_policy.v1:";
+
+fn hermes_row(r: &serde_json::Map<String, Value>) -> Option<HermesRow> {
+  let text = |k: &str| r.get(k).and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_owned);
+  let num = |k: &str| r.get(k).and_then(Value::as_f64);
+  Some(HermesRow {
+    id: text("id")?,
+    parent: text("parent_session_id"),
+    started_at: num("started_at").unwrap_or(0.0),
+    source: text("source"),
+    session_key: text("session_key"),
+    model: text("model"),
+    model_config: text("model_config").and_then(|c| serde_json::from_str::<Value>(&c).ok()).filter(Value::is_object),
+    cwd: text("cwd"),
+    title: text("title"),
+    ended_at: num("ended_at"),
+    end_reason: text("end_reason"),
+    last_activity_at: num("last_activity_at"),
+    hidden: num("hidden").unwrap_or(0.0) != 0.0,
+    archived: num("archived").unwrap_or(0.0) != 0.0,
+  })
+}
+
+impl HermesRow {
+  /// A `model_config` marker (`_branched_from`, `_reset_from`, `_delegate_from`) that is set.
+  fn marker(&self, key: &str) -> bool {
+    self.model_config.as_ref().and_then(|c| c.get(key)).is_some_and(|v| !v.is_null())
+  }
+  fn recency(&self) -> f64 {
+    self.last_activity_at.unwrap_or(self.started_at)
+  }
+}
+
+fn hermes_reset_child(row: &HermesRow, parent: Option<&HermesRow>) -> bool {
+  row.marker("_reset_from") || parent.is_some_and(|p| HERMES_RESET_END_REASONS.contains(&p.end_reason.as_deref().unwrap_or("")) && row.session_key.is_some() && row.session_key == p.session_key)
+}
+
+fn hermes_branch_child(row: &HermesRow, parent: Option<&HermesRow>) -> bool {
+  row.marker("_branched_from") || parent.is_some_and(|p| p.end_reason.as_deref() == Some("branched") && p.ended_at.is_some_and(|e| row.started_at >= e))
+}
+
+/// The row a compression rotated `parent` into (not a branch, a sub-agent, a reset or a tool session).
+fn hermes_continuation(child: &HermesRow, parent: &HermesRow) -> bool {
+  parent.end_reason.as_deref() == Some("compression") && !child.marker("_branched_from") && !child.marker("_delegate_from") && !hermes_reset_child(child, Some(parent)) && child.source.as_deref() != Some("tool")
+}
+
+/// A conversation Hermes lists: the id `--resume` takes, and its segments oldest first.
+#[derive(Debug, Clone)]
+struct HermesConversation {
+  id: String,
+  segments: Vec<HermesRow>,
+}
+
+/// Orca `listHermesConversations` over the whole store: no hidden, archived, sub-agent, tool or
+/// continuation rows; a local reset lineage (`state_meta` receipts) lists once, under its owner.
+fn hermes_conversations(rows: &[HermesRow], receipts: &[Value]) -> Vec<HermesConversation> {
+  use std::collections::{HashMap, HashSet};
+  let by_id: HashMap<&str, &HermesRow> = rows.iter().map(|r| (r.id.as_str(), r)).collect();
+  let mut children: HashMap<&str, Vec<&HermesRow>> = HashMap::new();
+  for r in rows {
+    if let Some(p) = r.parent.as_deref() {
+      children.entry(p).or_default().push(r);
+    }
+  }
+  let mut owners: HashMap<String, String> = HashMap::new();
+  let mut superseded: HashSet<String> = HashSet::new();
+  for receipt in receipts {
+    let (Some(owner), Some(lineage)) = (receipt.get("session_id").and_then(Value::as_str), receipt.get("lineage").and_then(Value::as_array)) else { continue };
+    let ids: Vec<&str> = lineage.iter().filter_map(Value::as_str).collect();
+    if ids.len() != lineage.len() {
+      continue;
+    }
+    for id in &ids {
+      owners.insert((*id).to_owned(), owner.to_owned());
+    }
+    // A segment starts where its predecessor ended with a reset; only the newest one lists.
+    let starts: Vec<&str> = ids.iter().enumerate().filter(|(i, _)| *i == 0 || by_id.get(ids[i - 1]).and_then(|r| r.end_reason.as_deref()) == Some("session_reset")).map(|(_, id)| *id).collect();
+    superseded.extend(starts.iter().take(starts.len().saturating_sub(1)).map(|id| (*id).to_owned()));
+  }
+  let mut out = Vec::new();
+  for row in rows {
+    let parent = row.parent.as_deref().and_then(|p| by_id.get(p).copied());
+    let listable = row.parent.is_none() || hermes_branch_child(row, parent) || hermes_reset_child(row, parent);
+    if !listable || row.marker("_delegate_from") || row.source.as_deref() == Some("tool") || row.hidden || row.archived || superseded.contains(&row.id) {
+      continue;
+    }
+    // The compression chain: one that compressed again, else an open one, else the most recent.
+    let mut chain = vec![row.clone()];
+    let mut seen: HashSet<&str> = HashSet::from([row.id.as_str()]);
+    let mut cur = row;
+    while cur.end_reason.as_deref() == Some("compression") {
+      let rank = |r: &HermesRow| if r.end_reason.as_deref() == Some("compression") { 0 } else if r.ended_at.is_none() { 1 } else { 2 };
+      let activity = |r: &HermesRow| r.last_activity_at.unwrap_or(0.0).max(r.started_at);
+      let mut next: Vec<&HermesRow> = children.get(cur.id.as_str()).into_iter().flatten().copied().filter(|c| hermes_continuation(c, cur)).collect();
+      next.sort_by(|l, r| rank(l).cmp(&rank(r)).then(activity(r).total_cmp(&activity(l))).then(r.started_at.total_cmp(&l.started_at)).then(r.id.cmp(&l.id)));
+      let Some(n) = next.first().copied().filter(|n| seen.insert(n.id.as_str())) else { break };
+      chain.push(n.clone());
+      cur = n;
+    }
+    out.push(HermesConversation { id: owners.get(&row.id).cloned().unwrap_or_else(|| row.id.clone()), segments: chain });
+  }
+  out
+}
+
+/// The folder a conversation ran in: a segment's `cwd`, else its `model_config.cwd` (Orca `conversationCwd`).
+fn hermes_cwd(c: &HermesConversation) -> Option<String> {
+  c.segments.iter().find_map(|s| s.cwd.clone().or_else(|| s.model_config.as_ref().and_then(|m| m.get("cwd")).and_then(Value::as_str).filter(|x| !x.is_empty()).map(str::to_owned)))
+}
+
+/// One message row as the display projection needs it (Orca `MessageIdentity`).
+#[derive(Debug, Clone, PartialEq)]
+struct HermesMessage {
+  id: i64,
+  session: String,
+  role: String,
+  timestamp: f64,
+  active: bool,
+  compacted: bool,
+  display_order: Option<i64>,
+  uid: Option<String>,
+}
+
+/// Hermes' display projection (Orca `displayedMessages`): one message per display slot or
+/// `message_uid`, shown as its live copy, and hidden when its newest copy was rewound.
+fn hermes_displayed(rows: &[HermesMessage]) -> Vec<HermesMessage> {
+  use std::collections::HashMap;
+  let mut groups: Vec<(Option<HermesMessage>, bool)> = Vec::new();
+  let mut group_of: HashMap<String, usize> = HashMap::new();
+  for row in rows {
+    let removed = !row.active && !row.compacted;
+    let mut keys: Vec<String> = Vec::new();
+    if let Some(o) = row.display_order {
+      keys.push(format!("slot:{}:{o}", row.session));
+    }
+    if let Some(u) = row.uid.as_deref().filter(|u| !u.is_empty()) {
+      keys.push(format!("uid:{u}"));
+    }
+    if keys.is_empty() {
+      keys.push(format!("copy:{}:{}", row.role, row.timestamp));
+    }
+    let index = keys.iter().find_map(|k| group_of.get(k).copied()).unwrap_or_else(|| {
+      groups.push((None, false));
+      groups.len() - 1
+    });
+    for k in keys {
+      group_of.insert(k, index);
+    }
+    let g = &mut groups[index];
+    g.1 = removed;
+    if !removed {
+      // A compacted tool result shows as its archived original, never a later shortened copy.
+      let keep = g.0.as_ref().is_some_and(|cur| (cur.role == "tool" && !cur.active && cur.compacted && row.active && row.display_order.unwrap_or(0) > cur.display_order.unwrap_or(0)) || row.active < cur.active);
+      if !keep {
+        g.0 = Some(row.clone());
+      }
+    }
+  }
+  groups.into_iter().filter(|g| !g.1).filter_map(|g| g.0).collect()
+}
+
+/// Hermes' epoch seconds as Unix ms; values outside its window are damaged cells (Orca `epochMs`).
+fn hermes_ms(seconds: Option<f64>) -> Option<i64> {
+  seconds.filter(|s| s.is_finite() && (0.0..=4_200_000_000.0).contains(s)).map(|s| (s * 1000.0) as i64)
+}
+
+/// A message's text: plain content, or the text parts of a multimodal one (`parts`, a JSON array).
+fn hermes_text(row: &serde_json::Map<String, Value>) -> Option<String> {
+  let plain = row.get("content").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned);
+  let parts = row.get("parts").and_then(Value::as_str).and_then(|p| serde_json::from_str::<Value>(p).ok()).and_then(|p| {
+    let t: Vec<String> = p.as_array()?.iter().filter_map(|x| x.as_str().map(str::to_owned).or_else(|| (x.get("type").and_then(Value::as_str) == Some("text")).then(|| x.get("text").and_then(Value::as_str).map(str::to_owned)).flatten())).filter(|t| !t.trim().is_empty()).collect();
+    (!t.is_empty()).then(|| t.join(" "))
+  });
+  parts.or(plain)
+}
+
+/// The Hermes root a home belongs to: a named profile lives at `<root>/profiles/<name>` (Orca `hermesProfileRoot`).
+pub fn hermes_profile_root(home: &Path) -> PathBuf {
+  match home.parent() {
+    Some(p) if p.file_name().is_some_and(|n| n == "profiles") => p.parent().map(Path::to_path_buf).unwrap_or_else(|| home.to_path_buf()),
+    _ => home.to_path_buf(),
+  }
+}
+
+/// Hermes' profile id rule (`^[a-z0-9][a-z0-9_-]{0,63}$`).
+fn hermes_profile_name(n: &str) -> bool {
+  let b = n.as_bytes();
+  (1..=64).contains(&b.len()) && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit()) && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'))
+}
+
+/// The `state.db` files of a Hermes home: the root's, then each named profile's, sorted.
+pub fn hermes_state_dbs(home: &Path) -> Vec<PathBuf> {
+  let root = hermes_profile_root(home);
+  let mut profiles: Vec<PathBuf> = std::fs::read_dir(root.join("profiles"))
+    .into_iter()
+    .flatten()
+    .flatten()
+    .filter(|e| e.file_name().to_str().is_some_and(|n| n != "default" && hermes_profile_name(n)) && e.path().is_dir())
+    .map(|e| e.path())
+    .collect();
+  profiles.sort();
+  std::iter::once(root).chain(profiles).map(|p| p.join("state.db")).filter(|p| p.is_file()).collect()
+}
+
+fn hermes_store_sessions(db: &Path, root: &Path, limit: usize) -> Option<Vec<Session>> {
+  use crate::accounts::managed::sqlite_rows;
+  let session_cols = column_names(db, "sessions");
+  let message_cols = column_names(db, "messages");
+  let has = |cols: &[String], c: &str| cols.iter().any(|x| x == c);
+  if !["id", "parent_session_id", "started_at"].iter().all(|c| has(&session_cols, c)) || !["id", "session_id", "role", "content", "timestamp"].iter().all(|c| has(&message_cols, c)) {
+    return None;
+  }
+  let select = HERMES_SESSION_COLUMNS.iter().map(|c| if has(&session_cols, c) { (*c).to_owned() } else { format!("NULL AS {c}") }).collect::<Vec<_>>().join(", ");
+  let rows: Vec<HermesRow> = sqlite_rows(db, &format!("SELECT {select} FROM sessions")).ok()?.iter().filter_map(hermes_row).collect();
+  let receipts: Vec<Value> = if column_names(db, "state_meta").is_empty() {
+    Vec::new()
+  } else {
+    sqlite_rows(db, &format!("SELECT value FROM state_meta WHERE key GLOB {}", sql_text(&format!("{HERMES_LOCAL_POLICY_PREFIX}*"))))
+      .unwrap_or_default()
+      .iter()
+      .filter_map(|r| r.get("value").and_then(Value::as_str).and_then(|v| serde_json::from_str::<Value>(v).ok()))
+      .collect()
+  };
+  // This folder's conversations, most recently active first; a few more than asked for, since an
+  // empty one drops out below.
+  let mut mine: Vec<(HermesConversation, String)> = hermes_conversations(&rows, &receipts).into_iter().filter_map(|c| hermes_cwd(&c).filter(|d| inside(root, d)).map(|d| (c, d))).collect();
+  let recency = |c: &HermesConversation| c.segments.iter().map(HermesRow::recency).fold(0.0, f64::max);
+  mine.sort_by(|l, r| recency(&r.0).total_cmp(&recency(&l.0)));
+  mine.truncate(limit.saturating_mul(2).saturating_add(8));
+  if mine.is_empty() {
+    return Some(Vec::new());
+  }
+  let ids = mine.iter().flat_map(|(c, _)| c.segments.iter().map(|s| sql_text(&s.id))).collect::<Vec<_>>().join(",");
+  let col = |c: &str, absent: &str| if has(&message_cols, c) { format!("m.{c}") } else { format!("{absent} AS {c}") };
+  // Rows only the model sees never show (Orca `modelOnlyClause`).
+  let model_only = if has(&message_cols, "display_metadata") {
+    " AND (m.display_metadata IS NULL OR instr(m.display_metadata, 'model_only') = 0 OR COALESCE(json_extract(CASE WHEN json_valid(m.display_metadata) THEN m.display_metadata ELSE '{}' END, '$.model_only'), 0) = 0)"
+  } else {
+    ""
+  };
+  let identities = sqlite_rows(
+    db,
+    &format!(
+      "SELECT m.id, m.session_id, m.role, m.timestamp, {}, {}, {}, {} FROM messages m WHERE m.session_id IN ({ids}) AND m.role IN ('user', 'assistant', 'tool'){model_only} ORDER BY m.id",
+      col("active", "1"),
+      col("compacted", "0"),
+      col("display_order", "NULL"),
+      col("message_uid", "NULL")
+    ),
+  )
+  .ok()?;
+  let mut by_session: std::collections::HashMap<String, Vec<HermesMessage>> = std::collections::HashMap::new();
+  for r in &identities {
+    let (Some(id), Some(session), Some(role)) = (r.get("id").and_then(Value::as_i64), r.get("session_id").and_then(Value::as_str), r.get("role").and_then(Value::as_str)) else { continue };
+    by_session.entry(session.to_owned()).or_default().push(HermesMessage {
+      id,
+      session: session.to_owned(),
+      role: role.to_owned(),
+      timestamp: r.get("timestamp").and_then(Value::as_f64).unwrap_or(0.0),
+      active: r.get("active").and_then(Value::as_i64).unwrap_or(1) != 0,
+      compacted: r.get("compacted").and_then(Value::as_i64).unwrap_or(0) != 0,
+      display_order: r.get("display_order").and_then(Value::as_i64),
+      uid: r.get("message_uid").and_then(Value::as_str).map(str::to_owned),
+    });
+  }
+  // Per conversation: its shown user / assistant turns, and the rows whose text is read (the first
+  // user turns for an untitled one, Orca `firstUserTextParts`; the latest turns for the preview).
+  let mut wanted: Vec<i64> = Vec::new();
+  let mut listed: Vec<(HermesConversation, String, Vec<HermesMessage>)> = Vec::new();
+  for (c, dir) in mine {
+    let all: Vec<HermesMessage> = c.segments.iter().flat_map(|s| by_session.get(&s.id).cloned().unwrap_or_default()).collect();
+    // Nothing live to show (Orca's `activity.live > 0`, then `turns.length === 0`).
+    if !all.iter().any(|m| m.active) {
+      continue;
+    }
+    let turns: Vec<HermesMessage> = hermes_displayed(&all).into_iter().filter(|m| m.role == "user" || m.role == "assistant").collect();
+    if turns.is_empty() {
+      continue;
+    }
+    if !c.segments.iter().any(|s| s.title.as_deref().is_some_and(|t| !t.trim().is_empty())) {
+      wanted.extend(turns.iter().filter(|m| m.role == "user").take(5).map(|m| m.id));
+    }
+    wanted.extend(turns.iter().rev().take(12).map(|m| m.id));
+    listed.push((c, dir, turns));
+  }
+  // Multimodal content is `\0json:` + a JSON array of parts (compared as bytes: text functions stop
+  // at the NUL); its text parts are read, images left out. Plain text: only its start.
+  const MULTIMODAL: &str = "substr(CAST(m.content AS BLOB), 1, 6) = x'006a736f6e3a'";
+  const PARTS: &str = "CAST(substr(CAST(m.content AS BLOB), 7) AS TEXT)";
+  let mut texts: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+  for batch in wanted.chunks(200) {
+    let sql = format!(
+      "SELECT m.id, CASE WHEN {MULTIMODAL} THEN NULL ELSE substr(m.content, 1, 4000) END AS content, \
+       CASE WHEN {MULTIMODAL} AND json_valid({PARTS}) AND json_type({PARTS}) = 'array' THEN (SELECT json_group_array(CASE WHEN p.type = 'object' AND json_extract(p.value, '$.type') = 'image_url' THEN json_object('type', 'image_url') WHEN p.type = 'object' THEN json(p.value) ELSE p.value END) FROM json_each({PARTS}) p WHERE p.type IN ('object', 'text')) END AS parts \
+       FROM messages m WHERE m.id IN ({})",
+      batch.iter().map(i64::to_string).collect::<Vec<_>>().join(",")
+    );
+    for r in sqlite_rows(db, &sql).unwrap_or_default() {
+      if let (Some(id), Some(t)) = (r.get("id").and_then(Value::as_i64), hermes_text(&r)) {
+        texts.insert(id, t);
+      }
+    }
+  }
+  let mut out: Vec<Session> = listed
+    .into_iter()
+    .filter_map(|(c, dir, turns)| {
+      if !safe_id(&c.id) {
+        return None;
+      }
+      let started: Vec<i64> = c.segments.iter().map(|s| hermes_ms(Some(s.started_at)).unwrap_or(0)).collect();
+      let updated = c.segments.iter().filter_map(|s| hermes_ms(s.last_activity_at)).chain(turns.iter().filter_map(|m| hermes_ms(Some(m.timestamp)))).chain(started.iter().copied()).max().unwrap_or(0);
+      let title = c.segments.iter().rev().find_map(|s| s.title.as_deref().map(|t| short(t, 120)).filter(|t| !t.is_empty())).or_else(|| turns.iter().filter(|m| m.role == "user").take(5).find_map(|m| texts.get(&m.id)).map(|t| short(t, 120)));
+      let preview = turns.iter().rev().take(12).find_map(|m| texts.get(&m.id).map(|t| short(&format!("{}: {t}", if m.role == "user" { "You" } else { "Agent" }), 240)));
+      Some(Session {
+        title: title.unwrap_or_else(|| "Untitled session".into()),
+        preview,
+        cwd: Some(dir),
+        branch: None,
+        model: c.segments.last().and_then(|s| s.model.clone()),
+        messages: u32::try_from(turns.len()).unwrap_or(u32::MAX),
+        created: started.iter().copied().min().unwrap_or(0),
+        updated,
+        // `<db>#<id>`: one conversation of the store (Orca's candidate path); its profile is in the path.
+        path: format!("{}#{}", db.display(), c.id),
+        id: c.id,
+        agent: "hermes",
+      })
+    })
+    .collect();
+  out.sort_by_key(|s| std::cmp::Reverse(s.updated));
+  out.truncate(limit);
+  Some(out)
+}
+
+/// Hermes conversations of `root` out of the `state.db` of `home` and of each named profile
+/// (Orca `hermesDiscoveries`): what `hermes sessions list` shows, newest first. A store that
+/// cannot be read is skipped (logged).
+pub fn list_hermes_state(root: &Path, home: &Path, limit: usize) -> Vec<Session> {
+  let mut out: Vec<Session> = Vec::new();
+  for db in hermes_state_dbs(home) {
+    match hermes_store_sessions(&db, root, limit) {
+      Some(found) => out.extend(found),
+      None => log::info!("hermes sessions: {} is not a readable Hermes session store", db.display()),
+    }
+  }
+  out.sort_by_key(|s| std::cmp::Reverse(s.updated));
+  out.truncate(limit);
+  out
+}
+
 /// Orca's `isInjectedContextMessage` for jcode: system and background-task turns, scheduled runs
 /// and system reminders are not conversation.
 fn jcode_injected(m: &Value) -> bool {
@@ -1766,8 +2166,11 @@ fn graph(path: &Path, agent: &'static str, omp_only: bool) -> Option<Session> {
       omp_marked = true;
     }
     widen(&mut s, r.get("timestamp").and_then(when_of));
-    if agent == "omp" {
-      omp_title = fold_omp_title(omp_title, &r);
+    // Pi and OMP persist names apart from the prompt; Pi clears its `/name` with an empty
+    // `session_info`, back to the first prompt (Orca `persistedTitle`).
+    if agent == "omp" || agent == "pi" {
+      let cleared = agent == "pi" && r.get("type").and_then(Value::as_str) == Some("session_info") && str_field(&r, "name").is_none();
+      omp_title = if cleared { None } else { fold_omp_title(omp_title, &r) };
     }
     match r.get("type").and_then(Value::as_str) {
       Some("session") => {
@@ -1795,7 +2198,7 @@ fn graph(path: &Path, agent: &'static str, omp_only: bool) -> Option<Session> {
   if !safe_id(&s.id) || (omp_only && !omp_marked) {
     return None;
   }
-  // OMP's stored name wins over the first prompt (Orca keeps the prompt as `fallbackTitle`).
+  // A stored name (OMP's, Pi's `/name`) wins over the first prompt (Orca keeps the prompt as `fallbackTitle`).
   s.title = omp_title.map(|t| t.title).or(title).unwrap_or_else(|| "Untitled session".into());
   Some(s)
 }
@@ -2533,6 +2936,160 @@ mod tests {
     assert!(ag_prompt_hash(&"x".repeat(97)).is_none() && ag_prompt_hash("ends...").is_none());
   }
 
+  fn hermes_test_row(id: &str, parent: Option<&str>, started: f64) -> HermesRow {
+    HermesRow { id: id.into(), parent: parent.map(str::to_owned), started_at: started, cwd: Some("/repo".into()), ..Default::default() }
+  }
+
+  /// Orca hermes-state-db-conversations.ts: what lists, and how compression chains.
+  #[test]
+  fn hermes_conversations_follow_hermes_own_picker() {
+    let cfg = |k: &str| Some(serde_json::json!({ k: "x" }));
+    let rows = vec![
+      hermes_test_row("root", None, 1.0),
+      // A compressed session and its continuations: the one that compressed again wins, then its open child.
+      HermesRow { end_reason: Some("compression".into()), ended_at: Some(11.0), ..hermes_test_row("long", None, 10.0) },
+      HermesRow { ended_at: Some(13.0), end_reason: Some("user_exit".into()), ..hermes_test_row("long-closed", Some("long"), 12.0) },
+      HermesRow { end_reason: Some("compression".into()), ended_at: Some(15.0), ..hermes_test_row("long-2", Some("long"), 11.0) },
+      hermes_test_row("long-3", Some("long-2"), 15.0),
+      // Not continuations: a sub-agent, a tool session, a branch.
+      HermesRow { model_config: cfg("_delegate_from"), ..hermes_test_row("long-sub", Some("long"), 14.0) },
+      HermesRow { source: Some("tool".into()), ..hermes_test_row("long-tool", Some("long"), 14.0) },
+      HermesRow { model_config: cfg("_branched_from"), ..hermes_test_row("branch", Some("long"), 14.0) },
+      // A plain child (a sub-agent run) does not list; a reset child and a branch after `branched` do.
+      hermes_test_row("child", Some("root"), 2.0),
+      HermesRow { end_reason: Some("idle".into()), session_key: Some("k".into()), ..hermes_test_row("gw", None, 20.0) },
+      HermesRow { session_key: Some("k".into()), ..hermes_test_row("gw-next", Some("gw"), 21.0) },
+      HermesRow { end_reason: Some("branched".into()), ended_at: Some(31.0), ..hermes_test_row("b0", None, 30.0) },
+      hermes_test_row("b1", Some("b0"), 31.0),
+      HermesRow { hidden: true, ..hermes_test_row("hidden", None, 40.0) },
+      HermesRow { archived: true, ..hermes_test_row("archived", None, 41.0) },
+      HermesRow { source: Some("tool".into()), ..hermes_test_row("tool", None, 42.0) },
+      // A local reset lineage: only its newest segment lists, under the receipt's owner.
+      HermesRow { end_reason: Some("session_reset".into()), ..hermes_test_row("l1", None, 50.0) },
+      HermesRow { model_config: cfg("_reset_from"), ..hermes_test_row("l2", Some("l1"), 51.0) },
+    ];
+    let receipts = vec![serde_json::json!({"session_id": "owner", "lineage": ["l1", "l2"]}), serde_json::json!({"session_id": "bad", "lineage": ["root", 3]})];
+    let got: Vec<(String, Vec<String>)> = hermes_conversations(&rows, &receipts).into_iter().map(|c| (c.id, c.segments.into_iter().map(|s| s.id).collect())).collect();
+    let want: Vec<(String, Vec<String>)> = [("root", vec!["root"]), ("long", vec!["long", "long-2", "long-3"]), ("branch", vec!["branch"]), ("gw", vec!["gw"]), ("gw-next", vec!["gw-next"]), ("b0", vec!["b0"]), ("b1", vec!["b1"]), ("owner", vec!["l2"])]
+      .into_iter()
+      .map(|(id, segs)| (id.to_owned(), segs.into_iter().map(str::to_owned).collect()))
+      .collect();
+    assert_eq!(got, want);
+  }
+
+  /// Orca hermes-state-db-messages.ts `displayedMessages`.
+  #[test]
+  fn hermes_shows_one_copy_of_a_message_and_hides_a_rewound_one() {
+    let m = |id: i64, session: &str, role: &str, active: bool, compacted: bool, order: Option<i64>, uid: Option<&str>| HermesMessage { id, session: session.into(), role: role.into(), timestamp: id as f64, active, compacted, display_order: order, uid: uid.map(str::to_owned) };
+    let rows = vec![
+      m(1, "a", "user", false, true, Some(0), Some("u1")),
+      m(2, "a", "assistant", false, true, Some(1), Some("u2")),
+      m(3, "a", "tool", false, true, Some(2), Some("u3")),
+      // The continuation carries live copies; the tool copy is a later, shortened one.
+      m(4, "b", "user", true, false, Some(0), Some("u1")),
+      m(5, "b", "assistant", true, false, Some(1), Some("u2")),
+      m(6, "b", "tool", true, false, Some(5), Some("u3")),
+      // Rewound: its newest copy is neither active nor compacted.
+      m(7, "b", "user", true, false, Some(6), Some("u4")),
+      m(8, "b", "user", false, false, Some(6), Some("u4")),
+      m(9, "b", "assistant", true, false, Some(7), None),
+    ];
+    assert_eq!(hermes_displayed(&rows).iter().map(|r| r.id).collect::<Vec<_>>(), [4, 5, 3, 9]);
+    // A store from before display identities: a carried copy keeps its role and timestamp.
+    let old = |id: i64, ts: f64, active: bool| HermesMessage { id, session: "s".into(), role: "user".into(), timestamp: ts, active, compacted: !active, display_order: None, uid: None };
+    assert_eq!(hermes_displayed(&[old(1, 5.0, false), old(2, 5.0, true), old(3, 6.0, true)]).iter().map(|r| r.id).collect::<Vec<_>>(), [2, 3]);
+  }
+
+  #[test]
+  fn reads_hermes_conversations_of_this_folder_from_state_db() {
+    let sqlite = Path::new(crate::accounts::managed::SQLITE);
+    if !sqlite.exists() {
+      return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join(".hermes");
+    let work = home.join("profiles").join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(home.join("profiles").join("Bad Name")).unwrap();
+    let make = |db: &Path, sql: &str| {
+      let out = std::process::Command::new(sqlite).arg(db).arg(sql).output().unwrap();
+      assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    make(
+      &home.join("state.db"),
+      r#"
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_session_id TEXT, started_at REAL, source TEXT, session_key TEXT, model TEXT, model_config TEXT, cwd TEXT, title TEXT, ended_at REAL, end_reason TEXT, last_activity_at REAL, hidden INTEGER, archived INTEGER);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL, active INTEGER DEFAULT 1, compacted INTEGER DEFAULT 0, display_order INTEGER, message_uid TEXT, display_metadata TEXT);
+      CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+      INSERT INTO sessions VALUES ('s_titled', NULL, 1000, 'cli', NULL, 'hermes-4', NULL, '/repo', 'Fix the parser', NULL, NULL, 1300, 0, 0);
+      INSERT INTO messages VALUES (1, 's_titled', 'user', 'please fix the parser', 1001, 1, 0, 0, 'a', NULL);
+      INSERT INTO messages VALUES (2, 's_titled', 'assistant', 'Fixed it.', 1002, 1, 0, 1, 'b', NULL);
+      INSERT INTO messages VALUES (3, 's_titled', 'tool', 'ok', 1003, 1, 0, 2, 'c', NULL);
+      INSERT INTO messages VALUES (4, 's_titled', 'assistant', 'hidden note', 1004, 1, 0, 3, 'd', '{"model_only": true}');
+      INSERT INTO sessions VALUES ('s_long', NULL, 2000, 'tui', NULL, 'old-model', '{"cwd": "/repo/.kingu/worktrees/t"}', NULL, NULL, 2100, 'compression', 2100, 0, 0);
+      INSERT INTO sessions VALUES ('s_long2', 's_long', 2100, 'tui', NULL, 'new-model', NULL, NULL, NULL, NULL, NULL, 2500, 0, 0);
+      INSERT INTO messages VALUES (10, 's_long', 'user', CAST(x'006a736f6e3a' AS TEXT) || '[{"type":"text","text":"look at this"},{"type":"image_url","image_url":{"url":"data:AAAA"}},"and this"]', 2001, 0, 1, 0, 'u1', NULL);
+      INSERT INTO messages VALUES (11, 's_long', 'assistant', 'Seen.', 2002, 0, 1, 1, 'u2', NULL);
+      INSERT INTO messages VALUES (12, 's_long2', 'user', 'go on', 2200, 1, 0, 0, 'u3', NULL);
+      INSERT INTO messages VALUES (13, 's_long2', 'assistant', 'Done going on.', 2400, 1, 0, 1, 'u4', NULL);
+      INSERT INTO messages VALUES (14, 's_long2', 'user', 'undone', 2450, 0, 0, 2, 'u5', NULL);
+      INSERT INTO sessions VALUES ('s_sub', 's_titled', 1100, 'cli', NULL, NULL, '{"_delegate_from": "s_titled"}', '/repo', 'sub-agent', NULL, NULL, 9000, 0, 0);
+      INSERT INTO messages VALUES (20, 's_sub', 'user', 'sub', 1101, 1, 0, 0, 'x', NULL);
+      INSERT INTO sessions VALUES ('s_hidden', NULL, 1, 'cli', NULL, NULL, NULL, '/repo', 'Hidden', NULL, NULL, 9000, 1, 0);
+      INSERT INTO messages VALUES (21, 's_hidden', 'user', 'h', 2, 1, 0, 0, 'y', NULL);
+      INSERT INTO sessions VALUES ('s_empty', NULL, 1, 'cli', NULL, NULL, NULL, '/repo', 'Empty', NULL, NULL, 9000, 0, 0);
+      INSERT INTO sessions VALUES ('s_else', NULL, 1, 'cli', NULL, NULL, NULL, '/repo-other', 'Elsewhere', NULL, NULL, 9000, 0, 0);
+      INSERT INTO messages VALUES (22, 's_else', 'user', 'e', 2, 1, 0, 0, 'z', NULL);
+      INSERT INTO sessions VALUES ('s_r1', NULL, 3000, 'gateway', 'k', NULL, NULL, '/repo', 'Before reset', 3100, 'session_reset', 3100, 0, 0);
+      INSERT INTO sessions VALUES ('s_r2', 's_r1', 3100, 'gateway', 'k', 'm', '{"_reset_from": "s_r1"}', '/repo', NULL, NULL, NULL, 3200, 0, 0);
+      INSERT INTO messages VALUES (30, 's_r1', 'user', 'old chat', 3001, 1, 0, 0, 'r1', NULL);
+      INSERT INTO messages VALUES (31, 's_r2', 'user', 'new chat after reset', 3101, 1, 0, 0, 'r2', NULL);
+      INSERT INTO state_meta VALUES ('gateway.local_policy.v1:s_owner', '{"session_id": "s_owner", "lineage": ["s_r1", "s_r2"]}');
+      "#,
+    );
+    // A named profile on an older schema: no cwd column (the folder is in model_config), no display columns.
+    make(
+      &work.join("state.db"),
+      r#"
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_session_id TEXT, started_at REAL, model TEXT, model_config TEXT, title TEXT);
+      CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+      INSERT INTO sessions VALUES ('w1', NULL, 5000, 'wm', '{"cwd": "/repo"}', NULL);
+      INSERT INTO messages VALUES (1, 'w1', 'user', 'work profile question', 5001);
+      INSERT INTO messages VALUES (2, 'w1', 'assistant', 'work answer', 5002);
+      "#,
+    );
+    std::fs::write(home.join("profiles").join("Bad Name").join("state.db"), "").unwrap();
+    assert_eq!(hermes_state_dbs(&home), [home.join("state.db"), work.join("state.db")]);
+    assert_eq!(hermes_state_dbs(&work), hermes_state_dbs(&home), "HERMES_HOME may name a profile");
+
+    let got = list_hermes_state(Path::new("/repo"), &home, 10);
+    let rows: Vec<_> = got.iter().map(|s| (s.id.as_str(), s.title.as_str(), s.messages, s.model.as_deref(), s.cwd.as_deref(), s.created, s.updated)).collect();
+    assert_eq!(
+      rows,
+      [
+        ("w1", "work profile question", 2, Some("wm"), Some("/repo"), 5_000_000, 5_002_000),
+        ("s_owner", "new chat after reset", 1, Some("m"), Some("/repo"), 3_100_000, 3_200_000),
+        ("s_long", "look at this and this", 4, Some("new-model"), Some("/repo/.kingu/worktrees/t"), 2_000_000, 2_500_000),
+        ("s_titled", "Fix the parser", 2, Some("hermes-4"), Some("/repo"), 1_000_000, 1_300_000),
+      ]
+    );
+    assert_eq!(got[0].preview.as_deref(), Some("Agent: work answer"));
+    assert_eq!(got[0].path, format!("{}#w1", work.join("state.db").display()));
+    assert_eq!(got[2].preview.as_deref(), Some("Agent: Done going on."), "the rewound turn is not the latest");
+    assert_eq!(got[3].preview.as_deref(), Some("Agent: Fixed it."), "a model-only row never shows");
+    assert!(got.iter().all(|s| s.agent == "hermes"));
+    assert_eq!(list_hermes_state(Path::new("/repo"), &home, 2).len(), 2);
+    assert!(list_hermes_state(Path::new("/nowhere"), &home, 10).is_empty());
+
+    // A home with a store reads it; one without reads the session_*.json snapshots.
+    assert_eq!(list_hermes_home(Path::new("/repo"), &home, 10).len(), 4);
+    let older = dir.path().join("older");
+    std::fs::create_dir_all(older.join("sessions")).unwrap();
+    std::fs::write(older.join("sessions").join("session_abc.json"), serde_json::json!({"session_id": "abc", "cwd": "/repo", "messages": [{"role": "user", "content": "from a snapshot"}]}).to_string()).unwrap();
+    let snap = list_hermes_home(Path::new("/repo"), &older, 10);
+    assert_eq!(snap.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["abc"]);
+  }
+
   #[test]
   fn reads_opencode2_sessions_of_this_folder() {
     let sqlite = Path::new(crate::accounts::managed::SQLITE);
@@ -2637,6 +3194,16 @@ mod tests {
     let p = list_pi(&root, &pi, 10);
     assert_eq!(p.len(), 1);
     assert_eq!((p[0].id.as_str(), p[0].title.as_str(), p[0].model.as_deref(), p[0].agent), ("0199a000-0000-7000-8000-000000000001", "Pi prompt", Some("claude-sonnet-4-5"), "pi"));
+    // Pi's `/name` is the title; an empty one clears it back to the first prompt (Orca `persistedTitle`).
+    let named = |records: &[Value]| {
+      let mut all = vec![serde_json::json!({"type": "session", "id": "pi-named", "cwd": cwd}), serde_json::json!({"type": "message", "message": {"role": "user", "content": "the first prompt"}})];
+      all.extend_from_slice(records);
+      std::fs::write(pi.join("--repo--/2026-05-02_named.jsonl"), lines(&all)).unwrap();
+      list_pi(&root, &pi, 10).into_iter().find(|s| s.id == "pi-named").map(|s| s.title)
+    };
+    assert_eq!(named(&[serde_json::json!({"type": "session_info", "name": "My refactor"})]).as_deref(), Some("My refactor"));
+    assert_eq!(named(&[serde_json::json!({"type": "session_info", "name": "My refactor"}), serde_json::json!({"type": "session_info", "name": " "})]).as_deref(), Some("the first prompt"));
+    assert_eq!(named(&[]).as_deref(), Some("the first prompt"));
   }
 
   #[test]
@@ -2954,6 +3521,10 @@ mod tests {
     let d = list_droid(Path::new("/repo"), &h.join("factory"), 10);
     assert_eq!(d.len(), 1);
     assert_eq!((d[0].id.as_str(), d[0].title.as_str(), d[0].messages, d[0].preview.as_deref()), ("dr-1", "Refactor auth", 2, Some("Agent: Refactored.")));
+    // The model is in the transcript's settings sibling (Orca `enrichDroidSessionFromSettings`).
+    std::fs::write(h.join("factory/sessions/d1.settings.json"), r#"{"model": " claude-opus-4-5 ", "tokenUsage": {"inputTokens": 5}}"#).unwrap();
+    let d = list_droid(Path::new("/repo"), &h.join("factory"), 10);
+    assert_eq!((d.len(), d[0].id.as_str(), d[0].model.as_deref()), (1, "dr-1", Some("claude-opus-4-5")));
   }
 
   #[test]
@@ -3174,5 +3745,23 @@ mod tests {
     assert_eq!(s.updated - s.created, 10 * 60 * 1000);
     let long = list.iter().find(|s| s.id == "s-long").unwrap();
     assert_eq!((long.title.as_str(), long.messages), ("Untitled session", 0));
+
+    // Orca #45830: a row Grok's runtime injected as the user is no turn; one Grok shows as a prompt is.
+    let synthetic = [
+      serde_json::json!({ "type": "user", "content": "<system-reminder>keep going</system-reminder>", "synthetic_reason": "system_reminder", "timestamp": "2026-11-20T08:00:00.000Z" }),
+      serde_json::json!({ "type": "user", "content": "Continue.", "synthetic_reason": "auto_continue" }),
+      serde_json::json!({ "type": "user", "content": "Also update the docs", "synthetic_reason": "interjection", "timestamp": "2026-11-20T09:01:00.000Z" }),
+      serde_json::json!({ "type": "assistant", "content": "Done." }),
+      serde_json::json!({ "type": "user", "content": "Task finished", "synthetic_reason": "task_wake", "timestamp": "2026-11-20T23:00:00.000Z" }),
+      serde_json::json!({ "type": "user", "content": "A real follow-up", "synthetic_reason": "  " }),
+    ]
+    .map(|v| v.to_string())
+    .join("\n");
+    write(&grok_dir_name("/repo").unwrap(), "s-synthetic", "/repo", &synthetic);
+    let list = list_grok(root, &[root.to_path_buf()], &sessions, 10);
+    let s = list.iter().find(|s| s.id == "s-synthetic").unwrap();
+    assert_eq!((s.title.as_str(), s.messages, s.preview.as_deref()), ("Also update the docs", 3, Some("You: A real follow-up")));
+    // The injected rows' times do not stretch the session either.
+    assert_eq!(s.updated - s.created, 5 * 60 * 1000);
   }
 }
