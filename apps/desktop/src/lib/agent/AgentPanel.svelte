@@ -17,7 +17,7 @@
 	// Add Context (⌥⌘P, the composer's @ button, or `#` / `@` inline): files, folders, the selection,
 	// problems, git changes, terminal output, a clipboard image, a past chat, instructions
 	// (chatContextSources.svelte.ts). Export / Import Chat: a chat as a JSON file.
-	import { onMount, untrack } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 	import { addAttachments, type Attachment } from './attachments.ts';
@@ -39,9 +39,14 @@
 	import RestoreCheckpoint from './RestoreCheckpoint.svelte';
 	import ChatTranscriptTools from './ChatTranscriptTools.svelte';
 	import SideChat from './SideChat.svelte';
+	import SendLaterPicker from './SendLaterPicker.svelte';
+	import ScheduledMessages from './ScheduledMessages.svelte';
+	import { exactLabel, sendLater } from './sendLater.svelte.ts';
+	import { parseLaterCommand } from './sendLater.ts';
+	import { parseSideDraft, sideForkPoint, sideRefusal } from './sideQuestion.ts';
 	import { CONTINUE_PROMPT, withQuote } from './chatTranscript.ts';
 	import ContextRing from './ContextRing.svelte';
-	import { kinguCommands, localCommandFor, mergeCommands, modeCommands, type FileCommand, type SlashItem } from './slashCommands.ts';
+	import { kinguCommands, localCommandFor, mergeCommands, modeCommands, type FileCommand, type LocalCommand, type SlashItem } from './slashCommands.ts';
 	import ComposerMenu from './ComposerMenu.svelte';
 	import ComposerQueue from './ComposerQueue.svelte';
 	import type { ComposerChip } from './Composer.svelte';
@@ -63,7 +68,7 @@
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
 	import { editors } from '#lib/workbench/editors.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
-	import { ask } from '#lib/workbench/messageBox.ts';
+	import { ask, cancelLabel, messageBox } from '#lib/workbench/messageBox.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { STATUS_LABEL } from './events';
@@ -72,6 +77,7 @@
 	import { chatRewind } from './chatRewind.svelte.ts';
 	import { chatCwdPath, groupByDate, historySections, initialChat, type ChatCwd, type DateGroup } from './chats.ts';
 	import RulesChip from './RulesChip.svelte';
+	import AgyAuthChip from './AgyAuthChip.svelte';
 	import McpStatusNote from './McpStatusNote.svelte';
 	import { mcpChat } from './mcpChat.svelte.ts';
 	import { findPromptCommand } from './mcpChat.ts';
@@ -79,7 +85,14 @@
 	import { AGENT_APPROVALS, modeOf, permissionFor, turnBusy, type AgentApproval, type ChatMode } from './chatInput.ts';
 	import { buildTurns, feedbackTarget, promptHistory, type Turn } from './chatParts.ts';
 	import { chatSignals, registerChatCommands } from './chatCommands.svelte.ts';
+	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { agentRuntimes } from './runtimes.svelte.ts';
+	import { managedCli } from './managedCli.svelte.ts';
+	import { installable, needsInstall } from './managedCli.ts';
+	import ManagedInstallCard from './ManagedInstallCard.svelte';
+	import ManagedInstallStrip from './ManagedInstallStrip.svelte';
+	import AgentSignInCard from './AgentSignInCard.svelte';
+	import ChatResumeNotice from './ChatResumeNotice.svelte';
 	import { runtimeChoices, runtimeOf } from './runtimes.ts';
 	import { resolveLaunchSpec } from './launchSpec.ts';
 	import { arkaiProviders } from './arkai.svelte.ts';
@@ -99,7 +112,11 @@
 	import { chatTips, registerTipCommands, tipSignals } from './chatTips.svelte.ts';
 	import { generateRequest, hasAgentInstructions, orderedTips, showTips, type TipAction, type TipContext } from './chatTips.ts';
 	import { commands } from '#lib/workbench/commands.svelte.ts';
+	import { draftSummary, hasDraftContent, listDrafts, loadDraft, saveDraft, type DraftInput } from './chatDrafts.ts';
+	import { loadRuntime, loadShown, newChatRuntime, restoredChat, saveRuntime, saveShown, takeReload } from './chatViewState.ts';
 	import './chatView.css';
+	import { agentBrowser } from '#lib/workbench/agentBrowser.svelte.ts';
+	import { keepFloatingToggleClear } from '#lib/workbench/floatingKeepClear.svelte.ts';
 
 	let {
 		editorChatId
@@ -117,6 +134,12 @@
 	let busy = $state(false);
 	let input = $state('');
 	let files = $state<Attachment[]>([]);
+	// VS Code's Add Screenshot to Chat (a browser tab's toolbar): the side bar's chat takes the picture.
+	$effect(() => {
+		if (inEditor || !agentBrowser.attachQueue.length) return;
+		const paths = agentBrowser.takeAttachments();
+		untrack(() => (files = addAttachments(files, paths)));
+	});
 	/** Files attached with `#` (or brought back by Edit). */
 	let picked = $state<{ path: string; range?: { startLine: number; endLine: number } }[]>([]);
 	/** Add Context's other context (problems, a diff, terminal output, a folder, a past chat). */
@@ -135,7 +158,9 @@
 	let newMode = $state<ChatMode>(modeOf(chats.defaults().permissionMode));
 	/** The runtime picked for the next new chat; null until one is picked (the setting's, once it loads). */
 	let pickedRuntime = $state<string | null>(null);
-	const newRuntime = $derived(pickedRuntime ?? startRuntime);
+	/** The session target picker's last pick, across restarts (VS Code's remembered session type): chatViewState.ts. */
+	let rememberedRuntime = $state<string | null>(loadRuntime());
+	const newRuntime = $derived(newChatRuntime(pickedRuntime, rememberedRuntime, agentRuntimes.list.map((r) => r.id), startRuntime));
 	/** Agent mode's approval, kept while Ask is picked. */
 	let approval = $state<AgentApproval>(chats.defaults().permissionMode === 'acceptEdits' ? 'acceptEdits' : 'default');
 	/** Where the last model / mode change took effect, shown under the input. */
@@ -155,14 +180,27 @@
 	/** The box holding the chat list (Find in Chat, the selection bar and the side chat sit over it). */
 	let listBox: HTMLDivElement | undefined = $state();
 	/** Ask in Side Chat: the drawer's chat and excerpt, shown while that chat is. */
-	let side = $state<{ parent: string; excerpt: string } | null>(null);
+	let side = $state<{ parent: string; excerpt: string; question?: string; before?: number | null } | null>(null);
+	/** Send Later's time picker: for what is typed, or (`id`) Reschedule... of a scheduled message. */
+	let laterPick = $state<({ x: number; y: number } & ({ text: string; attachments: Attachment[] } | { id: string })) | null>(null);
 
 	const chatMeta = $derived(selectedId ? chats.get(selectedId) : undefined);
 	/** The chat's agent and what it can do: rewind and the model picker are the Claude SDK's. */
 	const runtimeId = $derived(chatMeta ? runtimeOf(chatMeta) : newRuntime);
 	const features = $derived(agentRuntimes.features(runtimeId));
 	/** The agent's name (the session target picker, "Chat with <agent>"). */
-	const runtimeName = $derived(runtimeChoices(agentRuntimes.list, runtimeId).find((r) => r.id === runtimeId)?.name ?? runtimeId);
+	/**
+	 * The chat's agent is one this computer lacks and Kingu can install (managedCli.ts): a new chat's
+	 * pane offers the install instead of the welcome, a started chat gets the strip above its
+	 * composer, and nothing is sent until it is there (Orca's NativeChatInstallSlot).
+	 */
+	const installStatus = $derived.by(() => {
+		const s = managedCli.forRuntime(runtimeId);
+		// Antigravity routed to Kingu's server needs the server, whatever agy is found.
+		if (agentRuntimes.list.some((r) => r.id === runtimeId) && s?.agent === runtimeId) return null;
+		return needsInstall(s) ? s : null;
+	});
+	const runtimeName = $derived(agentRuntimes.list.find((r) => r.id === runtimeId)?.name ?? managedCli.of(runtimeId)?.label ?? runtimeId);
 	const chatRun = $derived(selectedId ? chats.run(selectedId) : undefined);
 	const turns = $derived(chatRun ? buildTurns(chatRun) : []);
 	const history = $derived(promptHistory(turns));
@@ -235,7 +273,23 @@
 			}))
 		)
 	);
-	const ownCommands = $derived([...localCommands, ...modeSlash]);
+	/** `/side` and `/btw` (Orca 1.4.272's side chat, sideQuestion.ts): where the chat can fork now; while it cannot, the row says why. */
+	const sidePoint = $derived(sideForkPoint(turns, running));
+	const sideCommands = $derived<LocalCommand[]>(
+		chatMeta && features.rewind
+			? (['side', 'btw'] as const).map((name) => ({
+					name,
+					description: sidePoint.kind === 'ready' ? t('sideChat.description') : t(sidePoint.kind === 'replyRunning' ? 'sideChat.replyRunning' : 'sideChat.noReply'),
+					argumentHint: t('sideChat.argumentHint'),
+					source: 'kingu',
+					// submit() runs them (askSide); picking the row completes `/btw `.
+					run: () => {}
+				}))
+			: []
+	);
+	/** Kingu-only `/later <when> <message>`: Send Later in a few words (sendLater.ts parseLaterCommand). */
+	const laterCommands = $derived<LocalCommand[]>(chatMeta ? [{ name: 'later', description: t('sendLater.slash'), argumentHint: t('sendLater.slashHint'), source: 'kingu', run: () => {} }] : []);
+	const ownCommands = $derived([...localCommands, ...sideCommands, ...laterCommands, ...modeSlash]);
 	const slashCommands = $derived(mergeCommands(ownCommands, chatRun?.commands ?? [], fileCommands, customs.prompts, mcpChat.promptItems(cwd)));
 	// The MCP servers' prompts (`/mcp.<server>.<prompt>`) are asked for once a `/` is typed.
 	$effect(() => {
@@ -269,6 +323,8 @@
 		if (inEditor) return;
 		chatSignals.el = root;
 		void agentRuntimes.load();
+		sendLater.start();
+		void managedCli.load();
 		const off = registerChatCommands();
 		const offTips = registerTipCommands();
 		return () => {
@@ -320,6 +376,17 @@
 	let seenMode = chatSignals.nextMode;
 	let seenModel = chatSignals.modelPicker;
 	let seenCancel = chatSignals.cancel;
+	let seenLater = chatSignals.sendLater;
+	// Send Later... from the palette: the picker for what is typed.
+	$effect(() => {
+		const n = chatSignals.sendLater;
+		if (n === seenLater || inEditor) return;
+		seenLater = n;
+		untrack(() => {
+			if (!chatMeta) status.flash(t('sendLater.newChat'), 6000);
+			else if (!composer?.sendLater()) status.flash(t('sendLater.empty'), 4000);
+		});
+	});
 	$effect(() => {
 		const n = chatSignals.nextMode;
 		if (n === seenMode || inEditor) return;
@@ -378,13 +445,35 @@
 		if (inEditor) return;
 		if (selectedId && chats.loaded && !chats.get(selectedId)) selectedId = null;
 		if (selectedId === null && !composingNew && chats.loaded) {
-			// The folder just opened: chat.restoreLastPanelSession (VS Code's default: off) shows the
-			// most recent chat, else a new one. Later (a chat removed), the most recent one.
-			const fresh = !panelStarted && settings.get<boolean>('chat.restoreLastPanelSession') !== true;
-			panelStarted = true;
-			if (fresh) untrack(() => newChat(false));
-			else selectedId = initialChat(chats.visible);
+			// The folder just opened: the chat it showed before, after a reload of the window or with
+			// chat.restoreLastPanelSession on (VS Code's ChatViewPane view state), else a new chat.
+			// Later (a chat removed), the most recent one.
+			if (!panelStarted) {
+				panelStarted = true;
+				const root = chats.root;
+				const saved = untrack(() =>
+					root ? restoredChat(loadShown(root), { reloaded: takeReload(), restoreSetting: settings.get('chat.restoreLastPanelSession'), exists: (id) => chats.visible.some((c) => c.id === id) }) : null
+				);
+				if (saved) selectedId = saved;
+				else untrack(() => newChat(false));
+			} else selectedId = initialChat(chats.visible);
 		}
+	});
+
+	// The chat shown is remembered for the folder (VS Code's viewState.sessionResource), '' for a new chat.
+	$effect(() => {
+		const id = selectedId ?? (composingNew ? '' : null);
+		const root = chats.root;
+		if (inEditor || !panelStarted || !chats.loaded || id === null) return;
+		if (root && root === workspace.root) saveShown(root, id);
+	});
+	// The remembered agent is known once the agents are listed: a new chat already shown takes its model.
+	const rememberedReady = $derived(!!rememberedRuntime && agentRuntimes.list.some((r) => r.id === rememberedRuntime));
+	$effect(() => {
+		if (!rememberedReady) return;
+		untrack(() => {
+			if (composingNew && !selectedId && !pickedRuntime) newModel = freshModel(newRuntime);
+		});
 	});
 
 	// Settings load after the panel: pick up the default model once it is known (Claude's only:
@@ -399,6 +488,57 @@
 		const id = selectedId;
 		untrack(() => void chats.open(id));
 	});
+
+	// VS Code's saved drafts: each chat (and the new chat of each folder) keeps its unsent text, across
+	// switching chats and restarts. `draftKey` changes together with `input`, so a save never lands on the wrong chat.
+	const keyOf = (id: string | null, fresh: boolean) => (id ? `chat:${id}` : fresh ? `new:${workspace.root ?? ''}` : null);
+	let draftKey: string | null = null;
+	$effect(() => {
+		const next = keyOf(selectedId, composingNew);
+		untrack(() => {
+			if (next === draftKey) return;
+			// An edit of an earlier message is not a draft.
+			const switching = draftKey !== null;
+			if (draftKey && !editing && !editingQueued) saveDraft(draftKey, draftNow());
+			draftKey = next;
+			const draft = next ? loadDraft(next) : { text: '' };
+			// The first chat shown keeps text something already put in the input (a prompt handed to the panel).
+			if (next && (switching || hasDraftContent(draft))) {
+				input = draft.text;
+				// VS Code's drafts keep the attachments too (IChatDraft.attachments).
+				files = draft.files ?? [];
+				picked = draft.picked ?? [];
+			}
+		});
+	});
+	let draftTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const key = draftKey;
+		const draft = draftNow();
+		if (!key || editing || editingQueued) return;
+		clearTimeout(draftTimer);
+		draftTimer = setTimeout(() => saveDraft(key, draft), 400);
+		return () => clearTimeout(draftTimer);
+	});
+	onDestroy(() => {
+		if (draftKey && !editing && !editingQueued) saveDraft(draftKey, draftNow());
+	});
+	/** The input as a draft: its text, attached files and file chips. */
+	function draftNow(): DraftInput {
+		return { text: input, files: $state.snapshot(files), picked: $state.snapshot(picked) };
+	}
+	/** The history's "Draft: …" lines (VS Code's Drafts), read when the history shows; bumped by Delete Draft. */
+	let draftsSeen = $state(0);
+	const historyDrafts = $derived.by(() => {
+		void draftsSeen;
+		return showList ? listDrafts() : {};
+	});
+	/** Delete Draft (VS Code's): the chat's unsent input is forgotten (and cleared, when it is the chat shown). */
+	function deleteDraft(id: string) {
+		saveDraft(`chat:${id}`, '');
+		if (selectedId === id) resetInput();
+		draftsSeen++;
+	}
 
 	function resetInput() {
 		input = '';
@@ -521,6 +661,12 @@
 	async function submit(text: string, attachments: Attachment[], how?: SendHow) {
 		if (busy) return;
 		if (how === 'queue' || how === 'steer') chatTips.record('queue');
+		// `/side` / `/btw` (Orca's side chat): the question goes to a fork beside the chat, never to its agent.
+		const sideDraft = chatMeta && features.rewind && !editingQueued ? parseSideDraft(text) : null;
+		if (sideDraft) return askSide(sideDraft.question, attachments);
+		// Kingu-only `/later <when> <message>`.
+		const later = chatMeta && !editingQueued ? parseLaterCommand(text, new Date()) : null;
+		if (later) return 'error' in later ? void status.flash(t(later.error === 'time' ? 'sendLater.badTime' : 'sendLater.noMessage'), 6000) : scheduleMessage(later.message, attachments, later.at);
 		// Kingu's own commands run here; every other `/command` goes to the agent as text.
 		const local = localCommandFor(text, ownCommands);
 		if (local) {
@@ -546,6 +692,62 @@
 		await send(text, attachments, how);
 	}
 
+	/**
+	 * `/side question` / `/btw question` (Orca's side chat): the side chat drawer opens on a fork of
+	 * this chat through its newest finished response and asks there; the running turn goes on.
+	 * Text only, as Orca's. The question moves into the drawer, whose input keeps it until it is sent.
+	 */
+	function askSide(question: string, attachments: Attachment[]) {
+		if (!chatMeta) return;
+		const why = sideRefusal(sidePoint, attachments.length > 0 || picked.length > 0 || texts.length > 0);
+		if (why) return void status.flash(t(why === 'textOnly' ? 'sideChat.textOnly' : why === 'replyRunning' ? 'sideChat.replyRunning' : 'sideChat.noReply'), 6000);
+		chatTips.record('sideChat');
+		side = { parent: chatMeta.id, excerpt: '', question, before: sidePoint.kind === 'ready' ? sidePoint.before : null };
+		resetInput();
+	}
+
+	/**
+	 * Send Later (VS Code 1.147): the request as it would go now (its attached context read now, as
+	 * VS Code's captureScheduledChatRequest), kept to be sent into this chat at `at` (sendLater.svelte.ts).
+	 */
+	async function scheduleMessage(text: string, attachments: Attachment[], at: number) {
+		if (!chatMeta || !chats.root) return void status.flash(t('sendLater.newChat'), 6000);
+		if (!text.trim()) return void status.flash(t('sendLater.empty'), 4000);
+		if (busy) return;
+		const id = chatMeta.id;
+		const root = chats.root;
+		const runsInRoot = chatMeta.cwd.kind === 'folder';
+		busy = true;
+		try {
+			await saveBeforeSend();
+			const message = await outgoing(text, attachments, runsInRoot, await chatTools.promptRefs(id, text, cwd));
+			if (!sendLater.add(root, id, text, message, at)) return;
+			resetInput();
+			status.flash(t('sendLater.scheduled', { when: exactLabel(at) }), 5000);
+		} catch (e) {
+			status.flash(t('chat.sendFailed', { error: String(e) }), 10000);
+		} finally {
+			busy = false;
+		}
+	}
+
+	/** The time picker's choice: schedule what was typed, or reschedule / send a scheduled message. */
+	function pickLater(at: number | 'now') {
+		const p = laterPick;
+		laterPick = null;
+		if (!p) return;
+		if ('id' in p) return void (at === 'now' ? sendLater.sendNow(p.id) : sendLater.reschedule(p.id, at));
+		if (at !== 'now') void scheduleMessage(p.text, p.attachments, at);
+	}
+
+	/** Edit as Draft on a scheduled row (VS Code's): no longer scheduled, its text back in the input. */
+	function editScheduled(id: string) {
+		const s = sendLater.take(id);
+		if (!s) return;
+		input = input.trim() ? `${input.trimEnd()}\n${s.label}` : s.label;
+		queueMicrotask(() => composer?.focus());
+	}
+
 	/** `/mcp.<server>.<prompt>` (VS Code's): its arguments asked, the rendered prompt put in the input to review and send. */
 	async function fillMcpPrompt(cmd: Parameters<typeof mcpChat.runPrompt>[0], args: string) {
 		const r = await mcpChat.runPrompt(cmd, args, contextEnv());
@@ -559,6 +761,8 @@
 	/** Sends a request (`extra`: context besides the input's; `title`: the new chat's first prompt). */
 	async function send(text: string, attachments: Attachment[], how?: SendHow, extra: ContextText[] = [], title = text) {
 		if (busy) return;
+		// The agent is not on this computer yet: the pane's card installs it; the draft stays in the input.
+		if (installStatus) return void notifications.info(t(chatMeta ? 'managedCli.sendBlockedStarted' : 'managedCli.sendBlocked', { agent: installStatus.label }));
 		busy = true;
 		try {
 			// chat.saveBeforeSend: the agent reads the files as you see them.
@@ -617,6 +821,14 @@
 	}
 
 	/** A follow-up chip: sent as the next request (VS Code's followup click), unless the input has a draft. */
+	/** An MCP App's `ui/message`: into the input only when it is empty (VS Code's rule). */
+	function fillEmptyInput(text: string): boolean {
+		if (input.trim() || picked.length || files.length) return false;
+		input = text;
+		queueMicrotask(() => composer?.focus());
+		return true;
+	}
+
 	function pickFollowup(text: string) {
 		if (!chatMeta) return;
 		chatExtras.clearFollowups(chatMeta.id);
@@ -717,9 +929,18 @@
 		return ok;
 	}
 
-	/** The run mode (kingu-old's permission picker over Kingu's approvals); Allow all asks first. */
+	/** "Assisted permissions" asks once per app session too (VS Code warns before any elevated level). */
+	async function confirmAssisted(): Promise<boolean> {
+		if (chats.assistedConfirmed) return true;
+		const ok = await ask(t('chatInput.assistedConfirm'), { kind: 'warning', okLabel: t('composer.run.assisted') });
+		if (ok) chats.assistedConfirmed = true;
+		return ok;
+	}
+
+	/** The run mode (kingu-old's permission picker over Kingu's approvals); the elevated levels ask first. */
 	async function pickApproval(next: AgentApproval) {
 		if (next === 'bypassPermissions' && !(await confirmAllowAll())) return;
+		if (next === 'assisted' && !(await confirmAssisted())) return;
 		await setMode('agent', next);
 	}
 
@@ -856,8 +1077,13 @@
 	async function removeChat(id: string) {
 		const meta = chats.get(id);
 		if (!meta) return;
-		const ok = await ask(t('chat.panel.deleteConfirm', { title: meta.title }), { kind: 'warning', okLabel: t('common.delete') });
-		if (ok && (await chats.remove(id)) && selectedId === id) selectedId = null;
+		// kingu.chat.confirmDelete (Orca's skipDeleteChatConfirm, inverted): ask, with "don't ask again".
+		if (settings.get<boolean>('kingu.chat.confirmDelete') !== false) {
+			const button = await messageBox(t('chat.panel.deleteConfirm', { title: meta.title }), { kind: 'warning', buttons: [t('common.delete'), t('chatDelete.dontAsk'), cancelLabel()], cancelId: 2 });
+			if (button === 2) return;
+			if (button === 1) void settings.set('kingu.chat.confirmDelete', false, 'user').catch((e) => notifications.error(String(e)));
+		}
+		if ((await chats.remove(id)) && selectedId === id) selectedId = null;
 	}
 
 	/** "Promote to task": a new ADE task (own worktree) started with the chat's first prompt. The chat stays. */
@@ -916,7 +1142,7 @@
 	const modelRows = $derived.by<MenuRow[]>(() => {
 		if (runtimeId === ARKAI_RUNTIME) {
 			const byId = new Map(arkaiProviders.list.map((p) => [p.id, p]));
-			return arkaiGroups(arkaiProviders.list, currentModel).flatMap((g) => {
+			return arkaiGroups(arkaiProviders.list, currentModel, arkaiProviders.routers).flatMap((g) => {
 				const p = byId.get(g.provider);
 				const section = p && needsKey(p) ? t('arkai.picker.noKey', { name: g.label }) : g.label;
 				return g.models.map((m) => ({ id: m.value, label: m.label, description: m.description, section, checked: m.value === currentModel }));
@@ -955,7 +1181,7 @@
 			chatMeta ? chatMeta.effort : newEffort
 		)
 	);
-	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
+	const currentApproval = $derived<AgentApproval>(allowAll ? 'bypassPermissions' : chatMeta && chats.isAssisted(chatMeta.id) ? 'assisted' : chatMeta ? ((chatMeta.permission_mode === 'plan' ? approval : chatMeta.permission_mode) ?? 'default') : approval);
 	const globalAutoApprove = $derived(settings.get<boolean>('chat.tools.global.autoApprove') === true);
 	/** Where a new chat runs (the header's ⋯): this folder or a task's worktree. */
 	const whereRows = $derived<MenuRow[]>(
@@ -975,7 +1201,8 @@
 			codicon: PERMISSION_CODICON[a],
 			checked: !globalAutoApprove && a === currentApproval,
 			warn: a === 'bypassPermissions',
-			disabled: globalAutoApprove
+			// Kingu's reviewer runs in the Claude runtime only (agent-host assisted.ts).
+			disabled: globalAutoApprove || (a === 'assisted' && runtimeId !== CLAUDE_RUNTIME)
 		}))
 	);
 	const permissionPicker = $derived({
@@ -997,12 +1224,21 @@
 		agent: runtimeId,
 		title: t('chatWelcome.target.hint'),
 		disabled: !workspace.root,
-		rows: runtimeChoices(agentRuntimes.list, runtimeId).map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, agent: r.id, checked: r.id === runtimeId, disabled: r.missing })),
+		rows: [
+			...runtimeChoices(agentRuntimes.list, runtimeId)
+				.filter((r) => !(r.missing && installStatus))
+				.map<MenuRow>((r) => ({ id: r.id, label: r.missing ? t('chatRuntime.missing', { name: r.name }) : r.name, agent: r.id, checked: r.id === runtimeId, disabled: r.missing })),
+			// Agents Kingu can install here: picking one shows its install card (nothing is downloaded by picking).
+			...installable(managedCli.list, agentRuntimes.list.map((r) => r.id)).map<MenuRow>((s) => ({ id: s.agent, label: t('managedCli.pickerRow', { agent: s.label }), agent: s.agent, checked: s.agent === runtimeId, section: t('managedCli.pickerSection') }))
+		],
 		onpick: (id: string) => {
 			if (id === runtimeId) return;
 			// A started chat keeps its agent: another one starts a new chat (VS Code's new session of that type).
 			if (chatMeta) newChat();
 			pickedRuntime = id;
+			// The next new chats start on it, after a restart too (VS Code's recordUserSelectedSessionType).
+			saveRuntime(id, startRuntime);
+			rememberedRuntime = loadRuntime();
 			newModel = freshModel(id); // another agent starts with the model last used with it, never Claude's
 		}
 	});
@@ -1046,7 +1282,9 @@
 		feedbackHidden = { ...feedbackHidden, [`${chatMeta.id}:${feedbackFor}`]: true };
 	}
 	const toolbarStatus = $derived<'running' | 'waiting' | null>(running ? (chatRun?.status === 'waiting' ? 'waiting' : 'running') : null);
-	const stacked = $derived((!!chatMeta && (editsCount > 0 || !!toolbarStatus || queued.length > 0)) || editing || !!editingQueued);
+	/** This chat's Send Later messages (ScheduledMessages, over the input with the queue). */
+	const scheduled = $derived(chatMeta ? sendLater.forChat(chats.root, chatMeta.id) : []);
+	const stacked = $derived((!!chatMeta && (editsCount > 0 || !!toolbarStatus || queued.length > 0 || scheduled.length > 0)) || editing || !!editingQueued);
 
 	/** A composer dropdown closed: the input gets the focus back. */
 	function closeMenu(refocus = true) {
@@ -1439,12 +1677,22 @@
 											{@const sn = snippetParts(historyHits.get(r.id)!.snippets[0])}
 											<span class="truncate text-xs text-(--vscode-descriptionForeground)">{sn.before}<mark class="bg-(--vscode-editor-findMatchHighlightBackground) text-inherit">{sn.match}</mark>{sn.after}</span>
 										{:else}
-											<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.state ? STATE_LABEL[r.state]() : timeAgo(r.at, Date.now())}</span>
+											{@const draft = r.state ? undefined : historyDrafts[`chat:${r.id}`]}
+											{#if draft}
+												{@const sum = draftSummary(draft)}
+												<!-- VS Code's Drafts: the chat keeps unsent input; opening the chat resumes it. -->
+												<span class="flex min-w-0 items-center gap-1 text-xs text-(--vscode-descriptionForeground)" data-draft
+													><Codicon id="edit" size={11} /><span class="truncate">{t('chatDrafts.badge', { text: 'text' in sum ? sum.text : t('chatDrafts.files', { count: sum.files }) })}</span></span
+												>
+											{:else}
+												<span class="truncate text-xs text-(--vscode-descriptionForeground)">{r.state ? STATE_LABEL[r.state]() : timeAgo(r.at, Date.now())}</span>
+											{/if}
 										{/if}
 									</span>
 									{#if r.state}<span class={['size-2 shrink-0 rounded-full', STATE_DOT[r.state]]} title={STATE_LABEL[r.state]()}></span>{/if}
 								</button>
 								<span class="flex shrink-0 opacity-0 group-hover/row:opacity-100 focus-within:opacity-100">
+									{#if historyDrafts[`chat:${r.id}`]}<button class={ICON_BTN} aria-label={t('chatDrafts.delete')} title={t('chatDrafts.delete')} onclick={() => deleteDraft(r.id)}><Codicon id="discard" size={13} /></button>{/if}
 									<button class={ICON_BTN} aria-label={t('chat.panel.rename')} title={t('chat.panel.rename')} onclick={() => startRename(r.id, r.title)}><Codicon id="edit" size={13} /></button>
 									<button class={ICON_BTN} aria-label={t('chat.panel.delete')} title={t('chat.panel.delete')} disabled={!!r.state} onclick={() => removeChat(r.id)}><Codicon id="trash" size={13} /></button>
 								</span>
@@ -1487,7 +1735,8 @@
 					sentAt: (request) => (chatMeta ? (chatEdits.view(chatMeta.id)?.requests.find((r) => r.index === request)?.at ?? null) : null),
 					remember: (text) => void chatExtras.remember(text),
 					continue: () => void submit(CONTINUE_PROMPT, []),
-					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup }
+					followups: { items: running ? [] : chatExtras.followups(chatMeta.id), pick: pickFollowup },
+					setInput: fillEmptyInput
 				}}
 				reverted={(r) => !!chatMeta && chatEdits.isReverted(chatMeta.id, r)}
 				class="h-full py-1.5"
@@ -1508,15 +1757,17 @@
 					input = withQuote(input, text);
 					queueMicrotask(() => composer?.focus());
 				}}
-				onside={features.rewind ? (text) => chatMeta && (chatTips.record('sideChat'), (side = { parent: chatMeta.id, excerpt: text })) : undefined}
+				onside={(text) => chatMeta && (chatTips.record('sideChat'), (side = { parent: chatMeta.id, excerpt: text }))}
 			/>
 			{#if side && side.parent === chatMeta.id}
 				{#key side}
-					<SideChat parentId={side.parent} excerpt={side.excerpt} {cwd} root={workspace.root} onclose={() => (side = null)} onkeep={(id) => ((side = null), select(id))} />
+					<SideChat parentId={side.parent} excerpt={side.excerpt} question={side.question} before={side.before !== undefined ? side.before : sidePoint.kind === 'ready' ? sidePoint.before : null} {cwd} root={workspace.root} parentRuntime={runtimeId} canFork={features.rewind} onclose={() => (side = null)} onkeep={(id) => ((side = null), select(id))} />
 				{/key}
 			{/if}
 		{:else if inEditor}
 			<p class="p-6 text-center text-(--vscode-descriptionForeground)">{chats.loaded ? t('chatExtras.editorMissing') : t('chatExtras.editorLoading')}</p>
+		{:else if installStatus}
+			<ManagedInstallCard status={installStatus} />
 		{:else}
 			<ChatWelcome
 				title={pick === 'ask' ? t('chatWelcome.title.ask') : t('chatWelcome.title.agent')}
@@ -1532,8 +1783,14 @@
 <!-- The chat input, at the bottom (VS Code's): the tip card or the toolbar joined to its top, the pickers under it. -->
 {#snippet composerBlock()}
 		<div class="interactive-input-part">
+			{#if laterPick}
+				<SendLaterPicker x={laterPick.x} y={laterPick.y} title={'id' in laterPick ? t('sendLater.rescheduleTitle') : t('sendLater.pickTitle')} sendNow={'id' in laterPick} onpick={pickLater} onclose={() => (laterPick = null)} />
+			{/if}
 			{#if chatMeta}<ChatTodoBar {turns} {running} />{/if}
 			{#if chatMeta}<McpStatusNote chatId={chatMeta.id} />{/if}
+			{#if chatMeta && installStatus}<ManagedInstallStrip status={installStatus} />{/if}
+			{#if chatMeta && chatRun?.signIn}<AgentSignInCard chatId={chatMeta.id} event={chatRun.signIn} agent={runtimeId} />{/if}
+			{#if chatMeta}<ChatResumeNotice chatId={chatMeta.id} />{/if}
 			{#if chatMeta && chatRewind.canRedo(chatMeta.id)}
 				<div class="flex items-center gap-1.5 rounded-[6px] border border-(--vscode-widget-border) px-2 py-1 text-xs text-(--vscode-descriptionForeground)" role="status">
 					<Codicon id="discard" size={12} />
@@ -1559,8 +1816,9 @@
 					</div>
 				</div>
 			{/if}
-			<!-- VS Code's input stack: the tip card and the toolbars docked on the input, one surface. -->
-			<div class="chat-input-stack">
+			<!-- VS Code's input stack: the tip card and the toolbars docked on the input, one surface.
+			     The floating workspace toggle keeps off all of it (Orca's NativeChatDock keep-clear). -->
+			<div class="chat-input-stack" {@attach keepFloatingToggleClear()}>
 				{#if tip}
 					<ChatTipCard
 						{tip}
@@ -1585,6 +1843,16 @@
 								onsend={(n, how) => chatMeta && void chats.sendQueuedNow(chatMeta.id, n, how)}
 								onremove={(n) => chatMeta && chats.unqueue(chatMeta.id, n)}
 								onmove={(n, index) => chatMeta && chats.moveQueued(chatMeta.id, n, index)}
+							/>
+							<ScheduledMessages
+								items={scheduled}
+								onedit={editScheduled}
+								onsend={(id) => void sendLater.sendNow(id)}
+								onreschedule={(id, el) => {
+									const r = el.getBoundingClientRect();
+									laterPick = { x: r.right - 240, y: Math.max(4, r.top - 300), id };
+								}}
+								oncancel={(id) => sendLater.take(id)}
 							/>
 						{/if}
 						{#if editing || editingQueued}
@@ -1626,6 +1894,7 @@
 					oncyclemode={() => void nextMode()}
 					approval={pendingApproval ? { answer: answerApproval } : undefined}
 					onsubmit={submit}
+					onsendlater={(text, attachments, at) => (chatMeta ? (laterPick = { ...at, text, attachments }) : status.flash(t('sendLater.newChat'), 6000))}
 					onpastetext={attachPaste}
 				>
 					{#snippet left(l)}
@@ -1728,11 +1997,15 @@
 					{/snippet}
 				</Composer>
 			</div>
-			<ChatSessionBar target={targetPicker} permission={permissionPicker} onclose={(refocus) => refocus && queueMicrotask(() => composer?.focus())} />
+			<ChatSessionBar target={targetPicker} permission={permissionPicker} trailing={runtimeId === 'antigravity' && managedCli.antigravity ? agyAuthChip : undefined} onclose={(refocus) => refocus && queueMicrotask(() => composer?.focus())} />
 			{#if optionNote}<p class="px-1 text-xs text-(--vscode-descriptionForeground)" role="status">{optionNote}</p>{/if}
 			{#if allowAll && mode === 'agent'}<p class="px-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatInput.allowAllNote')}</p>{/if}
 			{#if globalAutoApprove}<p class="px-1 text-xs text-(--vscode-editorWarning-foreground)" role="status">{t('chatCustomize.autoApproveNote')}</p>{/if}
 		</div>
+{/snippet}
+
+{#snippet agyAuthChip()}
+	<AgyAuthChip onAgy={managedCli.antigravity?.route === 'agy'} />
 {/snippet}
 
 {#snippet rulesChip()}

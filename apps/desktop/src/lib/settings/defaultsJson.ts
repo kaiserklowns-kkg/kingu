@@ -3,6 +3,7 @@
 // read-only documents generated from the settings registry and the command registry. Pure.
 
 import type { SettingSchema } from './registry';
+import { keyOf } from '#lib/workbench/keys.ts';
 
 export const DEFAULT_SETTINGS_KEY = 'settings://defaults/settings.json';
 export const DEFAULT_KEYBINDINGS_KEY = 'settings://defaults/keybindings.json';
@@ -40,7 +41,7 @@ export function defaultSettingsJson(schemas: readonly SettingSchema[], header: s
 	return [...out, ...lines, '}', ''].join('\n');
 }
 
-export type DefaultKeyCommand = { id: string; title: string; category?: string; key?: string; mac?: string; scope?: string };
+export type DefaultKeyCommand = { id: string; title: string; category?: string; key?: string; mac?: string; win?: string; scope?: string };
 
 /** The default keybindings for this platform as keybindings.json entries, then the commands that
  * have no default key (VS Code lists them as comments at the end). */
@@ -52,7 +53,7 @@ export function defaultKeybindingsJson(cmds: readonly DefaultKeyCommand[], mac: 
 		const id = `${c.id}\u0000${c.scope ?? ''}`;
 		if (seen.has(id)) continue;
 		seen.add(id);
-		const key = mac ? (c.mac ?? c.key) : c.key;
+		const key = keyOf(c, mac);
 		const title = c.category ? `${c.category}: ${c.title}` : c.title;
 		if (key) {
 			const note = c.scope ? ` (${layoutNote(c.scope)})` : '';

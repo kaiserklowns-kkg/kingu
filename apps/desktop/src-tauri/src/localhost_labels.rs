@@ -65,7 +65,7 @@ pub fn is_main_name(name: &str) -> bool {
 
 /// Orca `LBe` + `RBe`: the label for a worktree.
 pub fn label_for(project: &str, worktree_name: &str, worktree_path: Option<&str>) -> String {
-  let last = worktree_path.unwrap_or(worktree_name).split(['/', '\\']).map(str::trim).filter(|s| !s.is_empty()).next_back().unwrap_or(worktree_name);
+  let last = worktree_path.unwrap_or(worktree_name).split(['/', '\\']).map(str::trim).rfind(|s| !s.is_empty()).unwrap_or(worktree_name);
   let n = slug(last);
   if n == "main" || is_main_name(worktree_name) { slug(&format!("{project}-main")) } else { n }
 }

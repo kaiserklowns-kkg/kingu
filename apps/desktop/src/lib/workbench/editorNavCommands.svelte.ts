@@ -145,8 +145,9 @@ export function installEditorNavCommands(): () => void {
 			id: 'workbench.action.files.saveWithoutFormatting',
 			title: 'Save without Formatting',
 			category: 'File',
-			// VS Code: ⌘K S (Ctrl+K Ctrl+Shift+S on Windows).
+			// VS Code (fileCommands.ts): ⌘K S, Ctrl+K S on Linux, Ctrl+K Ctrl+Shift+S on Windows.
 			key: 'cmd+k s',
+			win: 'cmd+k cmd+shift+s',
 			when: () => editors.focusedFile !== null && !isDiffKey(editors.focusedFile),
 			run: () => {
 				const path = editors.focusedFile;

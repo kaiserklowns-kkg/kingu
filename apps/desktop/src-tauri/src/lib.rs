@@ -1,3 +1,6 @@
+// Long tuple and closure types are local to one function or test here; a `type` alias per use would hide more than it names.
+#![allow(clippy::type_complexity)]
+
 mod accounts;
 mod agent;
 mod artifacts;
@@ -54,6 +57,7 @@ mod snap_lsp;
 mod snap_sandbox;
 mod snap_service;
 mod snap_view;
+mod mcp_app;
 mod snap_secrets;
 mod mcp_tools;
 mod snippets;
@@ -75,11 +79,17 @@ mod windows;
 mod workspace;
 mod workspace_trust;
 mod workspace_cleanup;
+mod workspace_cleanup_chats;
 mod workspace_space;
 mod sparse_presets;
 mod bitbucket;
 mod link_preview;
 mod localhost_labels;
+mod ssh_agents;
+mod ssh_browser_relay;
+mod ssh_agent_install;
+mod ssh_holder;
+mod ssh_host_hooks;
 mod ssh_hosts;
 mod ssh_projects;
 mod ssh_remote;
@@ -327,12 +337,11 @@ fn repo_dir(ws: &Workspace, slug: Option<&str>, repo: Option<&str>) -> Result<Pa
 #[tauri::command]
 /// `background`: a poll nobody asked for (git_admission's background tier, behind clicks and visible reads).
 async fn git_status(ws: Workspace, slug: Option<String>, options: Option<git::StatusOptions>, repo: Option<String>, background: Option<bool>) -> Result<Option<git::GitStatus>, String> {
-  if let Some(r) = ws.remote() {
-    if slug.is_none() {
+  if let Some(r) = ws.remote()
+    && slug.is_none() {
       let opts = options.unwrap_or_default();
       return blocking(move || remote_ws::status(&r, &opts)).await;
     }
-  }
   if slug.is_none() && ws.current().is_none() {
     return Ok(None);
   }
@@ -520,6 +529,14 @@ async fn git_rebase(ws: Workspace, slug: Option<String>, base: String, repo: Opt
   blocking(move || git::rebase(&root, &base)).await
 }
 
+/// The last commit's message and the remote branches that already have it, before Commit (Amend)
+/// in the ADE's Source Control; `None` before the first commit.
+#[tauri::command]
+async fn git_amend_info(ws: Workspace, slug: Option<String>, repo: Option<String>) -> Result<Option<git::AmendInfo>, String> {
+  let root = git_dir(&ws, slug.as_deref(), repo.as_deref())?;
+  blocking(move || git::amend_info(&root)).await
+}
+
 /// The Commits panel of Source Control.
 #[tauri::command]
 async fn git_log(ws: Workspace, slug: Option<String>, limit: Option<u32>, repo: Option<String>) -> Result<Vec<git::Commit>, String> {
@@ -580,9 +597,10 @@ async fn claude_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<sess
 /// Codex and Gemini sessions run in the open folder or its worktrees (Orca's session history
 /// beyond Claude: `$CODEX_HOME/sessions` rollouts, `~/.gemini/tmp/<hash>/chats`).
 #[tauri::command]
-async fn agent_cli_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
+async fn agent_cli_sessions(ws: Workspace, app: AppHandle, limit: Option<usize>) -> Result<Vec<sessions::Session>, String> {
   let root = ws.root()?;
   let limit = limit.unwrap_or(250);
+  let account_dirs = app.state::<accounts::Accounts>().managed.opencode_data_dirs();
   blocking(move || {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("no home folder")?;
     let codex_home = std::env::var_os("CODEX_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| home.join(".codex"));
@@ -590,6 +608,49 @@ async fn agent_cli_sessions(ws: Workspace, limit: Option<usize>) -> Result<Vec<s
     dirs.extend(std::fs::read_dir(root.join(".kingu").join("worktrees")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
     let mut all = sessions::list_codex(&root, &codex_home, limit);
     all.extend(sessions::list_gemini(&home.join(".gemini").join("tmp"), &dirs, limit));
+    let mut dbs = sessions::opencode_dbs(&home, std::env::var("XDG_DATA_HOME").ok().as_deref(), std::env::var("OPENCODE_DB").ok().as_deref());
+    dbs.extend(account_dirs.iter().flat_map(|d| sessions::opencode_dbs_in(d)).filter(|d| !dbs.contains(d)).collect::<Vec<_>>());
+    all.extend(sessions::list_opencode(&dbs, &root, limit));
+    // ZCode's CLI: OpenCode's schema in ~/.zcode/cli/db/db.sqlite, hidden messages left out (Orca's scanners/zcode).
+    all.extend(sessions::list_zcode(&home.join(".zcode").join("cli").join("db").join("db.sqlite"), &root, limit));
+    // Copilot CLI (`$COPILOT_HOME`, else ~/.copilot; Orca's COPILOT_SESSIONS_DIR).
+    let copilot_home = std::env::var_os("COPILOT_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".copilot"));
+    all.extend(sessions::list_copilot(&root, &copilot_home.join("session-state"), limit));
+    // Cursor agent (~/.cursor: projects/*/agent-transcripts with chats/*/<id>/meta.json; Orca's scanners/cursor).
+    all.extend(sessions::list_cursor(&root, &home.join(".cursor"), limit));
+    // Qoder, CodeBuddy and Factory Droid (Orca's scanners/qoder, codebuddy, droid).
+    all.extend(sessions::list_qoder(&root, &home.join(".qoder").join("projects"), limit));
+    all.extend(sessions::list_codebuddy(&root, &home.join(".codebuddy").join("projects"), limit));
+    all.extend(sessions::list_droid(&root, &home.join(".factory"), limit));
+    all.extend(sessions::list_kiro(&root, &home.join(".kiro").join("sessions").join("cli"), limit));
+    // Cline (`$CLINE_SESSION_DATA_DIR`, else ~/.cline/data/sessions) and Kimi Code (`$KIMI_CODE_HOME`, else ~/.kimi-code; Orca's scanners/cline, kimi).
+    let cline_sessions = std::env::var_os("CLINE_SESSION_DATA_DIR").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".cline").join("data").join("sessions"));
+    all.extend(sessions::list_cline(&root, &cline_sessions, limit));
+    let kimi_home = std::env::var_os("KIMI_CODE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".kimi-code"));
+    all.extend(sessions::list_kimi(&root, &kimi_home.join("sessions"), limit));
+    // Devin (~/.local/share/devin/cli: transcripts and agent_logs, with sessions.db; Orca's scanners/devin).
+    all.extend(sessions::list_devin(&root, &home.join(".local").join("share").join("devin").join("cli"), limit));
+    // Grok CLI (`$GROK_HOME` when absolute, else ~/.grok; sessions/<encoded folder>/<id>; Orca's scanners/grok).
+    let grok_home = std::env::var("GROK_HOME").ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".grok"));
+    all.extend(sessions::list_grok(&root, &dirs, &grok_home.join("sessions"), limit));
+    // Hermes (`$HERMES_HOME`, else ~/.hermes) and jcode (`$JCODE_HOME`, else ~/.jcode): `sessions/session_*.json` (Orca's scanners/hermes, jcode).
+    let env_dir = |k: &str| std::env::var(k).ok().map(|v| std::path::PathBuf::from(v.trim())).filter(|p| p.is_absolute());
+    // Hermes: its `state.db` stores (the root's and each profile's), else the older snapshots.
+    all.extend(sessions::list_hermes_home(&root, &env_dir("HERMES_HOME").unwrap_or_else(|| home.join(".hermes")), limit));
+    all.extend(sessions::list_jcode(&root, &env_dir("JCODE_HOME").unwrap_or_else(|| home.join(".jcode")).join("sessions"), limit));
+    // OpenClaw (`$OPENCLAW_STATE_DIR` or ~/.openclaw, and the legacy ~/.clawdbot: agents/<agent>/sessions) and Pi (`$PI_CODING_AGENT_DIR`, else ~/.pi/agent/sessions); Orca's message-graph scanners.
+    all.extend(sessions::list_openclaw(&root, &[env_dir("OPENCLAW_STATE_DIR").unwrap_or_else(|| home.join(".openclaw")), home.join(".clawdbot")], limit));
+    let pi_sessions = env_dir("PI_CODING_AGENT_DIR").unwrap_or_else(|| home.join(".pi").join("agent").join("sessions"));
+    all.extend(sessions::list_pi(&root, &pi_sessions, limit));
+    // OMP (`$OMP_CODING_AGENT_DIR`, else ~/.omp[/profiles/<name>]/agent/sessions or $XDG_DATA_HOME/omp, per OMP's dirs.ts), plus the OMP-written files in Pi's folder (Orca's scanners/omp).
+    all.extend(sessions::list_omp(&root, &sessions::omp_sessions_dirs(&home, &|k| std::env::var(k).ok()), &pi_sessions, limit));
+    // Muse (`$XDG_DATA_HOME/muse/sessions`, else ~/.local/share/muse/sessions; date shards of <uuid>/session.jsonl; Orca's scanners/muse).
+    all.extend(sessions::list_muse(&root, &env_dir("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share")).join("muse").join("sessions"), limit));
+    // Rovo Dev (~/.rovodev/sessions/<id>/metadata.json + session_context.json) and the Antigravity CLI (~/.gemini/antigravity-cli/brain, folders from its history and cache indexes).
+    all.extend(sessions::list_rovo(&root, &home.join(".rovodev").join("sessions"), limit));
+    all.extend(sessions::list_antigravity(&root, &home.join(".gemini").join("antigravity-cli").join("brain"), limit));
+    // OpenCode 2: session_v2 / session_message tables in the same opencode*.db files (Orca's scanners/opencode2).
+    all.extend(sessions::list_opencode2(&dbs, &root, limit));
     all.sort_by_key(|s| std::cmp::Reverse(s.updated));
     all.truncate(limit);
     Ok(all)
@@ -804,6 +865,18 @@ fn pty_spawn(
   let shell_args = injected_args.as_deref().or(shell_args);
   // The `kingu` command on PATH (cli_server.rs).
   cli_server::terminal_env(&mut env, &unset);
+  // Agent CLIs Kingu installed itself, last on PATH (agent/managed_cli).
+  agent::managed_cli::terminal_env(&mut env, &unset);
+  // A multi-line command (an SSH project's agent loop) is not typed line by line: its script goes
+  // in the environment and a short line runs it (pty.rs `run_through_env`).
+  let run = match run.as_deref().and_then(pty::run_through_env) {
+    Some((argv, script)) => {
+      unset.retain(|k| k != pty::RUN_ENV);
+      env.insert(pty::RUN_ENV.into(), script);
+      Some(argv)
+    }
+    None => run,
+  };
   let attached = ptys.open(&key, &cwd, cols, rows, run.as_deref(), &env, shell, shell_args, &unset, clean_env, pty::channel_sink(on_data))?;
   ptys.own(&key, ws.label());
   if attached.spawned && pane_hooks {
@@ -815,6 +888,16 @@ fn pty_spawn(
     log::info!("terminal {key} re-attached ({cols}x{rows})");
   }
   Ok(attached)
+}
+
+/// The job in front of terminal `key`'s shell, for pane hibernation (Orca's SleepingAgentSessionRecord
+/// keeps the agent's folder and launch): its pid, folder, command line, and whether that folder is
+/// the shell's own. `None` at the prompt, when the terminal is gone, and where the platform does not
+/// report a foreground job (Windows).
+#[tauri::command(async)]
+fn pty_job_info(ptys: State<'_, pty::Ptys>, key: String) -> Result<Option<pty::JobInfo>, String> {
+  pty::validate_key(&key)?;
+  Ok(ptys.job_info(&key))
 }
 
 /// `terminal.integrated.*` for a new shell, read by the webview from the user's settings
@@ -1301,9 +1384,10 @@ async fn fs_delete(ws: Workspace, app: AppHandle, rel: String, use_trash: Option
     log::info!("moved to the Trash: {rel}");
     token
   } else {
-    blocking(move || fileops::delete_for_good(&root, &r)).await?;
+    let stash = undo_stash(&app)?;
+    let token = blocking(move || fileops::delete_for_good_with_undo(&root, &r, &stash)).await?;
     log::info!("deleted {rel}");
-    None
+    token
   };
   Ok(token)
 }
@@ -1443,6 +1527,7 @@ pub fn run() {
     .manage(Workspaces::default())
     .manage(window::CloseGuard::default())
     .manage(pty::Ptys::default())
+    .manage(Arc::new(ssh_agent_install::RemoteInstalls::default()))
     .manage(system::KeepAwake::default())
     .manage(Arc::new(agent::AgentHost::default()))
     .manage(Arc::new(agent::supervisor::Supervisor::default()))
@@ -1459,11 +1544,14 @@ pub fn run() {
     .manage(DroppedPaths::default())
     .manage(artifacts::preview::Previews::default())
     .manage(snap_view::SnapViews::default())
+    .manage(mcp_app::McpApps::default())
     .manage(voice::Voice::default())
     // Artifact previews (artifacts/preview.rs): served only to the sandboxed preview iframe.
     .register_uri_scheme_protocol(floating_browser::SCHEME, floating_browser::handle)
     .register_uri_scheme_protocol(artifacts::preview::SCHEME, artifacts::preview::handle)
     .register_uri_scheme_protocol(snap_view::SCHEME, snap_view::handle)
+    // MCP Apps (mcp_app.rs): a tool's ui:// page, served only to its sandboxed chat frame.
+    .register_uri_scheme_protocol(mcp_app::SCHEME, mcp_app::handle)
     .setup(|app| {
       let config_dir = app.path().app_config_dir()?;
       // application.shellEnvironmentResolutionTimeout (user settings only: it is read before any folder opens).
@@ -1473,6 +1561,8 @@ pub fn run() {
       net_proxy::init(&config_dir);
       // Temporary profiles do not outlive the app (VS Code's transient profiles).
       user_profiles::remove_unused_transient(&config_dir, &[]);
+      // Snap and skill staging a quit or crash mid-fetch left behind, 30 s after start-up.
+      snap_install::sweep_stale_staging(app.handle());
       app.manage(settings::ConfigWatcher::default());
       if let Err(e) = settings::watch_config(app.handle(), &config_dir) {
         log::warn!("settings watcher: {e}");
@@ -1505,8 +1595,10 @@ pub fn run() {
       team::install(app)?;
       accounts::install(app)?;
       ssh_hosts::install(app)?;
+      app.manage(ssh_browser_relay::Guard);
       mobile::install(app)?;
       cli_server::install(app)?;
+      agent::managed_cli::install(app.handle())?;
       git::load_git_path(&app.path().app_config_dir()?);
       // A git operation waiting for another one in the same repository (status bar).
       let queue_events = app.handle().clone();
@@ -1514,6 +1606,7 @@ pub fn run() {
         let _ = queue_events.emit("git-queue", e);
       });
       menu::install(app.handle());
+      floating_browser::install(app.handle());
       // The explorer's undo history lives in the webview, so last run's undo copies are orphans.
       if let Ok(stash) = undo_stash(app.handle()) {
         std::thread::spawn(move || {
@@ -1591,6 +1684,13 @@ pub fn run() {
       windows::window_new,
       windows::window_focus_folder,
       windows::window_count,
+      windows::board_popout_open,
+      windows::board_popout_owner,
+      windows::board_popout_publish,
+      windows::board_popout_request,
+      windows::board_popout_preview,
+      windows::board_popout_input,
+      windows::board_popout_reveal,
       windows::workspace_storage_stale,
       window::window_close,
       window::window_close_cancelled,
@@ -1612,6 +1712,7 @@ pub fn run() {
       git_user_configured,
       git_numstat,
       git_force_push,
+      git_amend_info,
       git_pull_ff_only,
       git_rebase,
       git_log,
@@ -1651,13 +1752,25 @@ pub fn run() {
       floating_browser::floating_browser_navigate,
       floating_browser::floating_browser_history,
       floating_browser::floating_browser_reload,
+      floating_browser::floating_browser_reload_menu,
+      floating_browser::floating_browser_snapshot,
       floating_browser::floating_browser_show,
       floating_browser::floating_browser_open_external,
       floating_browser::floating_browser_close,
+      floating_browser::cookies::browser_cookie_sources,
+      floating_browser::cookies::browser_cookie_import,
+      floating_browser::cookies::browser_cookie_clear,
       floating_browser::floating_browser_zoom,
       floating_browser::floating_browser_find,
       floating_browser::floating_browser_devtools,
+      floating_browser::agent::agent_browser_share,
+      floating_browser::agent::agent_browser_stop,
+      floating_browser::agent::agent_browser_pages,
+      floating_browser::agent::agent_browser_log,
+      floating_browser::agent::agent_browser_replay,
+      floating_browser::agent::floating_browser_capture,
       floating_browser::floating_browser_pick,
+      floating_browser::floating_browser_discardable,
       floating_browser::floating_browser_reveal_download,
       floating_note_read,
       floating_note_write,
@@ -1725,6 +1838,8 @@ pub fn run() {
       pty::pty_daemon_status,
       pty::pty_daemon_restart,
       pty::pty_foreground,
+      pty_job_info,
+      pty::pty_stop_job,
       terminal_links::terminal_link_target,
       shell_integration::terminal_shell_history,
       terminal_links::terminal_open_url,
@@ -1732,7 +1847,11 @@ pub fn run() {
       worktree_refresh_base,
       worktree_list,
       workspace_cleanup::workspace_cleanup_scan,
+      workspace_cleanup::workspace_cleanup_inspect,
       workspace_cleanup::workspace_cleanup_sizes,
+      workspace_cleanup_chats::workspace_cleanup_chat_sweep,
+      workspace_cleanup_chats::workspace_cleanup_chat_forget,
+      workspace_cleanup_chats::workspace_cleanup_codex_history_usage,
       workspace_space::workspace_space_analyze,
       workspace_space::workspace_space_cancel,
       sparse_presets::sparse_presets_list,
@@ -1755,9 +1874,27 @@ pub fn run() {
       ssh_hosts::ssh_config_hosts,
       ssh_hosts::ssh_import_config,
       ssh_hosts::ssh_test_connection,
+      ssh_hosts::ssh_connect,
+      ssh_hosts::ssh_disconnect,
+      ssh_hosts::ssh_keepalive,
+      ssh_hosts::ssh_forwards_restart,
+      ssh_holder::ssh_holder_probe,
+      ssh_holder::ssh_holder_install,
+      ssh_holder::ssh_holder_sessions,
+      ssh_holder::ssh_holder_end,
+      ssh_holder::ssh_holder_reattach,
+      ssh_holder::ssh_remote_hold_setup,
+      ssh_holder::ssh_remote_permission_answer,
+      ssh_holder::ssh_holder_prune,
+      ssh_browser_relay::ssh_browser_relays,
+      ssh_browser_relay::ssh_browser_relay_stop,
+      ssh_host_hooks::ssh_remote_status_hooks,
+      ssh_host_hooks::ssh_remote_status_hooks_hosts,
+      ssh_host_hooks::ssh_remote_status_hooks_remove,
       ssh_hosts::ssh_terminal_command,
       ssh_hosts::ssh_forwards_list,
       ssh_hosts::ssh_forward_add,
+      ssh_hosts::ssh_forward_for_browser,
       ssh_hosts::ssh_forward_remove,
       ssh_hosts::ssh_browse_dir,
       ssh_hosts::ssh_detected_ports,
@@ -1771,6 +1908,11 @@ pub fn run() {
       ssh_projects::ssh_project_worktree_add,
       ssh_projects::ssh_project_worktree_remove,
       ssh_projects::ssh_project_terminal,
+      ssh_agents::ssh_remote_agents,
+      ssh_agent_install::ssh_agent_installs,
+      ssh_agent_install::ssh_agent_install,
+      ssh_agent_install::ssh_agent_install_cancel,
+      ssh_agent_install::ssh_agent_remove,
       ssh_remote::ssh_remote_dir,
       ssh_remote::ssh_remote_read,
       ssh_remote::ssh_remote_write,
@@ -1825,12 +1967,22 @@ pub fn run() {
       agent::status_hooks::agent_status_hooks_install,
       agent::status_hooks::agent_status_hooks_remove,
       agent::hooks::agent_hook_settings,
+      agent::hooks::agent_permission_answer,
+      agent::permission_rules::agent_permission_scopes,
+      agent::permission_rules::agent_permission_grants,
+      agent::permission_rules::agent_permission_revoke,
       agent::hooks::agent_hook_file,
       agent::hooks::agent_run_dir,
       agent::hooks::agent_run_files_write,
       agent::cli::agent_cli_found,
       agent::runtimes::agent_runtimes,
+      agent::managed_cli::managed_cli_list,
+      agent::managed_cli::managed_cli_status,
+      agent::managed_cli::managed_cli_install,
+      agent::managed_cli::managed_cli_cancel,
+      agent::managed_cli::managed_cli_remove,
       agent::arkai::arkai_providers,
+      agent::arkai::arkai_model_routers,
       agent::arkai::arkai_set_key,
       agent::arkai::arkai_delete_key,
       agent::hooks::agent_hook_read,
@@ -1845,7 +1997,21 @@ pub fn run() {
       agent::agent_answer_permission,
       agent::mcp_chat::agent_answer_mcp,
       agent::mcp_chat::agent_mcp_query,
+      mcp_app::mcp_app_open,
+      mcp_app::mcp_app_close,
+      mcp_app::agent_mcp_app_request,
+      mcp_app::agent_mcp_app_tools,
+      mcp_app::agent_mcp_app_tool_result,
       agent::agent_interrupt,
+      agent::agent_sign_in,
+      agent::antigravity::antigravity_chat_route,
+      agent::antigravity_auth::antigravity_chat_auth_status,
+      agent::antigravity_auth::antigravity_api_key_save,
+      agent::antigravity_auth::antigravity_api_key_clear,
+      agent::antigravity_auth::antigravity_chat_auth_detect,
+      agent::antigravity_auth::antigravity_chat_stop_live,
+      agent::gh_account::gh_accounts,
+      agent::gh_account::gh_account_validate,
       agent::agent_stop,
       agent::agent_set_options,
       agent::chats_load,
@@ -1853,6 +2019,7 @@ pub fn run() {
       agent::slash_commands::chat_slash_commands,
       agent::chats_save,
       agent::chat_transcript_load,
+      agent::chat_cut_off,
       agent::chat_transcript_delete,
       agent::chat_context_git_diff,
       agent::chat_export,
@@ -1930,6 +2097,8 @@ pub fn run() {
       agent::gh_issues_list,
       agent::gh_issue_view,
       agent::gh_issue_comment,
+      agent::gh_issue_set_state,
+      agent::gh_issue_edit,
       agent::gh_issue_open,
       artifacts::artifacts_list,
       artifacts::artifact_get,
@@ -1966,6 +2135,16 @@ pub fn run() {
       linear::linear_issues_list,
       linear::linear_issue_view,
       linear::linear_issue_comment,
+      linear::linear_issue_states,
+      linear::linear_issue_set_state,
+      linear::linear_issue_assign,
+      linear::linear_issue_members,
+      linear::linear_issue_set_assignee,
+      linear::linear_issue_set_priority,
+      linear::linear_issue_labels,
+      linear::linear_issue_set_labels,
+      linear::linear_issue_set_estimate,
+      linear::linear_issue_set_due_date,
       linear::linear_issue_open,
       gitlab::gitlab_status,
       gitlab::gitlab_connect,
@@ -1973,6 +2152,11 @@ pub fn run() {
       gitlab::gitlab_issues_list,
       gitlab::gitlab_issue_view,
       gitlab::gitlab_issue_comment,
+      gitlab::gitlab_issue_set_state,
+      gitlab::gitlab_issue_assign,
+      gitlab::gitlab_issue_members,
+      gitlab::gitlab_issue_set_assignee,
+      gitlab::gitlab_issue_labels,
       gitlab::gitlab_issue_open,
       jira::jira_status,
       jira::jira_connect,
@@ -1980,6 +2164,14 @@ pub fn run() {
       jira::jira_issues_list,
       jira::jira_issue_view,
       jira::jira_issue_comment,
+      jira::jira_issue_transitions,
+      jira::jira_issue_transition,
+      jira::jira_issue_assign,
+      jira::jira_assignable_users,
+      jira::jira_issue_set_assignee,
+      jira::jira_issue_labels,
+      jira::jira_priorities,
+      jira::jira_issue_set_priority,
       jira::jira_issue_open,
       agent::gh_projects::gh_projects_list,
       agent::gh_projects::gh_project_items,
@@ -2158,6 +2350,8 @@ pub fn run() {
         }
       }
       if let tauri::RunEvent::Exit = event {
+        // Not waited for: a Snap or skill git fetch stops; the start-up sweep takes its folder.
+        snap_install::stop_git_for_shutdown();
         app.state::<lsp::Servers>().stop_all();
         app.state::<snap_service::Services>().stop_all();
         app.state::<dap::Sessions>().stop_all();

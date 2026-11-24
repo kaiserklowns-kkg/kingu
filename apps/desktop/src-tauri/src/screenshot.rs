@@ -72,7 +72,7 @@ pub fn schedule(app: &AppHandle, out: PathBuf) {
 fn take(app: &AppHandle, window: &tauri::WebviewWindow, out: PathBuf) {
   use block2::RcBlock;
   use objc2::msg_send;
-  use objc2::runtime::{AnyClass, AnyObject};
+  use objc2::runtime::AnyObject;
 
   let app = app.clone();
   let failed = app.clone();
@@ -107,36 +107,40 @@ fn take(app: &AppHandle, window: &tauri::WebviewWindow, out: PathBuf) {
     eprintln!("screenshot: {e}");
     failed.exit(1);
   }
+}
 
-  /// NSImage → PNG bytes through its TIFF form and NSBitmapImageRep.
-  unsafe fn png_bytes(image: *mut AnyObject) -> Option<Vec<u8>> {
-    if image.is_null() {
+/// NSImage → PNG bytes through its TIFF form and NSBitmapImageRep (also Design Mode's element
+/// screenshot, floating_browser.rs).
+#[cfg(target_os = "macos")]
+pub(crate) unsafe fn png_bytes(image: *mut objc2::runtime::AnyObject) -> Option<Vec<u8>> {
+  use objc2::msg_send;
+  use objc2::runtime::{AnyClass, AnyObject};
+  if image.is_null() {
+    return None;
+  }
+  unsafe {
+    let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
+    if tiff.is_null() {
       return None;
     }
-    unsafe {
-      let tiff: *mut AnyObject = msg_send![image, TIFFRepresentation];
-      if tiff.is_null() {
-        return None;
-      }
-      let rep_class = AnyClass::get(c"NSBitmapImageRep")?;
-      let rep: *mut AnyObject = msg_send![rep_class, imageRepWithData: tiff];
-      if rep.is_null() {
-        return None;
-      }
-      let dict_class = AnyClass::get(c"NSDictionary")?;
-      let props: *mut AnyObject = msg_send![dict_class, dictionary];
-      // NSBitmapImageFileTypePNG
-      let png: *mut AnyObject = msg_send![rep, representationUsingType: 4usize, properties: props];
-      if png.is_null() {
-        return None;
-      }
-      let len: usize = msg_send![png, length];
-      let ptr: *const u8 = msg_send![png, bytes];
-      if ptr.is_null() || len == 0 {
-        return None;
-      }
-      Some(std::slice::from_raw_parts(ptr, len).to_vec())
+    let rep_class = AnyClass::get(c"NSBitmapImageRep")?;
+    let rep: *mut AnyObject = msg_send![rep_class, imageRepWithData: tiff];
+    if rep.is_null() {
+      return None;
     }
+    let dict_class = AnyClass::get(c"NSDictionary")?;
+    let props: *mut AnyObject = msg_send![dict_class, dictionary];
+    // NSBitmapImageFileTypePNG
+    let png: *mut AnyObject = msg_send![rep, representationUsingType: 4usize, properties: props];
+    if png.is_null() {
+      return None;
+    }
+    let len: usize = msg_send![png, length];
+    let ptr: *const u8 = msg_send![png, bytes];
+    if ptr.is_null() || len == 0 {
+      return None;
+    }
+    Some(std::slice::from_raw_parts(ptr, len).to_vec())
   }
 }
 

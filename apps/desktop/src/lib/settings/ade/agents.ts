@@ -40,13 +40,14 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		type: 'string',
 		// Orca starts agents in yolo; Kingu keeps asking unless you choose otherwise.
 		default: 'manual',
-		enum: ['manual', 'yolo'],
+		enum: ['manual', 'auto', 'yolo'],
 		enumDescriptions: [
-			'agent CLI ถามคุณก่อนใช้เครื่องมือตามปกติของมัน (The CLI asks before tools, as it normally does.)',
-			'เพิ่ม flag ข้ามการขออนุญาตของ CLI นั้น เช่น claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo (Add that CLI\'s skip-permissions flag.)'
+			'agent CLI ถามคุณก่อนใช้เครื่องมือตามปกติของมัน Kingu ไม่เพิ่ม flag หรือ environment ใด ๆ (The CLI asks before tools, as it normally does; Kingu adds no flag and no environment.)',
+			'ให้ CLI ทำสิ่งที่ปลอดภัยเองและถามเฉพาะที่เหลือ มีเฉพาะ claude --permission-mode auto, codex --approve-for-me, cursor-agent --auto-review ส่วน CLI อื่นยังถามตามปกติ (The CLI runs what it judges safe and asks for the rest: claude, codex and cursor-agent only; every other CLI keeps asking.)',
+			'เพิ่ม flag ข้ามการขออนุญาตของ CLI นั้น เช่น claude --dangerously-skip-permissions, codex --dangerously-bypass-approvals-and-sandbox, gemini --yolo และ GOOSE_MODE=auto ให้ goose (Add that CLI\'s skip-permissions flag; Goose gets GOOSE_MODE=auto.)'
 		],
 		description:
-			'การขออนุญาตของ agent CLI ในงาน ADE ใช้กับงานใหม่ ไม่ใช้กับ CLI ที่ตั้ง kingu.agent.args.<profile> ไว้เอง และ opencode ไม่มี flag นี้ (Orca: Agent Permissions) (Permissions of ADE agent CLIs for new tasks; a CLI whose kingu.agent.args.<profile> you set keeps your arguments.)',
+			'การขออนุญาตของ agent CLI ในงาน ADE ใช้กับงานใหม่ ไม่ใช้กับ CLI ที่ตั้ง kingu.agent.args.<profile> ไว้เอง หรือคำสั่งที่กำหนดสิทธิ์ไว้แล้ว และ opencode ไม่มี flag นี้ (Orca: Agent Permissions) (Permissions of ADE agent CLIs for new tasks; a CLI whose kingu.agent.args.<profile> you set keeps your arguments, and a command that already sets its permission policy gets no flag.)',
 		// User-only: it turns off the CLI's permission prompts.
 		scope: 'application'
 	},
@@ -91,14 +92,14 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		enumDescriptions: ['cache มาตรฐาน 5 นาที (The standard 5-minute cache.)', 'cache แบบขยาย 1 ชั่วโมง (The extended 1-hour cache.)'],
 		description: 'อายุของ prompt cache ที่ kingu.agent.promptCacheTimer นับถอยหลัง (Orca: promptCacheTtlMs) (Prompt-cache lifetime the timer counts down.)'
 	},
-	// Agent hibernation (ade/hibernation.ts, attempts.svelte.ts): experimental, off by default like Orca's.
+	// Agent hibernation (ade/hibernation.ts, attempts.svelte.ts, paneSleep.svelte.ts): experimental, off by default like Orca's; per pane.
 	{
 		id: 'kingu.agent.hibernation',
 		group: G,
 		type: 'boolean',
 		default: false,
 		description:
-			'ทดลอง: ปิด agent CLI ที่ทำรอบเสร็จแล้วและว่างนานเกิน kingu.agent.hibernationIdleMinutes เพื่อคืนหน่วยความจำ เฉพาะ CLI ที่ resume session ได้และไม่ได้แสดงอยู่บนจอ งานจะขึ้นปุ่มให้ทำงานต่อใน session เดิมได้ในคลิกเดียว (Orca: experimentalAgentHibernation) (Experimental: closes idle agent CLIs whose turn finished, to free memory; the task resumes the same session with one click.)'
+			'ทดลอง: ปิด agent CLI ที่ทำรอบเสร็จแล้วและว่างนานเกิน kingu.agent.hibernationIdleMinutes เพื่อคืนหน่วยความจำ เฉพาะ CLI ที่ resume session ได้และไม่ได้แสดงอยู่บนจอ ทั้ง agent ของงานและ agent ที่รันในแท็บ terminal ของงาน แยกกันทีละ pane เมื่อกลับมาที่แท็บนั้น agent จะทำงานต่อใน session เดิมเอง (Orca: experimentalAgentHibernation) (Experimental: closes idle agent CLIs whose turn finished, to free memory, each pane on its own: a task’s agent and agents in its terminal tabs; each resumes the same session when you return to its tab.)'
 	},
 	{
 		id: 'kingu.agent.hibernationIdleMinutes',
@@ -109,6 +110,44 @@ export const AGENT_SETTINGS: SettingSchema[] = [
 		maximum: 1440,
 		integer: true,
 		description: 'ว่างนานกี่นาทีหลังทำรอบเสร็จ agent CLI จึงถูกพักไว้ เมื่อเปิด kingu.agent.hibernation (Orca: agentHibernationIdleMs) (Minutes an agent CLI stays idle after its turn before hibernation closes it.)'
+	},
+	{
+		id: 'kingu.agent.antigravityManagedAgy',
+		group: G,
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้แชตใช้ agy ชุดที่ Kingu ติดตั้งเองได้ ปิดแล้ว agy ชุดนั้นไม่รันแชตใด ไม่นับว่าติดตั้งแล้ว และไม่ถูกอัปเดตหรือติดตั้งใหม่ แชต Antigravity จะใช้ agy ของคุณเอง ถ้าไม่มีจะขึ้นว่ายังไม่ได้ติดตั้ง (Orca: antigravityManagedAgyEnabled) (Lets chats run the agy Kingu installed. Off, that copy runs no chat, counts as not installed and is neither updated nor installed; Antigravity chats use your own agy.)',
+		// User-only: it decides which program runs.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.antigravityGoogleSignIn',
+		group: G,
+		type: 'string',
+		enum: ['auto', 'agy', 'kingu'],
+		default: 'auto',
+		description:
+			'แชต Antigravity ใช้การลงชื่อเข้าใช้ Google ของใคร: auto ใช้ agy เว้นแต่ติดตั้งเซิร์ฟเวอร์ ACP ของ Kingu ไว้แล้ว (agy ที่ลงชื่อเข้าใช้อยู่ยังใช้ได้), agy ใช้การลงชื่อเข้าใช้ของ agy เอง (ลงชื่อเข้าใช้ในเทอร์มินัล), kingu ใช้เซิร์ฟเวอร์ ACP ที่ Kingu ติดตั้ง ลงชื่อเข้าใช้ Google จากในแชต Kingu ไม่เห็นรหัสผ่านหรือ token (Orca: antigravityGoogleSignIn) (Whose Google sign-in Antigravity chats use: auto runs agy unless Kingu\'s ACP server is installed; agy uses agy\'s own sign-in, from a terminal; kingu runs Kingu\'s ACP server and signs in to Google from the chat. Kingu never sees the password or token.)',
+		// User-only: it decides which program runs.
+		scope: 'application'
+	},
+	{
+		id: 'kingu.agent.antigravityChatAuth',
+		group: G,
+		type: 'json',
+		schema: {
+			anyOf: [
+				{ type: 'object', properties: { method: { const: 'oauth-personal' } }, additionalProperties: false },
+				{ type: 'object', properties: { method: { const: 'gemini-api-key' } }, additionalProperties: false },
+				{ type: 'object', properties: { method: { const: 'agent-platform' }, gcpProject: { type: 'string', maxLength: 255 }, gcpLocation: { type: 'string', maxLength: 255 } }, additionalProperties: false }
+			]
+		},
+		default: { method: 'oauth-personal' },
+		description:
+			'แชต Antigravity บนเซิร์ฟเวอร์ ACP ของ Kingu ลงชื่อเข้าใช้ด้วยอะไร (Orca: antigravityChatAuth): oauth-personal บัญชี Google, gemini-api-key คีย์ Gemini API ที่วางไว้ใน Settings › Accounts › Antigravity (เก็บใน macOS Keychain) หรือ GEMINI_API_KEY, agent-platform ใช้ gcloud login (ADC) กับ gcpProject / gcpLocation ถ้าว่างใช้ของ gcloud และ global สองแบบหลังรันบนเซิร์ฟเวอร์ของ Kingu เสมอ (How Antigravity chats on Kingu\'s ACP server sign in: a Google account, a Gemini API key kept in the macOS Keychain or GEMINI_API_KEY, or Google Agent Platform with your gcloud ADC. The last two always run on Kingu\'s server.)',
+		// User-only: it decides which credentials a program gets.
+		scope: 'application'
 	},
 	// --- Agent Chat (Orca's nativeChatAppearance): the Agent panel.
 	{

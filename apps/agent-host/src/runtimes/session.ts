@@ -7,9 +7,10 @@
 //
 // Never write prompts, tool inputs or file contents to the log.
 
+import type { SandboxGrantWire } from '../sandbox/retry.ts';
 import { blockingThreats, threatSummary } from '../guards/security.ts';
 import { snapshotOf } from '../snapshots.ts';
-import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type McpAnswerParams, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
+import { DECISIONS, type AgentEvent, type AnswerParams, type Decision, type McpAnswerParams, type McpAppParams, type McpAppToolResultParams, type McpAppToolsParams, type McpServerParams, type PermissionMode, type Usage } from '../protocol.ts';
 import { McpAsks } from '../mcpAsks.ts';
 import type { McpClient } from '../arkai/mcp.ts';
 import { summarizeTool } from '../normalize.ts';
@@ -19,6 +20,8 @@ import type { ImageBlock } from '../host.ts';
 import type { ArkaiSpec } from '../arkai/spec.ts';
 import type { AskConfig } from '../guards/asks.ts';
 import type { Effort } from '../effort.ts';
+import type { SandboxConfig } from '../sandbox/config.ts';
+import { browserGateFor, callBrowser, qualified, type BrowserDeps, type BrowserResult, type BrowserToolName } from '../browser.ts';
 
 /** A spawned agent process (Bun's `Subprocess` fits; tests may pass their own). */
 export type Child = {
@@ -84,6 +87,21 @@ export type SessionInit = {
 	mcpSampling?: Record<string, boolean> | null;
 	/** The chat's reasoning effort (../effort.ts); null: the model's default. */
 	effort?: Effort | null;
+	/**
+	 * The agent sandbox (`chat.agent.sandbox.*`, ../sandbox/config.ts); null: off. Arkai runs its
+	 * Bash tool under it; Codex and ACP agents run their own tools, so it does not reach them.
+	 */
+	sandbox?: SandboxConfig | null;
+	/** Arkai only: Skills over MCP (`chat.agentHost.mcpSkills.enabled`, arkai/mcpSkills.ts); absent: on. */
+	mcpSkills?: boolean;
+	/** Kingu's browser tools (../browser.ts, `kingu.browser.agentTools`); absent: off. */
+	browser?: BrowserDeps | null;
+	/**
+	 * Codex and ACP: Kingu's MCP server with the browser tools (../browserMcp.ts): its loopback
+	 * address and the run's secret header, handed to the agent over its stdio (never env or argv).
+	 * `release` ends the secret with the run.
+	 */
+	browserMcp?: { url: string; headers: Record<string, string>; release: () => void } | null;
 };
 
 export type Turn = { text: string; images: ImageBlock[]; imagePaths: string[] };
@@ -93,7 +111,15 @@ type Pending = { resolve: (d: Decision | 'cancelled') => void; tool: string };
 /** A tool row as emitted: its view, and whether its result went out. */
 type ToolState = { view: ToolView; done: boolean; snapped: Set<string> };
 /** What a permission prompt offers besides the tool call itself. */
-export type AskOptions = { title: string | null; canAlways: boolean; rules?: string[]; detail?: string | null; onRequest?: (requestId: string) => void };
+export type AskOptions = {
+	title: string | null;
+	canAlways: boolean;
+	rules?: string[];
+	detail?: string | null;
+	/** A sandboxed command's retry prompt (../sandbox/retry.ts): what "Allow" adds. */
+	sandboxGrant?: SandboxGrantWire;
+	onRequest?: (requestId: string) => void;
+};
 
 export abstract class RunSession {
 	protected readonly cwd: string;
@@ -116,6 +142,8 @@ export abstract class RunSession {
 	protected tools = new Map<string, ToolState>();
 	/** What MCP servers ask the user (../mcpAsks.ts): forms and sampling approvals. */
 	protected readonly asks: McpAsks;
+	/** Browser tools the user allowed for the rest of this run (an "always" answer). */
+	private browserGrants = new Set<BrowserToolName>();
 
 	constructor(protected readonly init: SessionInit) {
 		this.cwd = init.cwd;
@@ -138,6 +166,19 @@ export abstract class RunSession {
 		return null;
 	}
 
+	/** An MCP App's request to its server (Arkai: arkai/mcpApps.ts); agents that keep their own MCP clients have no apps here. */
+	async mcpApp(_p: McpAppParams): Promise<unknown> {
+		throw new SessionError(UNSUPPORTED, 'this agent does not run MCP Apps in Kingu');
+	}
+	/** The tools an MCP App registered (Arkai only). */
+	mcpAppTools(_p: McpAppToolsParams): null {
+		throw new SessionError(UNSUPPORTED, 'this agent does not take MCP App tools');
+	}
+	/** The chat's answer to an `mcp_app_tool_call` (Arkai only). */
+	mcpAppToolResult(_p: McpAppToolResultParams): null {
+		throw new SessionError(UNSUPPORTED, 'this agent does not take MCP App tools');
+	}
+
 	/** The handshake: open (or resume) the agent session; sets `sessionId`. */
 	protected abstract open(): Promise<void>;
 	/** Sends one user message and resolves when the agent's turn is over. */
@@ -149,6 +190,10 @@ export abstract class RunSession {
 	/** Ends the run (a failed handshake: `code` 1); the `exit` event goes out by `finish`. */
 	protected abstract kill(code: number): void;
 	abstract stop(): Promise<null>;
+	/** The chat's Sign in while the agent waits for one (acp.ts); other runtimes sign in on their own. */
+	signIn(): Promise<null> {
+		return Promise.reject(new SessionError(UNSUPPORTED, 'this agent is not waiting for a sign-in'));
+	}
 	/** A mid-session change of the permission mode (the policy is Kingu's; the agent may hear of it too). */
 	protected async modeChanged(_mode: PermissionMode): Promise<void> {}
 
@@ -350,11 +395,13 @@ export abstract class RunSession {
 				tool_use_id: toolUseId,
 				title: o.title,
 				input_summary: summary,
-				detail: detail ?? o.detail ?? null,
+				// The asker's own text first (why a command wants to leave the sandbox), else the tool's.
+				detail: o.detail ?? detail ?? null,
 				diff,
 				input: view.input,
 				can_always: o.canAlways,
-				rules: o.rules ?? []
+				rules: o.rules ?? [],
+				...(o.sandboxGrant ? { sandbox_grant: o.sandboxGrant } : {})
 			});
 		});
 	}
@@ -378,6 +425,41 @@ export abstract class RunSession {
 			this.emit({ kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
 		}
 		this.pending.clear();
+	}
+
+	// -------------------------------------------------------------------------------------------
+	// Browser tools
+
+	/**
+	 * Whether a browser call may run (../browser.ts `browserGateFor`): VS Code's confirmation for
+	 * opening a page or navigating to an address, every call in plan mode. An "always" answer, of
+	 * any scope, lasts for this run (these runtimes keep no settings file of rules). True, or why not.
+	 */
+	protected async browserGate(tool: BrowserToolName, input: Record<string, unknown>, toolUseId: string | null): Promise<true | string> {
+		if (this.exited || this.stopped) return 'The run has ended.';
+		const gate = browserGateFor(tool, input, this.mode);
+		if (gate === 'allow' || this.browserGrants.has(tool)) return true;
+		const name = qualified(tool);
+		let requestId = '';
+		const d = await this.askUser(toolUseId, { name, input, kind: 'other', paths: [] }, { title: gate.title, detail: gate.message, canAlways: true, rules: [name], onRequest: (rid) => (requestId = rid) });
+		if (d === 'cancelled') return 'The user cancelled this browser action.';
+		if (d === 'deny') {
+			const note = this.denyNotes.get(requestId);
+			this.denyNotes.delete(requestId);
+			return note ? `The user declined this browser action. They said: ${note}` : 'The user declined this browser action.';
+		}
+		if (d !== 'allow') this.browserGrants.add(tool);
+		return true;
+	}
+
+	/** A browser call from Kingu's MCP server (../browserMcp.ts): asked as above, then sent to the app. */
+	async browserCall(tool: BrowserToolName, input: Record<string, unknown>): Promise<BrowserResult> {
+		const deps = this.init.browser;
+		if (!deps) return { content: [{ type: 'text', text: 'Browser tools are not on for this run.' }], isError: true };
+		const gate = await this.browserGate(tool, input, null);
+		if (gate !== true) return { content: [{ type: 'text', text: gate }], isError: true };
+		this.log(`browser ${tool}`);
+		return callBrowser(tool, input, deps);
 	}
 
 	// -------------------------------------------------------------------------------------------
@@ -428,6 +510,7 @@ export abstract class RunSession {
 		if (this.exited) return;
 		this.cancelPending();
 		this.asks.close();
+		this.init.browserMcp?.release();
 		this.closed();
 		this.flush();
 		this.log(`exited${this.stopped ? ' (stopped)' : ''}`);
@@ -444,6 +527,11 @@ export abstract class RunSession {
 export abstract class ProcessSession extends RunSession {
 	protected peer!: JsonRpcPeer;
 	private child!: Child;
+
+	/** A line the agent wrote outside the protocol; true: the subclass took it (not shown). */
+	protected outputLine(_line: string, _source: 'stdout' | 'stderr'): boolean {
+		return false;
+	}
 
 	/** The JSON-RPC framing (`header`); requests and notifications go to the subclass. */
 	protected abstract peerOptions(): Pick<PeerOptions, 'header'>;
@@ -466,11 +554,13 @@ export abstract class ProcessSession extends RunSession {
 						this.log(`${m} not handled: ${e instanceof Error ? e.message : 'error'}`);
 					}
 				},
-				onJunk: (line) => this.emit({ kind: 'raw', line: line.slice(0, 2000) })
+				onJunk: (line) => {
+					if (!this.outputLine(line, 'stdout')) this.emit({ kind: 'raw', line: line.slice(0, 2000) });
+				}
 			}
 		);
 		void (async () => {
-			for await (const line of linesOf(this.child.stderr)) if (line.trim()) this.emit({ kind: 'stderr', line });
+			for await (const line of linesOf(this.child.stderr)) if (line.trim() && !this.outputLine(line, 'stderr')) this.emit({ kind: 'stderr', line });
 		})().catch(() => {});
 		void this.child.exited.then(
 			(code) => this.finish(code),

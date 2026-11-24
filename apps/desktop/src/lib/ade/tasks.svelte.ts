@@ -68,7 +68,8 @@ import { quickOpenWorktree } from './quickOpen.svelte.ts';
 import { diffNotes } from './diffNotes.svelte.ts';
 import { pruneAcceptedHunks, sameMarks } from './hunkReview.ts';
 import { adeDialogs } from './dialogs.svelte.ts';
-import { isNameConflict, nextCandidate } from './createRetry';
+import { createCandidate, isNameConflict, nextCandidate } from './createRetry';
+import { splitBranchOverride } from './taskNaming.ts';
 import { commentOnLink } from './trackerApi.ts';
 import { issueBranchLeaf } from './issueBranch.ts';
 import { prefillPr, prFormProblem, type Commit, type PrForm } from './prForm.ts';
@@ -126,9 +127,18 @@ export type CreateInput = {
 	open?: boolean;
 	slugHint?: string;
 	slug?: string;
+	/** New Task → Advanced → Branch name (Orca's branchNameOverride): the whole branch name, `kingu.worktree.branchPrefix` not added. */
+	branch?: string;
+	/** The title is a generated name (taskNaming.ts), not the user's words: an empty prompt stays empty. */
+	nameGenerated?: boolean;
+	/**
+	 * The user typed the name (or took an issue's): the branch keeps it and is not renamed from the
+	 * work (Orca's quick-submit-preparation.ts renames only when the name field was empty).
+	 */
+	nameTyped?: boolean;
 	issue?: IssueLink;
-	/** `automation`: an automation started it (kingu.sidebar.hideAutomationTasks). */
-	origin?: 'automation';
+	/** `automation`: an automation started it; `cli`: `kingu task create` made the worktree. */
+	origin?: 'automation' | 'cli';
 	/** Composer attachments: path references appended to the CLI's prompt. */
 	attachments?: Attachment[];
 	/** Where the branch comes from: a new one from `base` (default), an existing branch, or a PR. */
@@ -142,6 +152,8 @@ export type CreateInput = {
 	parent?: string;
 	/** Orchestration: the task whose agent dispatched this one with `kingu task create`. */
 	dispatchedBy?: string;
+	/** `kingu task create --request-id`: the same id returns this task instead of making another. */
+	requestId?: string;
 	/** The agent picked in the create form (a `kingu.agent.cli` value); absent: the setting. */
 	agent?: string;
 };
@@ -448,7 +460,7 @@ class AdeTasks {
 
 	async #create(input: CreateInput, title: string, source: TaskSource, slug: string, hooks: CreateHooks, mine: Set<string>, taken: Set<string>): Promise<string | undefined> {
 		// A branch or PR you start from may need no instructions yet: its agent then starts without a prompt.
-		const prompt = input.prompt.trim() || (source.kind === 'new' ? title : '');
+		const prompt = input.prompt.trim() || (source.kind === 'new' && !input.nameGenerated ? title : '');
 		// Without a pick, fork from kingu.worktree.baseBranch or the folder's current branch (so merging back has a branch).
 		const base = input.base || this.defaultBase() || status.branch || 'HEAD';
 		const configured = adeCommand(input.agent, (k) => settings.get(k));
@@ -463,8 +475,16 @@ class AdeTasks {
 			status.flash(t('adeTasks.tasks.badBranchPrefix'), 10000);
 			return;
 		}
+		// Orca's branchNameOverride: the typed name is the branch as it stands, without the prefix setting.
+		const override = source.kind === 'new' && input.branch?.trim() ? splitBranchOverride(input.branch) : undefined;
+		if (override === null) {
+			status.flash(t('adeWorktrees.form.badBranchName', { branch: input.branch?.trim() ?? '' }), 10000);
+			return;
+		}
 		// A base checked out in a task worktree whose agent works is left alone unless the user says so.
-		const refresh = source.kind === 'new' && !input.parent && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
+		// A stacked task forks its parent's branch; a task only nested under one starts from the base.
+		const stacked = !!input.parent && base === this.branchOf(input.parent);
+		const refresh = source.kind === 'new' && !stacked && settings.get<boolean>('kingu.worktree.refreshBaseOnCreate') === true && base !== 'HEAD';
 		if (refresh) hooks.step?.('base');
 		if (refresh && (await this.#agentIdleOrConfirmed(null, base, t('adeTasks.tasks.step.refreshBase', { base })))) {
 			const note = await invoke<string | null>('worktree_refresh_base', { base }).catch((e) => t('adeTasks.tasks.refreshBaseFailed', { base, error: String(e) }));
@@ -478,11 +498,12 @@ class AdeTasks {
 			else if (source.kind === 'pr') pr = (await invoke<{ worktree: WorktreeInfo; pr: PrHead }>('worktree_create_from_pr', { slug, pr: source.pr })).pr;
 			else {
 				// Orca's retry on a name conflict: the branch or folder exists already (made outside
-				// Kingu, or left by an earlier task), so try `name-2`, `name-3`… up to 25 tries.
+				// Kingu, or left by an earlier task), so try `name-2`, `name-3`… up to 25 tries. A typed
+				// branch name takes the same suffix as the folder.
 				const first = slug;
 				for (let attempt = 0; ; ) {
 					try {
-						await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix, branch: issueBranchLeaf(slug, input.issue), sparse: input.sparse?.length ? input.sparse : undefined });
+						await invoke<WorktreeInfo>('worktree_create', { slug, base, prefix: override ? override.prefix : prefix, branch: override ? createCandidate(override.leaf, attempt) : issueBranchLeaf(slug, input.issue), sparse: input.sparse?.length ? input.sparse : undefined });
 						break;
 					} catch (e) {
 						const next = isNameConflict(String(e)) && !hooks.cancelled?.() ? nextCandidate(first, attempt, new Set([...taken, ...this.#reserved])) : null;
@@ -503,9 +524,9 @@ class AdeTasks {
 			status.flash(t('ade.creating.cancelled', { title }));
 			return;
 		}
-		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's or one you picked).
+		// Orca's autoRenameBranchFromWork: only a branch Kingu named from the title (not an issue's, a PR's, one you picked or one you typed).
 		// Attempts keep their `-a`, `-b` branches, so they read as one group.
-		const autoName = source.kind === 'new' && !input.slug && !input.group && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
+		const autoName = source.kind === 'new' && !input.slug && !override && !input.group && !input.nameTyped && settings.get<boolean>('kingu.worktree.autoRenameBranch') !== false && aiTextEnabled();
 		const task = newTask(
 			{
 				slug,
@@ -521,7 +542,8 @@ class AdeTasks {
 				group: input.group,
 				model: input.model,
 				parent: input.parent,
-				dispatchedBy: input.dispatchedBy
+				dispatchedBy: input.dispatchedBy,
+				requestId: input.requestId
 			},
 			Date.now()
 		);
@@ -959,7 +981,8 @@ class AdeTasks {
 		if (sessionId) await this.#patch(slug, { session_id: sessionId });
 		// A hibernated CLI (hibernation.svelte.ts) is awake again.
 		if (this.list.find((t) => t.slug === slug)?.hibernated_at) await this.#patch(slug, { hibernated_at: null });
-		let argv = applyLaunchSpec(launch.argv, spec);
+		// A launch with a prompt must not stop at the CLI's update screen (Orca's suppressStartupUpdatePrompt).
+		let argv = applyLaunchSpec(launch.argv, spec, 'prompt' in how);
 		// Orca's codexTerminalServerIsolation: this codex gets its own app-server, not the shared one.
 		const noDaemon = profile.id === 'codex' ? noDaemonProgram(argv, (k) => settings.get(k)) : null;
 		if (noDaemon && (await invoke<boolean>('codex_supports_no_daemon', { program: noDaemon }).catch(() => false))) argv = withNoDaemon(argv);

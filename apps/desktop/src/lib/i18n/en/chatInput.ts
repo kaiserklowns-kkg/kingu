@@ -42,6 +42,7 @@ export const chatInput = {
 	'chatInput.allowAll': 'Allow all',
 	'chatInput.allowAllConfirm':
 		'Allow all runs every tool call without asking, shell commands and file edits included, until you pick another level. It applies to this chat until Kingu quits. Continue?',
+	'chatInput.assistedConfirm': "Turn on Assisted permissions for this chat?\n\nBefore each tool call, a small Claude model reads the call (the tool and its input) through your Claude account and decides whether it can run without asking you. Commands Kingu's safety patterns flag, and anything the reviewer does not clearly approve, still ask you. Each review costs a small request.",
 	'chatInput.allowAllNote': 'Allow all: tools run without asking',
 
 	'chatInput.ctx.label': 'Context window: {percent}% used',

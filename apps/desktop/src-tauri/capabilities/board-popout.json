@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "board-popout",
+  "description": "The task board's pop-out window (windows.rs): it only hears the snapshots meant for it and names its window; its board_popout_* app commands are checked in Rust.",
+  "windows": [
+    "board-popout"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-set-title",
+    "core:window:allow-set-theme"
+  ]
+}

@@ -102,6 +102,9 @@ pub struct McpEntry {
   /// The user's own file always is; others once the user trusted exactly this definition.
   pub trusted: bool,
   pub error: Option<String>,
+  /// Why the MCP server policy (`mcp_policy`: `chat.mcp.*` and the managed allowlist) keeps it
+  /// from running; null: it may run.
+  pub blocked: Option<String>,
 }
 
 /// What the variables expand to.
@@ -252,6 +255,7 @@ pub fn file_entries(file: &Path, source: Source, root: Option<&Path>, vars: &Var
     hash,
     trusted,
     error,
+    blocked: None,
   };
   let config = match read_config(file) {
     Ok(Some(c)) => c,
@@ -436,7 +440,12 @@ pub async fn mcp_list(app: AppHandle, ws: Workspace) -> Result<Vec<McpEntry>, St
   tauri::async_runtime::spawn_blocking(move || {
     let config = config_dir(&app)?;
     let home = home();
-    Ok(list(&config, root.as_deref(), home.as_deref(), &|k| std::env::var(k).ok(), &load_trust(&config)))
+    let policy = super::mcp_policy::Policy::from_settings(&config);
+    let mut entries = list(&config, root.as_deref(), home.as_deref(), &|k| std::env::var(k).ok(), &load_trust(&config));
+    for e in &mut entries {
+      e.blocked = e.server.as_ref().and_then(|s| policy.check_server(&e.name, s).err());
+    }
+    Ok(entries)
   })
   .await
   .map_err(|e| e.to_string())?

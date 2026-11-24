@@ -13,7 +13,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { ARTIFACT_TOOL, type AgentEvent } from './protocol.ts';
 
@@ -276,12 +276,13 @@ const shape = {
 		.describe('Inline files the page references (at most 50, each up to 10 MB).')
 };
 
-/** Kingu's MCP server for one run in `cwd`. */
-export function artifactServer(deps: PublishDeps): McpSdkServerConfigWithInstance {
+/** Kingu's MCP server for one run in `cwd`; `extra`: more of Kingu's tools (browser.ts). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tools of any input shape
+export function artifactServer(deps: PublishDeps, extra: SdkMcpToolDefinition<any>[] = []): McpSdkServerConfigWithInstance {
 	return createSdkMcpServer({
 		name: ARTIFACT_SERVER,
 		version: '1.0.0',
 		alwaysLoad: true,
-		tools: [tool(ARTIFACT_TOOL.slice(`mcp__${ARTIFACT_SERVER}__`.length), DESCRIPTION, shape, (args) => publishArtifact(args as PublishInput, deps))]
+		tools: [tool(ARTIFACT_TOOL.slice(`mcp__${ARTIFACT_SERVER}__`.length), DESCRIPTION, shape, (args) => publishArtifact(args as PublishInput, deps)), ...extra]
 	});
 }

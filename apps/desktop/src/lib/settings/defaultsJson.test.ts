@@ -31,3 +31,12 @@ test('Default Keyboard Shortcuts (JSON): platform keys, layout notes, unbound co
 	expect(text).toContain('// - c.cmd: C');
 	expect(isDefaultsKey(DEFAULT_SETTINGS_KEY)).toBe(true);
 });
+
+test('a Windows key (VS Code `win:`) is used on Windows only', async () => {
+	const { keyOf } = await import('#lib/workbench/keys.ts');
+	const save = { key: 'cmd+k s', win: 'cmd+k cmd+shift+s', mac: undefined };
+	expect(keyOf(save, true, true)).toBe('cmd+k s');
+	expect(keyOf(save, false, true)).toBe('cmd+k cmd+shift+s');
+	expect(keyOf(save, false, false)).toBe('cmd+k s');
+	expect(keyOf({ key: 'f5' }, false, true)).toBe('f5');
+});

@@ -389,7 +389,7 @@ npx -y rea-agents@6.5.0 analyze-javascript-application \
 - policy ที่อ่านได้: rules `merged`, `unchanged`, `inactive`, `automationRuns`,
   `orchestrationWorkers`; `keepWhen: 'uncommitted' | 'any-local-files'`; ค่าเริ่มต้นทุก rule ปิด;
   `afterDays` 1–3650; per-project `off | custom`; `WORKSPACE_ARCHIVE_SUPPORTED = false`
-  (archive ยังไม่รองรับ จึงต้องปิด rule ที่จะ archive)
+  ใน Orca (archive ยังไม่รองรับ) แต่ Kingu map action `archive` ไปที่ `adeTasks.archive` ที่มีอยู่
 - `out/shared/agent-session/view/structured-agent-session-subagent-roster.js`,
   `.../journal/agent-session-journal-subagent-schema.js`, transcript subagent modules
   → subagent roster/visibility เป็นโมเดลข้อมูลของ session ไม่ใช่แค่ UI
@@ -428,17 +428,23 @@ UI) และมี safety model ที่ชัด: opt-in, preview ก่อ�
    Orca 1.4.259 ทำให้เรื่องนี้เป็น feature ที่ผู้ใช้เทียบได้ทันที. ลอก safety model ไม่ใช่แค่ปุ่ม:
    opt-in, preview ก่อนลบ, `keepWhen` (uncommitted/any-local-files), rules แยกเหตุผล
    (merged/unchanged/inactive/automation/orchestration), per-project `off|custom`, activity log,
-   กัน host ที่ติดต่อไม่ได้; อย่าเพิ่งทำ archive จนมีกลไกจริง
+   กัน host ที่ติดต่อไม่ได้; archive ใช้ `adeTasks.archive` (ซ่อนงาน ไม่ลบ worktree)
    **เริ่มแล้ว (2026-11-16):** port logic จริงจาก Orca 1.4.259 app.asar เป็น pure modules
-   `ade/workspaceCleanupPolicy.ts` (rules, per-project `global|project-custom|project-off`,
-   `inactiveActionSupported`), `workspaceCleanupEvaluation.ts` (grace 1 ชม., protection priority,
+   `ade/workspaceCleanupPolicy.ts` (rules, per-project `global|project-custom|project-off`),
+   `workspaceCleanupEvaluation.ts` (grace 1 ชม., protection priority,
    waiting, not-removable, delete/archive), `workspaceCleanupClassify.ts` (merged/unchanged/
    inactive/archived/automation-run/orchestration-worker reasons, blockers, fingerprint, host
    identity, queue/force/approval, dismissal), `workspaceCleanupVerdict.ts` (labels),
    `workspaceCleanupFilters.ts` (filter/browse state + tolerant codec + facet ranks),
    `workspaceCleanupAppliedFilters.ts` (filter chips), `workspaceCleanupCandidateFields.ts` และ
-   `workspaceCleanupRun.ts` (run/report limits) — 47 tests ตรง semantics ของ Orca; ยังไม่ wire
-   UI/settings/RPC/CLI/scanner เพราะไฟล์เหล่านั้น dirty
+   `workspaceCleanupRun.ts` (run/report limits) — port ครบและ wire แล้วทั้ง UI/settings/scanner/
+   RPC/CLI (`kingu cleanup preview|run|report|receipt`); มี safety เพิ่มจากการตรวจงานจริง:
+   worker rule ต้อง landed, กัน terminal ที่ยังเปิด, recheck ต่อ worktree ก่อนลบทุก target
+   (`workspace_cleanup_inspect`), ตรวจ merged MR/PR ของ GitLab และ Bitbucket Cloud นอกเหนือจาก
+   GitHub, Activity/`lastRunAt` เก็บถาวรใน localStorage แยกตามโฟลเดอร์ (เขียนผ่าน Web Lock ต่อโฟลเดอร์) และ
+   สแกน/วัดขนาดข้ามหน้าต่างพร้อมกันได้; pinned เป็น blocker; archive และ receipt/Activity แยก
+   `archived`; Activity/`lastRunAt` แยกตามโฟลเดอร์แล้ว. ยังเหลือ host/repo facets (หน้าต่างหนึ่งมี repo
+   เดียว), Bitbucket Server/Data Center, และการลอง UI ที่เหลือกับแอปจริง
 2. **Subagent / session visibility** — roster + focused view ต่อ subagent (task, live steps,
    final answer) แล้วกลับ main chat; โมเดลควรอยู่ใน session journal ไม่ใช่ UI state
 3. **Harness coverage** — Orca เพิ่ม Kimi Code ใน Chat; Kingu มี Kimi เป็น CLI profile

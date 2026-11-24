@@ -29,6 +29,7 @@ pub struct MessageBox {
   pub cancel_id: usize,
   /// Gets ⌘D on macOS, like NSAlert's own "Don't Save".
   #[serde(default)]
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
   pub dont_save_id: Option<usize>,
 }
 
@@ -45,6 +46,7 @@ impl MessageBox {
 
   /// Which button gets Escape: none when it is also the only (default) button, since Escape would
   /// then replace its Return key equivalent.
+  #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
   fn escape_button(&self) -> Option<usize> {
     (self.buttons.len() > 1).then_some(self.cancel_id)
   }

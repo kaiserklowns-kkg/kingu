@@ -15,6 +15,7 @@
 		"tauri": "tauri",
 		"build:sidecar": "bun ../agent-host/scripts/build-sidecar.ts",
 		"build:ptyd": "bun ../../tools/build-ptyd.ts",
+		"build:ptyd-host": "bun ../../tools/build-ptyd-host.ts",
 		"build:cli": "bun ../../tools/build-cli.ts"
 	},
 	"devDependencies": {
@@ -43,6 +44,7 @@
 		"@xterm/addon-search": "0.16.0",
 		"@xterm/xterm": "6.0.0",
 		"emmet": "2.4.11",
+		"emojibase-data": "17.0.0",
 		"katex": "0.18.10",
 		"marked": "^18.1.1",
 		"mermaid": "11.17.2",

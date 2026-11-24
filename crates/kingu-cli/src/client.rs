@@ -24,7 +24,7 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
     Command::Help | Command::Version => return Ok(None),
     Command::Status => (protocol::METHOD_STATUS, json!({})),
     Command::TaskList => (protocol::METHOD_TASK_LIST, json!({})),
-    Command::TaskCreate { title, prompt, base, mode, background } => {
+    Command::TaskCreate { title, prompt, base, mode, background, request_id } => {
       let prompt = match prompt.as_deref() {
         Some("-") => stdin_prompt.unwrap_or_default(),
         Some(p) => p.to_owned(),
@@ -34,7 +34,9 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
         return Err(tr(Msg::PromptTooLarge, &[("kb", &(MAX_PROMPT / 1024))]));
       }
       // `cwd`: the app picks the window, and a caller inside a task's worktree dispatches a sub-task.
-      (protocol::METHOD_TASK_CREATE, json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() }))
+      let mut params = json!({ "title": title, "prompt": prompt, "base": base, "mode": mode, "open": !background, "cwd": cwd.display().to_string() });
+      if let Some(id) = request_id { params["requestId"] = json!(id); }
+      (protocol::METHOD_TASK_CREATE, params)
     }
     Command::TaskOpen { slug } => (protocol::METHOD_TASK_OPEN, json!({ "slug": slug })),
     // `cwd`: without a slug, the app finds the task whose worktree this runs in.
@@ -44,6 +46,7 @@ pub fn request_of(cmd: &Command, cwd: &Path, stdin_prompt: Option<String>) -> Re
       let id = request_id.clone().unwrap_or_else(new_request_id);
       (protocol::METHOD_CLEANUP_RUN, json!({ "cwd": cwd.display().to_string(), "requestId": id }))
     }
+    Command::CleanupReport => (protocol::METHOD_CLEANUP_REPORT, json!({ "cwd": cwd.display().to_string() })),
     Command::CleanupReceipt { request_id } => (protocol::METHOD_CLEANUP_RECEIPT, json!({ "cwd": cwd.display().to_string(), "requestId": request_id })),
     Command::Open { path, line, column } => {
       let p = Path::new(path);
@@ -185,13 +188,16 @@ fn render_cleanup(method: &str, result: &Value) -> String {
     if tasks.is_empty() {
       return tr(Msg::CleanupNothing, &[]);
     }
-    let ready = tasks.iter().filter(|t| t["action"] == "delete").count();
+    let ready = tasks.iter().filter(|t| t["action"] != "keep").count();
     let head = tr(Msg::CleanupPreviewHead, &[("ready", &ready), ("kept", &(tasks.len() - ready)), ("rules", &result["rules"].as_str().unwrap_or(""))]);
     let lines = tasks.iter().map(|t| format!("{}\t{}\t{}", t["slug"].as_str().unwrap_or(""), t["action"].as_str().unwrap_or(""), t["label"].as_str().unwrap_or("")));
     return std::iter::once(head).chain(lines).collect::<Vec<_>>().join("\n");
   }
-  let mut out = vec![tr(Msg::CleanupRunDone, &[("removed", &rows("removed").len()), ("failed", &rows("failed").len()), ("kept", &result["kept"].as_u64().unwrap_or(0))])];
-  out.extend(rows("removed").iter().map(|s| format!("  {}", s.as_str().unwrap_or(""))));
+  let mut out = vec![tr(
+    Msg::CleanupRunDone,
+    &[("removed", &rows("removed").len()), ("archived", &rows("archived").len()), ("failed", &rows("failed").len()), ("kept", &result["kept"].as_u64().unwrap_or(0))],
+  )];
+  out.extend(rows("removed").iter().chain(rows("archived")).map(|s| format!("  {}", s.as_str().unwrap_or(""))));
   out.extend(rows("failed").iter().map(|f| tr(Msg::CleanupFailedRow, &[("slug", &f["slug"].as_str().unwrap_or("")), ("error", &f["error"].as_str().unwrap_or(""))])));
   out.push(tr(Msg::CleanupRequestId, &[("id", &result["requestId"].as_str().unwrap_or(""))]));
   if result["replayed"] == true {
@@ -200,8 +206,86 @@ fn render_cleanup(method: &str, result: &Value) -> String {
   out.join("\n")
 }
 
+/// `ms` (milliseconds since 1970, UTC) as `YYYY-MM-DD HH:MM`, `offset` seconds east of UTC.
+fn format_time(ms: i64, offset: i64) -> String {
+  let secs = ms.div_euclid(1000) + offset;
+  let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+  // Howard Hinnant's civil_from_days.
+  let z = days + 719_468;
+  let era = z.div_euclid(146_097);
+  let doe = z - era * 146_097;
+  let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  let mp = (5 * doy + 2) / 153;
+  let day = doy - (153 * mp + 2) / 5 + 1;
+  let month = if mp < 10 { mp + 3 } else { mp - 9 };
+  let year = yoe + era * 400 + i64::from(month <= 2);
+  format!("{year:04}-{month:02}-{day:02} {:02}:{:02}", rem / 3600, rem % 3600 / 60)
+}
+
+/// The local time zone's offset from UTC at `ms`, in seconds (the C library knows the zone and DST).
+#[cfg(unix)]
+fn local_offset(ms: i64) -> i64 {
+  let t = ms.div_euclid(1000) as libc::time_t;
+  // SAFETY: `localtime_r` writes into `tm`, which outlives the call; null means it could not convert.
+  let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+  if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() { 0 } else { tm.tm_gmtoff as i64 }
+}
+
+#[cfg(not(unix))]
+fn local_offset(_ms: i64) -> i64 {
+  0
+}
+
+/// `kingu cleanup report`: compact lines; `offset` gives the time zone at a moment (local, or fixed in tests).
+fn render_cleanup_report(result: &Value, offset: &dyn Fn(i64) -> i64) -> String {
+  let time = |v: &Value| v.as_i64().map(|ms| format_time(ms, offset(ms)));
+  let rules: Vec<&str> = result["rules"].as_array().map(Vec::as_slice).unwrap_or_default().iter().filter_map(Value::as_str).collect();
+  let rules = match (result["source"].as_str(), rules.is_empty()) {
+    (Some("project-off"), _) => tr(Msg::CleanupRulesOffProject, &[]),
+    (_, true) => tr(Msg::CleanupRulesOff, &[]),
+    _ => rules.join(", "),
+  };
+  let auto = result["auto"] == true;
+  let state = tr(if auto { Msg::CleanupOn } else { Msg::CleanupOff }, &[]);
+  let last = time(&result["lastRunAt"]).unwrap_or_else(|| tr(Msg::CleanupNever, &[]));
+  let next = match time(&result["nextRunAt"]) {
+    Some(t) => t,
+    None if auto => tr(Msg::CleanupNextWhenOpen, &[]),
+    None => tr(Msg::CleanupOff, &[]),
+  };
+  let mut out = vec![
+    tr(Msg::CleanupReportRules, &[("rules", &rules)]),
+    tr(Msg::CleanupReportAuto, &[("state", &state)]),
+    tr(Msg::CleanupReportLastRun, &[("time", &last)]),
+    tr(Msg::CleanupReportNextCheck, &[("time", &next)]),
+  ];
+  let activity = result["activity"].as_array().map(Vec::as_slice).unwrap_or_default();
+  if activity.is_empty() {
+    out.push(tr(Msg::CleanupNoActivity, &[]));
+    return out.join("\n");
+  }
+  out.push(tr(Msg::CleanupReportActivity, &[]));
+  for a in activity {
+    let source = match a["source"].as_str() {
+      Some("auto") => tr(Msg::CleanupSourceAuto, &[]),
+      Some("cli") => tr(Msg::CleanupSourceCli, &[]),
+      Some("dialog") => tr(Msg::CleanupSourceDialog, &[]),
+      other => other.unwrap_or("").to_owned(),
+    };
+    let count = |key: &str| a[key].as_array().map_or(0, Vec::len);
+    let row = tr(
+      Msg::CleanupActivityRow,
+      &[("time", &time(&a["at"]).unwrap_or_default()), ("source", &source), ("removed", &count("removed")), ("archived", &count("archived")), ("failed", &count("failed")), ("kept", &a["kept"].as_u64().unwrap_or(0))],
+    );
+    out.push(format!("  {row}"));
+  }
+  out.join("\n")
+}
+
 pub fn render(method: &str, result: &Value) -> String {
   match method {
+    protocol::METHOD_CLEANUP_REPORT => render_cleanup_report(result, &local_offset),
     protocol::METHOD_CLEANUP_PREVIEW | protocol::METHOD_CLEANUP_RUN | protocol::METHOD_CLEANUP_RECEIPT => render_cleanup(method, result),
     protocol::METHOD_STATUS => {
       let mut out = format!("Kingu {} (pid {})", result["app_version"].as_str().unwrap_or("?"), result["pid"].as_u64().unwrap_or(0));
@@ -295,6 +379,37 @@ mod tests {
   }
 
   #[test]
+  fn cleanup_report_asks_the_window_and_renders_rules_schedule_and_runs() {
+    let cwd = Path::new("/repo");
+    let (method, params) = request_of(&Command::CleanupReport, cwd, None).unwrap().unwrap();
+    assert_eq!(method, protocol::METHOD_CLEANUP_REPORT);
+    assert_eq!(method, "workspaceCleanup.report");
+    assert_eq!(params["cwd"], "/repo");
+
+    // 2026-11-16 07:03 UTC, shown at UTC+7.
+    let at = 1_794_812_580_000_i64;
+    let report = json!({
+      "rules": ["merged", "inactive"], "source": "global", "auto": true, "lastRunAt": at, "nextRunAt": at + 3_600_000,
+      "activity": [
+        { "at": at, "source": "auto", "removed": ["a", "b"], "failed": [], "kept": 5 },
+        { "at": at - 60_000, "source": "cli", "removed": [], "archived": ["d"], "failed": [{ "slug": "c", "error": "x" }], "kept": 1 }
+      ]
+    });
+    assert_eq!(
+      render_cleanup_report(&report, &|_| 7 * 3600),
+      "rules: merged, inactive\nautomatic cleanup: on\nlast run: 2026-11-16 14:03\nnext check: 2026-11-16 15:03\nruns since this window opened (newest first):\n  2026-11-16 14:03  automatic  removed 2, archived 0, failed 0, kept 5\n  2026-11-16 14:02  command line  removed 0, archived 1, failed 1, kept 1"
+    );
+
+    let empty = json!({ "rules": [], "source": "project-off", "auto": true, "lastRunAt": null, "nextRunAt": null, "activity": [] });
+    assert_eq!(
+      render_cleanup_report(&empty, &|_| 0),
+      "rules: off (this project)\nautomatic cleanup: on\nlast run: never\nnext check: as soon as a folder is open\nno cleanup has run since this window opened"
+    );
+    let off = json!({ "rules": [], "source": "global", "auto": false, "lastRunAt": null, "nextRunAt": null, "activity": [] });
+    assert!(render_cleanup_report(&off, &|_| 0).starts_with("rules: off\nautomatic cleanup: off\nlast run: never\nnext check: off\n"));
+  }
+
+  #[test]
   fn builds_requests_with_absolute_paths_and_stdin_prompts() {
     let cwd = Path::new("/repo");
     let open = Command::Open { path: "src/a.ts".into(), line: Some(3), column: None };
@@ -302,10 +417,13 @@ mod tests {
     assert_eq!((m, p), (protocol::METHOD_OPEN, json!({ "path": "/repo/src/a.ts", "line": 3, "column": null })));
     let (_, p) = request_of(&Command::Open { path: "/etc/x".into(), line: None, column: None }, cwd, None).unwrap().unwrap();
     assert_eq!(p["path"], "/etc/x");
-    let create = Command::TaskCreate { title: "Fix".into(), prompt: Some("-".into()), base: None, mode: Some("terminal".into()), background: true };
+    let create = Command::TaskCreate { title: "Fix".into(), prompt: Some("-".into()), base: None, mode: Some("terminal".into()), background: true, request_id: None };
     let (m, p) = request_of(&create, cwd, Some("from stdin".into())).unwrap().unwrap();
     assert_eq!((m, p), (protocol::METHOD_TASK_CREATE, json!({ "title": "Fix", "prompt": "from stdin", "base": null, "mode": "terminal", "open": false, "cwd": "/repo" })));
-    let big = Command::TaskCreate { title: "x".into(), prompt: Some("a".repeat(MAX_PROMPT + 1)), base: None, mode: None, background: false };
+    let retry = Command::TaskCreate { title: "Fix".into(), prompt: None, base: None, mode: None, background: false, request_id: Some("retry_1".into()) };
+    let (_, p) = request_of(&retry, cwd, None).unwrap().unwrap();
+    assert_eq!(p["requestId"], "retry_1");
+    let big = Command::TaskCreate { title: "x".into(), prompt: Some("a".repeat(MAX_PROMPT + 1)), base: None, mode: None, background: false, request_id: None };
     assert!(request_of(&big, cwd, None).is_err());
     assert!(request_of(&Command::Help, cwd, None).unwrap().is_none());
     let (m, p) = request_of(&Command::Notify { message: "done".into(), title: None }, cwd, None).unwrap().unwrap();

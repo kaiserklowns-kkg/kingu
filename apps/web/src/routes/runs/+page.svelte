@@ -1,9 +1,12 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import { timeAgo } from '#lib/board.ts';
 	import { costTotals, formatCost } from '#lib/runs.ts';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form }: PageProps = $props();
+	const canClose = (r: { created_by: string | null }) =>
+		data.me?.role === 'owner' || data.me?.role === 'lead' || (data.me?.role === 'dev' && r.created_by === data.me.user_id);
 
 	const totals = $derived(costTotals(data.runs));
 	const groups = $derived([
@@ -26,6 +29,8 @@
 
 <main class="mx-auto max-w-7xl px-4 py-4">
 	<h1 class="mb-4 text-lg font-semibold text-(--vscode-tab-activeForeground)">ประวัติการรัน</h1>
+	{#if form?.error}<p role="alert" class="mb-3 text-(--vscode-errorForeground)">{form.error}</p>{/if}
+	{#if form?.closed}<p role="status" class="mb-3">ปิดการรันแล้ว</p>{/if}
 	{#if data.runs.length === 0}
 		<p class="text-(--vscode-descriptionForeground)">ยังไม่มีการรันเอเจนต์</p>
 	{:else}
@@ -81,7 +86,23 @@
 							<td class="px-3 py-2">{r.adapter}</td>
 							<td class="px-3 py-2">{r.model ?? '—'}</td>
 							<td class="px-3 py-2 whitespace-nowrap"><time datetime={r.started_at} title={new Date(r.started_at).toLocaleString('th-TH')}>{timeAgo(r.started_at)}</time></td>
-							<td class="px-3 py-2 whitespace-nowrap">{duration(r.started_at, r.ended_at)}</td>
+							<td class="px-3 py-2 whitespace-nowrap">
+								{duration(r.started_at, r.ended_at)}
+								{#if !r.ended_at && canClose(r)}
+									<form
+										method="POST"
+										action="?/close"
+										use:enhance
+										class="ml-1 inline"
+										onsubmit={(e) => {
+											if (!confirm('ปิดการรันนี้? ใช้เมื่อเครื่องที่รันไม่ได้รายงานว่าจบ (เช่นแอปปิดไปกลางคัน)')) e.preventDefault();
+										}}
+									>
+										<input type="hidden" name="id" value={r.id} />
+										<button type="submit" class="rounded-sm border border-(--vscode-widget-border) px-1.5 text-xs hover:bg-(--vscode-toolbar-hoverBackground)">ปิด</button>
+									</form>
+								{/if}
+							</td>
 							<td class="px-3 py-2">{r.exit_reason ?? '—'}</td>
 							<td class="px-3 py-2 text-right font-mono whitespace-nowrap">{fmt.format(r.input_tokens)} / {fmt.format(r.output_tokens)}</td>
 							<td class="px-3 py-2 text-right font-mono whitespace-nowrap">{formatCost(r.cost_usd)}</td>

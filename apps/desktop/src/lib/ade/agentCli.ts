@@ -68,12 +68,50 @@ export type LaunchOptions = {
 	env?: string[];
 	/** Orca's claudeAgentTeamsMode `in-process`: `--teammate-mode in-process` + the experimental env flag. */
 	claudeTeams?: boolean;
+	/** The profile whose startup update prompt is kept away (a launch Kingu hands a prompt; see UPDATE_PROMPT_ARGS). */
+	noUpdatePrompt?: string;
 };
 
 /**
+ * Orca's STARTUP_UPDATE_PROMPT_SUPPRESSION_ARGS / _ENV (shared/agent-launch/startup/
+ * tui-agent-launch-command.ts): a CLI started with a prompt nobody is watching must not stop at
+ * its "update available" screen. Enter on Codex's picks "Update now", which installs and exits,
+ * and a pasted prompt would answer it. Only for a launch that carries a prompt, never a resume or
+ * a bare start (Orca: launch-only).
+ */
+export const UPDATE_PROMPT_ARGS: Readonly<Record<string, readonly string[]>> = {
+	codex: ['-c', 'check_for_update_on_startup=false'],
+	aider: ['--no-check-update', '--no-show-release-notes'],
+	cursor: ['--disable-auto-update']
+};
+export const UPDATE_PROMPT_ENV: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+	claude: { DISABLE_AUTOUPDATER: '1' },
+	opencode: { OPENCODE_DISABLE_AUTOUPDATE: 'true' },
+	opencode2: { OPENCODE_DISABLE_AUTOUPDATE: 'true' },
+	antigravity: { AGY_CLI_DISABLE_AUTO_UPDATE: 'true' },
+	grok: { GROK_DISABLE_AUTOUPDATER: '1' },
+	pi: { PI_SKIP_VERSION_CHECK: '1' },
+	kimi: { KIMI_CODE_NO_AUTO_UPDATE: '1', KIMI_CLI_NO_AUTO_UPDATE: '1' }
+};
+
+/** The words after the program with the profile's update-prompt arguments, unless they are there already. */
+function withoutUpdatePrompt(profileId: string, rest: readonly string[]): string[] {
+	const args = UPDATE_PROMPT_ARGS[profileId];
+	if (!args) return [...rest];
+	// Aider's last boolean flag wins, even over a configured --check-update: they go last, before a `--`.
+	if (profileId === 'aider') {
+		const end = rest.indexOf('--');
+		return end < 0 ? [...rest, ...args] : [...rest.slice(0, end), ...args, ...rest.slice(end)];
+	}
+	const marker = args[args.length - 1].split('=', 1)[0];
+	return rest.some((a) => a.includes(marker)) ? [...rest] : [...args, ...rest];
+}
+
+/**
  * A profile's launch argv with the user's launch settings: the program word replaced, the env
- * added through `env NAME=value …` (before the profile's own assignments, which win), and for
- * claude the in-process agent teams flag. Pure.
+ * added through `env NAME=value …` (before the profile's own assignments, which win), for
+ * claude the in-process agent teams flag, and with `noUpdatePrompt` that profile's update-prompt
+ * arguments and environment. Pure.
  */
 export function withLaunchOptions(argv: readonly string[], o: LaunchOptions): string[] {
 	let i = 0;
@@ -83,8 +121,12 @@ export function withLaunchOptions(argv: readonly string[], o: LaunchOptions): st
 		while (i < argv.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i])) prefix.push(argv[i++]);
 	}
 	if (i >= argv.length) return [...argv];
-	const env = [...(o.env ?? []), ...(o.claudeTeams ? ['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1'] : []), ...prefix];
-	const rest = argv.slice(i + 1);
+	const mine = [...(o.env ?? []), ...(o.claudeTeams ? ['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1'] : []), ...prefix];
+	// The update-prompt env goes first and never over a name the launch already sets (yours wins).
+	const named = new Set(mine.map((a) => a.slice(0, a.indexOf('='))));
+	const quiet = Object.entries((o.noUpdatePrompt && UPDATE_PROMPT_ENV[o.noUpdatePrompt]) || {}).filter(([k]) => !named.has(k)).map(([k, v]) => `${k}=${v}`);
+	const env = [...quiet, ...mine];
+	const rest = o.noUpdatePrompt ? withoutUpdatePrompt(o.noUpdatePrompt, argv.slice(i + 1)) : argv.slice(i + 1);
 	const teams = o.claudeTeams && !rest.some((a) => a === '--teammate-mode' || a.startsWith('--teammate-mode=')) ? ['--teammate-mode', 'in-process'] : [];
 	return [...(env.length ? ['env', ...env] : []), o.program ?? argv[i], ...teams, ...rest];
 }
@@ -97,8 +139,11 @@ export function withLaunchOptions(argv: readonly string[], o: LaunchOptions): st
 export function launchOptions(profileId: string, get: (id: string) => unknown): LaunchOptions | string {
 	const program = cmdOverride(get('kingu.agent.cmdOverrides') as Record<string, unknown> | undefined, profileId);
 	if (program === null) return t('ade.agentCli.badOverride', { setting: `kingu.agent.cmdOverrides.${profileId}` });
-	const env = profileId === 'custom' ? [] : envAssignments(get(agentEnvSetting(profileId)) as Record<string, unknown> | undefined);
-	if (env === null) return t('ade.agentCli.badEnv', { setting: agentEnvSetting(profileId) });
+	const own = profileId === 'custom' ? [] : envAssignments(get(agentEnvSetting(profileId)) as Record<string, unknown> | undefined);
+	if (own === null) return t('ade.agentCli.badEnv', { setting: agentEnvSetting(profileId) });
+	// Orca's resolveTuiAgentLaunchEnv: the permission env first, and never over a name you set.
+	const named = new Set(own.map((a) => a.slice(0, a.indexOf('='))));
+	const env = [...permissionEnv(profileId, cliPermissions(get)).filter((a) => !named.has(a.slice(0, a.indexOf('=')))), ...own];
 	return { program, env, claudeTeams: profileId === 'claude' && get('kingu.agent.claudeAgentTeams') === 'in-process' };
 }
 
@@ -116,7 +161,8 @@ export function enabledBins(found: readonly string[], disabled: readonly unknown
 
 /**
  * Each profile's skip-every-permission-prompt flags (Orca's YOLO_TUI_AGENT_ARGS), which
- * `kingu.agent.cliPermissions` = `yolo` adds. opencode has none; the custom profile gets none.
+ * `kingu.agent.cliPermissions` = `yolo` adds. opencode has none (Goose's is an env var, YOLO_ENV);
+ * the custom profile gets none.
  */
 export const YOLO_ARGS: Readonly<Record<string, readonly string[]>> = {
 	claude: ['--dangerously-skip-permissions'],
@@ -154,11 +200,103 @@ export const YOLO_ARGS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * Each profile's "run what is safe, ask for the rest" flags (Orca's AUTO_TUI_AGENT_ARGS), which
+ * `kingu.agent.cliPermissions` = `auto` adds. Only these three have such a mode; every other CLI
+ * keeps asking under `auto` (Orca leaves them on their earlier choice; Kingu has one setting, so
+ * that is manual).
+ */
+export const AUTO_ARGS: Readonly<Record<string, readonly string[]>> = {
+	claude: ['--permission-mode', 'auto'],
+	codex: ['--approve-for-me'],
+	// Cursor's server classifier runs safe tool calls and asks for the rest.
+	cursor: ['--auto-review']
+};
+
+/** The environment `yolo` adds (Orca's YOLO_TUI_AGENT_ENV): Goose's bypass is an env var, not a flag. */
+export const YOLO_ENV: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+	goose: { GOOSE_MODE: 'auto' }
+};
+
+export type CliPermissions = 'manual' | 'auto' | 'yolo';
+
+/** `kingu.agent.cliPermissions`; anything but `auto` / `yolo` is manual (no flag, no env). */
+export function cliPermissions(get: (id: string) => unknown): CliPermissions {
+	const v = get('kingu.agent.cliPermissions');
+	return v === 'yolo' || v === 'auto' ? v : 'manual';
+}
+
+/** The flags `mode` adds for a profile (Orca's agentPermissionArgs); none under manual. */
+export function permissionArgs(profileId: string, mode: CliPermissions): readonly string[] {
+	return (mode === 'yolo' ? YOLO_ARGS[profileId] : mode === 'auto' ? AUTO_ARGS[profileId] : undefined) ?? [];
+}
+
+/** The `NAME=value` words `mode` adds for a profile (Orca's agentPermissionEnv: only the bypass has any). */
+export function permissionEnv(profileId: string, mode: CliPermissions): string[] {
+	return mode === 'yolo' ? Object.entries(YOLO_ENV[profileId] ?? {}).map(([k, v]) => `${k}=${v}`) : [];
+}
+
+// Orca's Ask / Accept edits recipes (tui-agent-permission-choice.ts): Kingu has no such mode, but
+// their options count as "this command already sets a permission".
+const OTHER_PERMISSION_ARGS: Readonly<Record<string, readonly string[]>> = {
+	claude: ['--permission-mode'],
+	grok: ['--permission-mode'],
+	codex: ['-a', '-s']
+};
+/** Orca's EXTRA_CARRIERS (permissions/agent-permission-args.ts): other options of a CLI that set its permission policy. */
+const EXTRA_CARRIERS: Readonly<Record<string, readonly string[]>> = {
+	claude: [
+		'--permission-mode',
+		'--dangerously-skip-permissions',
+		'--allow-dangerously-skip-permissions',
+		'--permission-prompt-tool',
+		'--permission-prompts',
+		'--allowedTools',
+		'--allowed-tools',
+		'--disallowedTools',
+		'--disallowed-tools'
+	],
+	codex: ['-a', '--ask-for-approval', '-s', '--sandbox', '--yolo', '--not-so-yolo', '--full-auto'],
+	grok: ['--permission-mode', '--always-approve', '--yolo', '--dangerously-skip-permissions'],
+	gemini: ['--approval-mode', '-y'],
+	// Cursor exits when --auto-review meets --force (or its -f, --yolo aliases).
+	cursor: ['-f', '--force'],
+	// Kimi rejects --yolo (and its aliases) combined with --auto.
+	kimi: ['-y', '--yolo', '--yes', '--auto-approve']
+};
+const CODEX_PERMISSION_CONFIG = ['approval_policy', 'sandbox_mode', 'approvals_reviewer', 'sandbox_workspace_write'];
+
+/** An option's name: codex's joined short forms (`-aon-request`) and `--name=value` cut down to the name. */
+function optionName(profileId: string, token: string): string {
+	if ((profileId === 'codex' && /^-[acs].+/.test(token) && !token.startsWith('--')) || (/^-m.+/.test(token) && !token.startsWith('--'))) return token.slice(0, 2);
+	return token.split('=', 1)[0];
+}
+
+/**
+ * Whether `args` (the words after the program) already choose the CLI's permission policy (Orca's
+ * `agentArgsSetPermission`): one of its permission options, or for codex a `-c` override of an
+ * approval / sandbox key. Then Kingu adds no permission flag of its own: the CLI would refuse the
+ * pair (cursor, kimi) or run on whichever came last. Words after `--` are a prompt, not options.
+ */
+export function setsPermission(profileId: string, args: readonly string[]): boolean {
+	const carriers = new Set([...(YOLO_ARGS[profileId] ?? []), ...(AUTO_ARGS[profileId] ?? []), ...(OTHER_PERMISSION_ARGS[profileId] ?? []), ...(EXTRA_CARRIERS[profileId] ?? [])].filter((a) => a.startsWith('-')));
+	const end = args.indexOf('--');
+	const options = end < 0 ? args : args.slice(0, end);
+	return options.some((token, i) => {
+		const name = optionName(profileId, token);
+		if (carriers.has(name)) return true;
+		if (profileId !== 'codex' || (name !== '-c' && name !== '--config')) return false;
+		const value = token !== name ? token.slice(name.length + (token[name.length] === '=' ? 1 : 0)) : options[i + 1];
+		return !!value?.includes('=') && CODEX_PERMISSION_CONFIG.includes(value.slice(0, value.indexOf('=')).trim().split('.')[0]);
+	});
+}
+
+/**
  * The command a new terminal task runs: `kingu.agent.cli` (default `claude`), plus the extra
  * arguments set for that CLI's profile (`kingu.agent.args.<id>`), so switching CLIs with the
- * picker keeps each one's flags. With `kingu.agent.cliPermissions` = `yolo` (Orca's Agent
- * Permissions), a profile whose arguments you left empty gets its bypass flag, unless the command
- * already has it; arguments you set win, as in Orca. Null when either is not a plain command.
+ * picker keeps each one's flags. With `kingu.agent.cliPermissions` = `yolo` or `auto` (Orca's
+ * Agent Permissions), a profile whose arguments you left empty gets that mode's flags, unless the
+ * command already sets its permission policy (`setsPermission`); arguments you set win. The
+ * default, `manual`, adds nothing. Null when either is not a plain command.
  */
 export function agentCommand(get: (id: string) => string | undefined): string[] | null {
 	const base = parseCliCommand(get('kingu.agent.cli') || 'claude');
@@ -166,8 +304,9 @@ export function agentCommand(get: (id: string) => string | undefined): string[] 
 	const profile = profileOf(base);
 	const extra = profile.id === 'custom' ? '' : (get(agentArgsSetting(profile.id)) ?? '').trim();
 	if (!extra) {
-		const yolo = get('kingu.agent.cliPermissions') === 'yolo' ? YOLO_ARGS[profile.id] : undefined;
-		return yolo && !base.includes(yolo[0]) ? [...base, ...yolo] : base;
+		const flags = permissionArgs(profile.id, cliPermissions(get));
+		const at = base.findIndex((w) => (w.split('/').pop() ?? w) === programOf(base));
+		return flags.length && !setsPermission(profile.id, base.slice(at + 1)) ? [...base, ...flags] : base;
 	}
 	const args = parseCliCommand(extra);
 	return args ? [...base, ...args] : null;

@@ -40,7 +40,7 @@
 	import { open } from '@tauri-apps/plugin-dialog';
 	import Codicon from '#lib/workbench/Codicon.svelte';
 	import { codiconOf } from './chatIcons.ts';
-	import PopupMenu, { menuItem } from '#lib/workbench/PopupMenu.svelte';
+	import PopupMenu, { menuItem, menuSeparator } from '#lib/workbench/PopupMenu.svelte';
 	import { status } from '#lib/workbench/status.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import { addAttachments, type Attachment } from './attachments.ts';
@@ -50,6 +50,7 @@
 	import { mentionQuery, removeMention, type MentionScope } from './chatContext.ts';
 	import { completeCommand, filterCommands, moveActive, slashQuery, type SlashItem } from './slashCommands.ts';
 	import { sendHowFor, sendMenu, type QueueDefault, type SendHow } from './requestQueuing.ts';
+	import { keepFloatingToggleClear } from '#lib/workbench/floatingKeepClear.svelte.ts';
 	import {
 		approvalKey,
 		browseHistory,
@@ -103,7 +104,8 @@
 		tint,
 		onpastetext,
 		vscode = false,
-		editing = false
+		editing = false,
+		onsendlater
 	}: {
 		value?: string;
 		placeholder: string;
@@ -115,6 +117,8 @@
 		attachments?: Attachment[];
 		/** `how`: what to do while a turn runs (only given then). */
 		onsubmit: (text: string, attachments: Attachment[], how?: SendHow) => void;
+		/** Send Later... (VS Code 1.147's, in the Send button's menu): schedule what is typed; `at` places the time picker. */
+		onsendlater?: (text: string, attachments: Attachment[], at: { x: number; y: number }) => void;
 		/** The bottom bar's left controls (the mode pill, the model label), told what fits. */
 		left?: Snippet<[Layout]>;
 		/** More bottom-bar controls before Add Context and the paperclip (the context ring). */
@@ -512,7 +516,11 @@
 	}
 
 	const SEND_LABEL: Record<SendHow, () => string> = { queue: () => t('chatInput.send.queue'), steer: () => t('chatInput.send.steer'), stop: () => t('chatInput.send.stop') };
-	const sendItems = $derived(sendMenu(queueDefault).map((r) => menuItem(r.how, SEND_LABEL[r.how](), { keyLabel: r.how === 'stop' ? KEYS.cmd : r.key === 'enter' ? '⏎' : KEYS.alt })));
+	const sendItems = $derived([
+		// While a turn runs: Add to Queue / Steer / Stop and Send; Send Later after them (VS Code's ChatExecuteSecondary).
+		...(action === 'queue' ? sendMenu(queueDefault).map((r) => menuItem(r.how, SEND_LABEL[r.how](), { keyLabel: r.how === 'stop' ? KEYS.cmd : r.key === 'enter' ? '⏎' : KEYS.alt })) : []),
+		...(onsendlater ? [...(action === 'queue' ? [menuSeparator] : []), menuItem('later', t('sendLater.menu'))] : [])
+	]);
 	const primaryTitle = $derived(
 		action === 'stop'
 			? `${t('chatView.stop')} (${KEYS.stop})`
@@ -527,9 +535,25 @@
 	}
 
 	function onprimarymenu(e: MouseEvent) {
-		if (action !== 'queue') return;
+		if (!(action === 'queue' || (action === 'send' && onsendlater))) return;
 		e.preventDefault();
-		sendMenuAt = { x: e.clientX - 200, y: Math.max(4, e.clientY - sendItems.length * 26 - 14) };
+		sendMenuAt = lastMenuAt = { x: e.clientX - 200, y: Math.max(4, e.clientY - sendItems.length * 26 - 14) };
+	}
+	/** Where the Send menu was (it closes before it runs a row): Send Later's picker opens there. */
+	let lastMenuAt: { x: number; y: number } | undefined;
+
+	/** Send Later...: what is typed goes to the caller to schedule (it clears the input once scheduled). */
+	export function sendLater(at?: { x: number; y: number }) {
+		const text = value.trim();
+		if (!text || disabled || busy || !onsendlater) return false;
+		const box = area?.getBoundingClientRect();
+		onsendlater(text, $state.snapshot(attachments), at ?? { x: (box?.right ?? 240) - 240, y: Math.max(4, (box?.top ?? 300) - 260) });
+		return true;
+	}
+
+	function runSendMenu(id: string) {
+		if (id === 'later') sendLater(lastMenuAt);
+		else send(id as SendHow);
 	}
 
 	// The microphone: lit while a dictation it (or a command, with the text focused) started runs.
@@ -551,6 +575,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
 	bind:this={box}
+	{@attach keepFloatingToggleClear()}
 	class={vscode
 		? ['chat-input-container', stacked && 'stacked', textFocused && 'focused', running && 'working', editing && 'editing']
 		: [
@@ -744,5 +769,5 @@
 	{/if}
 </div>
 {#if sendMenuAt}
-	<PopupMenu items={sendItems} label={t('chatInput.send.more')} x={sendMenuAt.x} y={sendMenuAt.y} onRun={(n) => n.type === 'item' && send(n.id as SendHow)} onClose={() => (sendMenuAt = null)} />
+	<PopupMenu items={sendItems} label={t('chatInput.send.more')} x={sendMenuAt.x} y={sendMenuAt.y} onRun={(n) => n.type === 'item' && runSendMenu(n.id)} onClose={() => (sendMenuAt = null)} />
 {/if}

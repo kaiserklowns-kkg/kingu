@@ -370,6 +370,25 @@ impl Ptys {
     kingu_ptyd::procinfo::process_cwd(pid).filter(|d| d.is_dir())
   }
 
+  /// The job in front of `key`'s shell (`pty_job_info`); `None` at the prompt or when unknown.
+  pub fn job_info(&self, key: &str) -> Option<JobInfo> {
+    let session = self.list().ok()?.into_iter().find(|s| s.key == key && s.alive)?;
+    let job = session.foreground?;
+    let cwd = kingu_ptyd::procinfo::process_cwd(job.pid).filter(|d| d.is_dir());
+    let shell = session.pid.and_then(kingu_ptyd::procinfo::process_cwd);
+    Some(JobInfo {
+      pid: job.pid,
+      here: same_dir(cwd.clone(), shell),
+      cwd: cwd.map(|d| d.to_string_lossy().into_owned()),
+      args: kingu_ptyd::procinfo::process_args(job.pid),
+    })
+  }
+
+  /// The pid of the job in front of `key`'s shell, if any.
+  fn job_pid(&self, key: &str) -> Option<u32> {
+    self.list().ok()?.into_iter().find(|s| s.key == key && s.alive)?.foreground.map(|f| f.pid)
+  }
+
   /// Live terminals for the status bar's Resource Manager (its shells run under the daemon when
   /// there is one, so their pids are not Kingu's children).
   pub fn terminals(&self) -> Vec<PtyInfo> {
@@ -457,6 +476,77 @@ pub fn pty_list(window: tauri::WebviewWindow, ptys: State<'_, Ptys>) -> Result<V
 pub fn pty_foreground(ptys: State<'_, Ptys>, keys: Vec<String>) -> Result<BTreeMap<String, kingu_ptyd::Foreground>, String> {
   let wanted: std::collections::BTreeSet<String> = keys.into_iter().collect();
   Ok(ptys.list()?.into_iter().filter(|s| s.alive && wanted.contains(&s.key)).filter_map(|s| s.foreground.map(|f| (s.key, f))).collect())
+}
+
+/// The job in front of a terminal's shell (an agent CLI pane hibernation may close).
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct JobInfo {
+  /// Its process group (the job's leader).
+  pub pid: u32,
+  /// The folder it runs in; `None` when it cannot be read.
+  pub cwd: Option<String>,
+  /// Whether that folder is the shell's own (`None` when either is unknown).
+  pub here: Option<bool>,
+  /// Its command line (first arguments; procinfo bounds them), empty when it cannot be read.
+  pub args: Vec<String>,
+}
+
+/// Pane hibernation: ends the job `pid` in front of `key`'s shell and leaves the shell, its screen
+/// and its scrollback (Orca kills the pane's PTY and keeps its history; here the session itself
+/// keeps it, also across a restart of Kingu while the daemon runs). The job's group gets SIGHUP,
+/// as a closed terminal would send, then SIGKILL if it is still in front after a few seconds.
+/// False when `pid` is no longer in front (nothing is signalled); an error where the platform has
+/// no job control (Windows).
+#[tauri::command(async)]
+pub fn pty_stop_job(ptys: State<'_, Ptys>, key: String, pid: u32) -> Result<bool, String> {
+  validate_key(&key)?;
+  stop_job(&ptys, &key, pid)
+}
+
+#[cfg(unix)]
+fn stop_job(ptys: &Ptys, key: &str, pid: u32) -> Result<bool, String> {
+  use std::time::{Duration, Instant};
+  let group = libc::pid_t::try_from(pid).map_err(|e| e.to_string())?;
+  if group <= 1 || ptys.job_pid(key) != Some(pid) {
+    return Ok(false);
+  }
+  let gone = |within: Duration| {
+    let until = Instant::now() + within;
+    while Instant::now() < until {
+      if ptys.job_pid(key) != Some(pid) {
+        return true;
+      }
+      std::thread::sleep(Duration::from_millis(50));
+    }
+    false
+  };
+  for (signal, wait) in [(libc::SIGHUP, Duration::from_secs(3)), (libc::SIGKILL, Duration::from_secs(2))] {
+    // SAFETY: killpg only sends a signal to the process group the terminal reported in front.
+    if unsafe { libc::killpg(group, signal) } != 0 {
+      let e = std::io::Error::last_os_error();
+      if e.raw_os_error() == Some(libc::ESRCH) {
+        return Ok(true);
+      }
+      return Err(e.to_string());
+    }
+    if gone(wait) {
+      log::info!("terminal {key}: job {pid} ended for hibernation");
+      return Ok(true);
+    }
+  }
+  Err(format!("terminal {key}: job {pid} is still running"))
+}
+
+#[cfg(not(unix))]
+fn stop_job(_ptys: &Ptys, _key: &str, _pid: u32) -> Result<bool, String> {
+  Err("agent hibernation of terminal panes needs job control (macOS, Linux)".into())
+}
+
+/// Whether two directories name the same folder (symlinks resolved); `None` when either is unknown.
+pub fn same_dir(a: Option<PathBuf>, b: Option<PathBuf>) -> Option<bool> {
+  let (a, b) = (a?, b?);
+  let real = |d: &Path| std::fs::canonicalize(d).unwrap_or_else(|_| d.to_path_buf());
+  Some(real(&a) == real(&b))
 }
 
 /// Terminal: Show Terminal Daemon Status / Restart Terminal Daemon (the UI asks first).
@@ -609,11 +699,32 @@ pub fn lang_env(mode: &str, current: Option<&str>, locale: Option<&str>) -> Opti
   Some(format!("{}.UTF-8", parts.join("_")))
 }
 
+/// The variable a typed command's script travels in ([`run_through_env`]).
+pub const RUN_ENV: &str = "KINGU_TERMINAL_RUN";
+
+/// A terminal's `run` whose words hold line breaks (an SSH project's agent: `sh -c` with its
+/// reconnect loop, ssh options and hook settings, ssh_projects.rs `terminal_run`) would be typed
+/// into the shell as a line per script line, each echoed as a continuation prompt (zsh's
+/// `quote>`) before the command starts. Instead the script goes in the shell's environment
+/// ([`RUN_ENV`]) and the typed line is a short `sh -c 'eval "$KINGU_TERMINAL_RUN"'`: the same
+/// commands, exit code and `exit`s (eval runs them in that `sh`). Orca hands a startup command over
+/// the same way, in `ORCA_POSIX_SHELL_STARTUP_COMMAND` (src/main/pty/shell-startup/
+/// posix-shell-startup-command.ts), though its shell then runs it from a prompt hook; Kingu keeps
+/// typing the short line so every shell runs it (kingu-ptyd session.rs `spawn_shell`).
+/// Only a `sh -c <script>` (already run by `sh`, so `eval` there changes nothing): an agent CLI
+/// typed with a multi-line prompt stays as it is, run by the user's own shell. `None`: typed as it is.
+pub fn run_through_env(run: &[String]) -> Option<(Vec<String>, String)> {
+  match run {
+    [sh, c, script] if sh == "sh" && c == "-c" && (script.contains('\n') || script.contains('\r')) => Some((vec!["sh".into(), "-c".into(), format!("eval \"${RUN_ENV}\"")], script.clone())),
+    _ => None,
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::path::{Path, PathBuf};
 
-  use super::{daemon_dir, find_daemon, lang_env, resolve_shell, scoped_history_env, split_cwd, terminal_cwd, terminal_folder};
+  use super::{daemon_dir, find_daemon, lang_env, resolve_shell, same_dir, scoped_history_env, split_cwd, terminal_cwd, terminal_folder};
 
   #[cfg(unix)]
   #[test]
@@ -652,6 +763,49 @@ mod tests {
     assert_eq!(fish[0].0, "fish_history");
     assert!(fish[0].1.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
     assert_eq!(scoped_history_env("nu", tmp.path(), a).unwrap(), vec![]);
+  }
+
+  /// Pane hibernation: the job in front is read (pid, folder, command line) and ended, the shell stays.
+  #[cfg(any(target_os = "macos", target_os = "linux"))]
+  #[test]
+  fn stop_job_ends_the_job_and_keeps_the_shell() {
+    use super::{Backend, Ptys, stop_job};
+    use std::time::{Duration, Instant};
+    let ptys = Ptys::default();
+    assert!(ptys.backend.set(Backend::Local(kingu_ptyd::Host::default())).is_ok());
+    let key = "ade:0a1b2c3d:hibernate-test:t1";
+    let dir = tempfile::tempdir().unwrap();
+    let run = vec!["sleep".to_string(), "47".to_string()];
+    let env = std::collections::BTreeMap::new();
+    let args = vec!["-i".to_string()];
+    ptys.open(key, dir.path(), 80, 24, Some(&run), &env, Some("/bin/sh"), Some(&args), &[], false, Box::new(|_| true)).unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    let job = loop {
+      if let Some(job) = ptys.job_info(key) {
+        break job;
+      }
+      assert!(Instant::now() < until, "no job in front of the shell");
+      std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(job.args, run);
+    assert_eq!(job.here, Some(true));
+    assert!(same_dir(job.cwd.as_ref().map(PathBuf::from), Some(dir.path().to_path_buf())).unwrap());
+    // Another pid in front is never signalled.
+    assert_eq!(stop_job(&ptys, key, job.pid + 100_000).unwrap(), false);
+    assert!(stop_job(&ptys, key, job.pid).unwrap());
+    assert_eq!(ptys.job_info(key), None);
+    assert!(ptys.list().unwrap().iter().any(|s| s.key == key && s.alive), "the shell stays");
+    assert_eq!(stop_job(&ptys, key, job.pid).unwrap(), false);
+    ptys.kill(key).unwrap();
+  }
+
+  #[test]
+  fn same_dir_needs_both_directories() {
+    let dir = std::env::temp_dir();
+    assert_eq!(same_dir(Some(dir.clone()), Some(dir.clone())), Some(true));
+    assert_eq!(same_dir(Some(dir.clone()), Some(dir.join("kingu-no-such-dir"))), Some(false));
+    assert_eq!(same_dir(None, Some(dir.clone())), None);
+    assert_eq!(same_dir(Some(dir), None), None);
   }
 
   #[test]
@@ -727,5 +881,38 @@ mod tests {
     assert_eq!(find_daemon(None, Some(tmp.path())).unwrap(), bin);
     assert_eq!(find_daemon(Some(bin.clone().into()), None).unwrap(), bin);
     assert!(find_daemon(Some(tmp.path().join("nope").into()), Some(tmp.path())).is_err());
+  }
+
+  /// A multi-line script is not typed: a short line runs it from the environment, with the same
+  /// output and exit code as `sh -c <script>`.
+  #[cfg(unix)]
+  #[test]
+  fn a_multi_line_run_goes_through_the_environment() {
+    use super::{RUN_ENV, run_through_env};
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(run_through_env(&s(&["claude", "--settings", "{\"a\":1}"])), None);
+    assert_eq!(run_through_env(&s(&["sh", "-c", "exec ssh -t box 'sh -c x'"])), None);
+    // An agent typed with a multi-line prompt is run by the user's shell as before.
+    assert_eq!(run_through_env(&s(&["claude", "line one\nline two"])), None);
+    let script = "n=0\nprintf '%s\\n' \"it's\"\nc=7\nwhile [ \"$n\" -lt 2 ]; do n=$((n + 1)); done\necho \"$n\"\nexit \"$c\"";
+    let (argv, env) = run_through_env(&s(&["sh", "-c", script])).unwrap();
+    assert_eq!(env, script);
+    assert_eq!(argv, s(&["sh", "-c", "eval \"$KINGU_TERMINAL_RUN\""]));
+    assert!(argv.iter().all(|w| !w.contains('\n')));
+    let typed = kingu_ptyd::session::command_line(&argv).unwrap();
+    assert!(typed.len() < 40, "{typed}");
+    let run = |argv: &[String], env: Option<&str>| {
+      let mut c = std::process::Command::new(&argv[0]);
+      c.args(&argv[1..]);
+      if let Some(v) = env {
+        c.env(RUN_ENV, v);
+      }
+      c.output().unwrap()
+    };
+    let direct = run(&s(&["sh", "-c", script]), None);
+    let via = run(&argv, Some(&env));
+    assert_eq!(via.status.code(), Some(7));
+    assert_eq!((via.status.code(), via.stdout.clone()), (direct.status.code(), direct.stdout));
+    assert_eq!(String::from_utf8_lossy(&via.stdout), "it's\n2\n");
   }
 }

@@ -11,6 +11,9 @@ export const SETTING_OWNERS: readonly (readonly [pattern: string, owner: Setting
 	['kingu.agent.runtime', 'ide'],
 	['kingu.agent.model', 'ide'],
 	['kingu.agent.acpAgents', 'ide'],
+	['kingu.agent.antigravityManagedAgy', 'ide'],
+	['kingu.agent.antigravityGoogleSignIn', 'ide'],
+	['kingu.agent.antigravityChatAuth', 'ide'],
 	['kingu.chat.*', 'ide'],
 	// ADE task CLIs
 	['kingu.agent.cli', 'ade'],

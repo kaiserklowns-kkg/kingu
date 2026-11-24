@@ -863,6 +863,8 @@ mod tests {
     assert!(!std::fs::symlink_metadata(wt.join("conf")).unwrap().file_type().is_symlink(), "a real copy");
   }
 
+  // Symlinks need no privilege only on Unix.
+  #[cfg(unix)]
   #[test]
   fn links_shared_paths_safely() {
     let (_tmp, root, config, _cache) = setup();

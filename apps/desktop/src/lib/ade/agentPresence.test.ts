@@ -89,6 +89,16 @@ describe('paneRow', () => {
 		expect(paneRow({ id: 'p', foreground: 'aider', lastOutput: 1000 }, 10_000)?.state).toBe('idle');
 		expect(paneRow({ id: 'p', foreground: 'vim', lastOutput: 1000 }, 2000)).toBe(null);
 	});
+	test("every catalog agent in front of the shell is an agent row (Orca's process recognition)", () => {
+		for (const name of ['kiro-cli', 'auggie', 'goose', 'kilo', 'mimo', 'droid', 'kimi', 'cursor-agent', 'hermes', 'cline', 'opencode2'])
+			expect(paneRow({ id: 'p', foreground: name, lastOutput: 1000 }, 10_000)).toEqual({ id: 'p', agent: name, state: 'idle', at: 1000 });
+		// The name a launcher's binary runs under.
+		expect(paneRow({ id: 'p', foreground: 'codex-aarch64-apple-darwin' }, 5)?.agent).toBe('codex');
+		expect(paneRow({ id: 'p', foreground: 'dsh' }, 5)?.agent).toBe('dsh-tui');
+		// A wrapper names no agent; hooks and the title still win over the process.
+		expect(paneRow({ id: 'p', foreground: 'node', lastOutput: 1000 }, 2000)).toBe(null);
+		expect(paneRow({ id: 'p', foreground: 'goose', hookAgent: 'goose', hook: hook({ phase: 'working', message: 'Using shell', at: 4 }) }, 5)).toEqual({ id: 'p', agent: 'goose', state: 'working', message: 'Using shell', at: 4 });
+	});
 });
 
 describe('withPaneAgents', () => {

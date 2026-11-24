@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isMenuEcho, keyLabel, keyOf, MENU_ECHO_MS, toAccelerator } from './keys';
-import { EDITOR_ACTIONS, flattenItems, itemStates, MENUS, menuCommands, parseMnemonic, RECENT_PREFIX, resolveMenubar, ROLES, structureKey, type MenuContext, type MenuItem, type MenuNode } from './menus';
+import { EDITOR_ACTIONS, flattenItems, itemStates, MENUS, menuCommands, menuLeft, menuTop, parseMnemonic, RECENT_PREFIX, resolveMenubar, ROLES, structureKey, type MenuContext, type MenuItem, type MenuNode } from './menus';
 
 const LIB = join(import.meta.dir, '..');
 
@@ -18,7 +18,7 @@ function sources(dir: string): string[] {
 	});
 }
 
-/** `terminalOnly`: its key acts only while a terminal (or the Problems view, or the chat view) has focus (`keyWhen`), where Monaco's menu keys do not apply. */
+/** `terminalOnly`: its key acts only while a terminal (or the Problems view, the chat view or the Debug Console) has focus (`keyWhen`), where Monaco's menu keys do not apply. */
 type Registered = { id: string; key?: string; mac?: string; terminalOnly?: boolean };
 
 /** Every `commands.register({ id: '…', … key: '…', mac: '…', … run` in src/lib. */
@@ -30,7 +30,7 @@ function registeredCommands(): Map<string, Registered> {
 			const body = m[1];
 			const field = (name: string) => body.match(new RegExp(`\\b${name}: '((?:[^'\\\\]|\\\\.)*)'`))?.[1]?.replace(/\\\\/g, '\\');
 			const id = field('id');
-			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|viewFocused,|chatFocused,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
+			if (id) out.set(id, { id, key: field('key'), mac: field('mac'), ...(/keyWhen: (panelTerminalFocus,|viewFocused,|chatFocused,|debugConsoleFocus,|\(\) => focusedTerminal\(\) !== null,)/.test(body) ? { terminalOnly: true } : {}) });
 		}
 	}
 	return out;
@@ -296,5 +296,21 @@ describe('accelerators and keyboard/menu ownership', () => {
 		expect(isMenuEcho('workbench.action.files.save', 1000 + MENU_ECHO_MS, last)).toBe(false);
 		expect(isMenuEcho('workbench.action.files.saveAll', 1005, last)).toBe(false);
 		expect(isMenuEcho('workbench.action.files.save', 1005, null)).toBe(false);
+	});
+});
+
+describe('popup menu position', () => {
+	test('keeps a menu inside the window', () => {
+		expect(menuLeft(300, 248, 800)).toBe(300);
+		expect(menuLeft(700, 248, 800)).toBe(548);
+		expect(menuLeft(-20, 248, 800)).toBe(4);
+		expect(menuTop(200, 300, 800)).toBe(200);
+		expect(menuTop(700, 300, 800)).toBe(496);
+		expect(menuTop(-5, 300, 800)).toBe(4);
+	});
+
+	test('an unmeasured or very tall menu still starts on screen', () => {
+		expect(menuTop(700, 0, 800)).toBe(700);
+		expect(menuTop(700, 900, 800)).toBe(4);
 	});
 });

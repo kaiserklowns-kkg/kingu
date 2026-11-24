@@ -96,6 +96,13 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		description: 'ซ่อนงานที่ Automations สร้าง (Orca: hideAutomationGeneratedWorkspaces) (Hide tasks that automations started.)'
 	},
 	{
+		id: 'kingu.sidebar.hideCliCreatedTasks',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description: 'ซ่อนงานที่สร้างจาก CLI (`kingu task create`) (Orca: hideCliCreatedWorkspaces) (Hide worktrees created by the CLI.)'
+	},
+	{
 		id: 'kingu.sidebar.cardProperties',
 		group: G,
 		type: 'array',
@@ -165,6 +172,14 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		description: 'คอลัมน์ของบอร์ดงาน ค่าเริ่มต้นตาม Orca คือขั้นตอนงาน (Which columns the task board shows; Orca shows workflow statuses.)'
 	},
 	{
+		id: 'kingu.board.showIdle',
+		group: G,
+		type: 'boolean',
+		default: false,
+		description:
+			'บอร์ดแบบสถานะ agent แสดงคอลัมน์ Idle: งานที่เสร็จแล้วและคุณเห็นแล้ว (ไม่มีแจ้งเตือนที่ยังไม่อ่าน) ปิดไว้งานเหล่านั้นจะไม่อยู่บนบอร์ด (Orca: Show idle agents) (The agent-status board shows an Idle column: finished tasks you have already seen. Off, they leave the board.)'
+	},
+	{
 		id: 'kingu.board.statuses',
 		group: G,
 		type: 'array',
@@ -213,6 +228,16 @@ export const SIDEBAR_SETTINGS: SettingSchema[] = [
 		enumDescriptions: ['ไม่แสดง (Hide.)', 'แสดงเป็นการ์ดอ่านอย่างเดียว (Show as read-only cards.)'],
 		description:
 			'worktree ของ repository ที่ Kingu ไม่ได้สร้าง (git worktree add เอง) แสดงในแถบข้างหรือไม่ การ์ดเปิดเป็นโฟลเดอร์ เปิดใน Finder หรือแอปอื่นได้ (Orca: externalWorktreeVisibility) (Whether worktrees Kingu did not create appear in the side bar, as read-only cards.)'
+	},
+	{
+		id: 'kingu.worktree.shownExternal',
+		group: 'Worktrees',
+		type: 'array',
+		items: 'string',
+		default: [],
+		description:
+			'worktree ที่ Kingu ไม่ได้สร้างซึ่งเลือกแสดงทีละตัวจากการ์ด "worktree ที่ซ่อนอยู่" ในแถบข้าง (path) เก็บต่อโปรเจกต์ (Orca: importedExternalWorktreePaths, Non-Orca worktrees → Show) (Worktrees Kingu did not create that you chose to show one by one from the side bar\'s hidden worktrees card, by path; kept per project.)',
+		scope: 'local'
 	},
 	{
 		id: 'kingu.worktree.agentVisibility',

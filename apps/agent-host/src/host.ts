@@ -11,6 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 import type { CanUseTool, HookCallbackMatcher, Options, PermissionResult, PermissionUpdate, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { reviewToolCall, type AssistedReview, type JudgeQuery } from './assisted.ts';
 import { contextTokensOf, contextWindowOf, isUuid, mcpStatus, modelOptions, normalize, ruleTexts, slashCommands, summarizeTool } from './normalize.ts';
 import { snapshotHooks } from './snapshots.ts';
 import { Guards, type AskUser } from './guards/index.ts';
@@ -20,21 +21,30 @@ import { Runtimes, runtimeSpec, SessionError, type SpawnFn } from './runtimes/in
 import { probeModels as acpProbeModels } from './runtimes/acp.ts';
 import { probeModels as codexProbeModels } from './runtimes/codex.ts';
 import { ARTIFACT_SERVER, ARTIFACT_TOOL, artifactServer, socketCaller, type CallApp } from './artifacts.ts';
+import { BROWSER_CALL_TIMEOUT_MS, UNASKED_BROWSER_TOOLS, browserConfirmation, browserToolOf, browserTools, type BrowserDeps } from './browser.ts';
+import { BrowserMcpServer } from './browserMcp.ts';
 import { readSkills, skillIndex } from './skills.ts';
 import { elicitAsk, McpAsks } from './mcpAsks.ts';
 import { checkQuery, runQuery } from './mcpQuery.ts';
 import type { McpConnection } from './arkai/mcp.ts';
 import { checkEffort, claudeEffortLevel, claudeStartOptions, type ClaudeEffortLevel, type Effort } from './effort.ts';
+import { claudeSandbox, sandboxConfig, SandboxConfigError, type SandboxConfig } from './sandbox/config.ts';
+import { maskEnv } from './sandbox/run.ts';
 import {
 	DECISIONS,
 	MCP_TYPES,
 	PERMISSION_MODES,
+	sdkMode,
 	type AgentEvent,
 	type AnswerParams,
 	type Decision,
 	type ListModelsParams,
 	type McpAnswerParams,
+	type McpAppParams,
+	type McpAppToolResultParams,
+	type McpAppToolsParams,
 	type McpQueryParams,
+	type McpServerMatcher,
 	type McpServerParams,
 	type PermissionMode,
 	type SetOptionsParams,
@@ -49,7 +59,7 @@ export type QueryLike = AsyncIterable<unknown> & {
 	interrupt(): Promise<unknown>;
 	/** Mid-session changes (streaming input only); optional so older fakes still fit. */
 	setModel?(model?: string): Promise<void>;
-	setPermissionMode?(mode: PermissionMode): Promise<void>;
+	setPermissionMode?(mode: Exclude<PermissionMode, 'assisted'>): Promise<void>;
 	/** The session's flag settings (the effort level, effort.ts); `null` clears one. */
 	applyFlagSettings?(settings: { effortLevel?: ClaudeEffortLevel | null }): Promise<void>;
 	/** 0 turns thinking off; null clears the limit. */
@@ -200,6 +210,11 @@ class Run {
 	readonly guardApproved = new Set<string>();
 	/** The session's permission mode (start, then setOptions). */
 	mode = 'default';
+	/** The run's folder and account env, for the Assisted reviewer (assisted.ts). */
+	cwd = '';
+	env: Record<string, string | undefined> | null = null;
+	/** `chat.permissions.assisted.instructions`, for the Assisted reviewer only (never the agent). */
+	assistedInstructions: string | null = null;
 	query: QueryLike | null = null;
 	stopped = false;
 	exited = false;
@@ -211,6 +226,8 @@ class Run {
 	contextTokens: number | null = null;
 	/** Kingu's artifact tool is this run's (its `kingu` MCP server was added). */
 	artifacts = false;
+	/** Kingu's browser tools are this run's (browser.ts; `kingu.browser.agentTools`). */
+	browser = false;
 	/** MCP servers' forms waiting for the user. */
 	asks: McpAsks | null = null;
 	constructor(readonly id: number) {}
@@ -234,6 +251,8 @@ export type HostDeps = {
 	fetch?: typeof fetch;
 	/** How `mcp_query` reaches a server (tests pass a fake). */
 	mcpConnect?: (s: McpServerParams, cwd: string) => McpConnection;
+	/** Assisted permissions' reviewer (assisted.ts; tests pass a fake). */
+	review?: typeof reviewToolCall;
 };
 
 class RpcError extends Error {
@@ -281,6 +300,18 @@ export function runEnv(base: Record<string, string | undefined>, set: Record<str
 	return env;
 }
 
+/**
+ * A sandboxed Claude session's environment: the masked variables are not in it at all, so no
+ * command of the session gets one, in the sandbox or (after the user's yes) outside it. `kept`:
+ * masked names that stay because the session itself signs in with them (`account`: what Kingu set
+ * for its AI account); the SDK hides those from sandboxed commands, and `claudeSandbox` then lets
+ * no command leave the sandbox.
+ */
+export function claudeEnv(base: Record<string, string | undefined>, masked: readonly string[], account: Record<string, string>): { env: Record<string, string | undefined>; kept: string[] } {
+	const kept = masked.filter((n) => Object.hasOwn(account, n));
+	return { env: maskEnv(base, masked.filter((n) => !kept.includes(n))), kept };
+}
+
 export class AgentHost {
 	private runs = new Map<number, Run>();
 	private newId: () => string;
@@ -289,12 +320,20 @@ export class AgentHost {
 	private read: (path: string) => Uint8Array;
 	/** Runs of the other runtimes (ACP agents, Codex): same requests, same events. */
 	private others: Runtimes;
+	/** The browser tools' MCP server for Codex and ACP runs (browserMcp.ts), started with the first. */
+	private browserMcp: BrowserMcpServer;
 
 	constructor(private deps: HostDeps) {
 		this.read = deps.readFile ?? ((path) => readFileSync(path));
 		this.newId = deps.newId ?? (() => crypto.randomUUID());
 		this.log = deps.log ?? (() => {});
 		this.others = new Runtimes({ emit: (id, ev) => this.emit(id, ev), log: (line) => this.log(line), newId: () => this.newId(), spawn: deps.spawn, fetch: deps.fetch });
+		this.browserMcp = new BrowserMcpServer((line) => this.log(line));
+	}
+
+	/** Live runs on the browser tools' MCP server (tests). */
+	get browserMcpRuns() {
+		return this.browserMcp.size;
 	}
 
 	emit(runId: number, event: AgentEvent) {
@@ -367,6 +406,15 @@ export class AgentHost {
 				return run.answer(p as AnswerParams);
 			case 'mcp_answer':
 				return run.answerMcp(p as McpAnswerParams);
+			// MCP Apps in the chat (arkai/mcpApps.ts): an app's request to its server, its registered tools, their results.
+			case 'mcp_app':
+				return run.mcpApp(p as unknown as McpAppParams);
+			case 'mcp_app_tools':
+				return run.mcpAppTools(p as unknown as McpAppToolsParams);
+			case 'mcp_app_tool_result':
+				return run.mcpAppToolResult(p as unknown as McpAppToolResultParams);
+			case 'sign_in':
+				return run.signIn();
 			case 'set_options': {
 				const o = p as SetOptionsParams;
 				const model = o.model ?? undefined;
@@ -437,9 +485,21 @@ export class AgentHost {
 		need(typeof append === 'string' && append.length <= MAX_SYSTEM_APPEND, 'systemPromptAppend must be a string of at most 256 KB');
 		const sampling = p.mcpSampling ?? null;
 		need(sampling === null || (typeof sampling === 'object' && !Array.isArray(sampling) && Object.values(sampling).every((v) => typeof v === 'boolean')), 'mcpSampling must map server names to booleans');
+		need(p.mcpSkills === undefined || p.mcpSkills === null || typeof p.mcpSkills === 'boolean', 'mcpSkills must be a boolean');
 		const resumeAt = p.resumeAt || undefined;
 		need(resumeAt === undefined || (isUuid(resumeAt) && p.resume), 'resumeAt must be a message uuid, with resume');
 		const effort = effortParam(p.effort);
+		const instructions = p.assistedInstructions ?? null;
+		need(instructions === null || (typeof instructions === 'string' && instructions.length <= 16_384), 'assistedInstructions must be a string of at most 16 KB');
+		const mcpPolicy = mcpPolicyParam(p.mcpPolicy);
+		// The agent sandbox: a setting that does not fit refuses the run (never "on, minus the bad part").
+		let sandbox: SandboxConfig | null;
+		try {
+			sandbox = sandboxConfig(p.sandbox);
+		} catch (e) {
+			if (e instanceof SandboxConfigError) throw new RpcError(INVALID_PARAMS, e.message);
+			throw e;
+		}
 		let other: ReturnType<typeof runtimeSpec>;
 		try {
 			other = runtimeSpec(p.runtime);
@@ -453,52 +513,80 @@ export class AgentHost {
 			need(resumeAt === undefined, 'this runtime cannot resume at a message');
 			const arkai = other.kind === 'arkai' ? other.arkai : undefined;
 			const index = skillIndex(readSkills(plugins));
-			this.others.start(other.kind, {
-				runId: p.runId,
-				cwd: p.cwd,
-				command: other.kind === 'arkai' ? '' : other.command,
-				args: other.kind === 'arkai' ? [] : other.args,
-				...(arkai ? { arkai, systemPromptAppend: [append.trim(), index].filter(Boolean).join('\n\n'), guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : { skillIndex: index }),
-				prompt: p.prompt,
-				shownPrompt: shownText(p.prompt, p.images),
-				images,
-				imagePaths: p.images ?? [],
-				mode,
-				resume: p.resume || null,
-				mcpServers: mcp,
-				disallowedTools: disallowed,
-				env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
-				snapshots: p.snapshots === true,
-				safetyChecks: p.safetyChecks !== false,
-				mcpSampling: sampling,
-				effort: effort ?? null
-			});
+			// Kingu's browser tools (browser.ts): Arkai's own, Codex's and ACP agents' on Kingu's MCP server.
+			const browser = this.browserDeps(p, extraEnv, ARTIFACT_SERVER in mcpServers);
+			const browserMcp = browser && other.kind !== 'arkai' ? this.browserMcp.register((tool, args) => this.others.get(p.runId).browserCall(tool, args)) : null;
+			try {
+				this.others.start(other.kind, {
+					runId: p.runId,
+					cwd: p.cwd,
+					command: other.kind === 'arkai' ? '' : other.command,
+					args: other.kind === 'arkai' ? [] : other.args,
+					...(arkai ? { arkai, systemPromptAppend: [append.trim(), index].filter(Boolean).join('\n\n'), guardAsks: asks ? { ...asks, cwd: p.cwd } : null } : { skillIndex: index }),
+					prompt: p.prompt,
+					shownPrompt: shownText(p.prompt, p.images),
+					images,
+					imagePaths: p.images ?? [],
+					mode,
+					resume: p.resume || null,
+					mcpServers: mcp,
+					disallowedTools: disallowed,
+					env: runEnv(this.deps.options?.env ?? process.env, extraEnv, unset),
+					snapshots: p.snapshots === true,
+					safetyChecks: p.safetyChecks !== false,
+					mcpSampling: sampling,
+					mcpSkills: p.mcpSkills !== false,
+					effort: effort ?? null,
+					sandbox,
+					browser,
+					browserMcp
+				});
+			} catch (e) {
+				browserMcp?.release();
+				throw e;
+			}
+			if (browser) this.log(`run ${p.runId}: browser tools on (${other.kind === 'arkai' ? 'native' : 'mcp'})`);
+			// Codex sandboxes its own commands by permission mode (codexPolicy); an ACP agent runs its tools itself.
+			if (sandbox && other.kind !== 'arkai') {
+				this.log(`run ${p.runId}: chat.agent.sandbox.enabled does not reach ${other.kind} (it runs its own commands)`);
+				if (other.kind === 'acp') this.emit(p.runId, { kind: 'stderr', line: 'Sandbox: chat.agent.sandbox.enabled is on, but this agent runs its own commands: Kingu does not sandbox them.' });
+			}
 			return { runId: p.runId };
 		}
 
 		const run = new Run(p.runId);
 		run.mode = mode;
+		run.cwd = p.cwd;
+		run.env = accountEnv;
+		run.assistedInstructions = instructions;
 		const mcpAsks = (run.asks = new McpAsks({ emit: (ev) => this.emit(run.id, ev), newId: () => this.newId(), log: (line) => this.log(`run ${run.id}: ${line}`), sampling }));
 		// Kingu's artifact tool (artifacts.ts), over the app's `kingu` socket; not when a server of the run is named `kingu`.
 		const cliRuntime = extraEnv.KINGU_CLI_RUNTIME || (this.deps.options?.env ?? process.env).KINGU_CLI_RUNTIME;
 		const call = this.deps.callApp ?? (cliRuntime ? socketCaller(cliRuntime) : null);
 		if (call && !(ARTIFACT_SERVER in mcpServers)) {
-			mcpServers[ARTIFACT_SERVER] = artifactServer({ cwd: p.cwd, call, emit: (ev) => this.emit(run.id, ev) });
+			const browser = this.browserDeps(p, extraEnv, false);
+			const extra = browser ? browserTools(browser) : [];
+			mcpServers[ARTIFACT_SERVER] = artifactServer({ cwd: p.cwd, call, emit: (ev) => this.emit(run.id, ev) }, extra);
 			run.artifacts = true;
+			run.browser = extra.length > 0;
 		}
-		if (p.safetyChecks !== false || asks) run.guards = new Guards(p.safetyChecks !== false, asks ? { ...asks, cwd: p.cwd, trustedTools: run.artifacts ? [ARTIFACT_TOOL] : [] } : null, () => run.mode);
+		// With the sandbox on, the guards always exist: a command that asks to leave it is asked about in every mode.
+		if (p.safetyChecks !== false || asks || sandbox)
+			run.guards = new Guards(p.safetyChecks !== false, asks || sandbox ? { ...(asks ?? {}), cwd: p.cwd, trustedTools: run.artifacts ? [ARTIFACT_TOOL, ...(run.browser ? UNASKED_BROWSER_TOOLS : [])] : [], sandboxed: !!sandbox } : null, () => run.mode);
 		this.runs.set(run.id, run);
 		const hooks = runHooks(
 			run.guards?.hook((ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`), this.askGuard(run)) ?? null,
 			p.snapshots ? snapshotHooks(p.cwd, (ev) => this.emit(run.id, ev), (line) => this.log(`run ${run.id}: ${line}`)) : null
 		);
+		const masked = sandbox?.maskedEnv.length ? claudeEnv(accountEnv ?? this.deps.options?.env ?? process.env, sandbox.maskedEnv, extraEnv) : null;
+		if (masked?.kept.length) this.log(`run ${run.id}: ${masked.kept.length} masked variables stay for the session's own sign-in: no command may leave the sandbox`);
 		const options: Options = {
 			...this.deps.options,
 			cwd: p.cwd,
 			model: p.model || DEFAULT_MODEL,
 			// The chat's reasoning effort (effort.ts): `effort`, or thinking off; none: the model's default.
 			...claudeStartOptions(effort),
-			permissionMode: mode,
+			permissionMode: sdkMode(mode),
 			// Lets the user switch a live session to "Allow all" (`setPermissionMode`); the mode
 			// itself only ever comes from the user's pick, which the app confirms first.
 			allowDangerouslySkipPermissions: true,
@@ -511,11 +599,16 @@ export class AgentHost {
 			...(projectMcp && (projectMcp.enabled?.length || projectMcp.disabled?.length)
 				? { settings: { enabledMcpjsonServers: projectMcp.enabled ?? [], disabledMcpjsonServers: projectMcp.disabled ?? [] } }
 				: {}),
+			// The MCP allowlist and denylist (Rust agent/mcp_policy.rs) as the SDK's policy tier, so they
+			// cover the servers Claude Code reads itself too (the user's ~/.claude.json).
+			...(mcpPolicy ? { managedSettings: mcpPolicy } : {}),
 			// MCP servers the user turned off (also ones from their own Claude settings).
 			...(disallowed.length ? { disallowedTools: disallowed } : {}),
 			// Skills only: Kingu owns the MCP connections (mcpServers above), so a plugin never adds its own.
 			...(plugins.length ? { plugins: plugins.map((path) => ({ type: 'local' as const, path, skipMcpDiscovery: true })) } : {}),
 			...(accountEnv ? { env: accountEnv } : {}),
+			// The SDK's own sandbox around the Bash tool it runs (sandbox/config.ts), in an environment without the masked variables.
+			...(sandbox ? { sandbox: claudeSandbox(sandbox, masked?.kept), ...(masked ? { env: masked.env } : {}) } : {}),
 			includePartialMessages: true,
 			// Hook outcomes (hook_response) for the chat's Agent Debug Log.
 			includeHookEvents: true,
@@ -540,7 +633,7 @@ export class AgentHost {
 		};
 		run.inbox.push(p.prompt, images);
 		this.emit(run.id, { kind: 'message', role: 'user', text: shownText(p.prompt, p.images) });
-		this.log(`run ${run.id} starting (mode ${mode}${effort ? `, effort ${effort}` : ''}${p.resume ? (resumeAt ? ', resuming at a message' : ', resuming') : ''})`);
+		this.log(`run ${run.id} starting (mode ${mode}${sandbox ? ', sandboxed' : ''}${effort ? `, effort ${effort}` : ''}${p.resume ? (resumeAt ? ', resuming at a message' : ', resuming') : ''})`);
 		try {
 			run.query = this.deps.query({ prompt: run.inbox, options });
 		} catch (e) {
@@ -549,6 +642,18 @@ export class AgentHost {
 		}
 		void this.pump(run);
 		return { runId: run.id };
+	}
+
+	/**
+	 * The browser tools' link to the app, only when the app gave this run a session (the setting is
+	 * on) and no server of the run is named `kingu`; their calls may wait for a page to load.
+	 */
+	private browserDeps(p: StartParams, extraEnv: Record<string, string>, taken: boolean): BrowserDeps | null {
+		const session = typeof p.browser?.session === 'string' && p.browser.session ? p.browser.session : null;
+		if (!session || taken) return null;
+		const cliRuntime = extraEnv.KINGU_CLI_RUNTIME || (this.deps.options?.env ?? process.env).KINGU_CLI_RUNTIME;
+		const call = this.deps.callApp ?? (cliRuntime ? socketCaller(cliRuntime, BROWSER_CALL_TIMEOUT_MS) : null);
+		return call ? { session, cwd: p.cwd, call } : null;
 	}
 
 	private async pump(run: Run) {
@@ -691,7 +796,7 @@ export class AgentHost {
 		}
 		if (mode !== undefined) {
 			if (!q.setPermissionMode) throw new RpcError(UNSUPPORTED, 'this agent SDK cannot change the permission mode mid-session');
-			await q.setPermissionMode(mode);
+			await q.setPermissionMode(sdkMode(mode));
 			run.mode = mode;
 		}
 		if (effort !== undefined) await applyClaudeEffort(q, effort);
@@ -815,15 +920,47 @@ export class AgentHost {
 			});
 	}
 
+	/** Assisted permissions: the reviewer's verdict on a call (assisted.ts), in the run's folder and account. */
+	private review(run: Run, tool: string, input: unknown, signal?: AbortSignal): Promise<AssistedReview> {
+		const base: Partial<Options> = { ...this.deps.options, ...(run.env ? { env: run.env } : {}) };
+		return (this.deps.review ?? reviewToolCall)({ tool, input, cwd: run.cwd, query: this.deps.query as JudgeQuery, base, signal, instructions: run.assistedInstructions });
+	}
+
 	private canUseTool(run: Run): CanUseTool {
-		return (tool, input, opts) =>
-			new Promise<PermissionResult>((resolve) => {
-				if (run.exited || run.stopped) return resolve({ behavior: 'deny', message: 'stopped', interrupt: true });
-				// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
-				// whose own prompt is what keeps it read-only.
-				if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
-				// Publishing an artifact only writes to the project's .kingu/artifacts (plan mode still asks).
-				if (tool === ARTIFACT_TOOL && run.artifacts && run.mode !== 'plan') return resolve({ behavior: 'allow', updatedInput: input });
+		return async (tool, input, opts) => {
+			if (run.exited || run.stopped) return { behavior: 'deny', message: 'stopped', interrupt: true };
+			// Just allowed at Kingu's safety ask: no second prompt for the same call. Never in plan mode,
+			// whose own prompt is what keeps it read-only.
+			if (opts.toolUseID && run.guardApproved.delete(opts.toolUseID) && run.mode !== 'plan') return { behavior: 'allow', updatedInput: input };
+			// Publishing an artifact only writes to the project's .kingu/artifacts (plan mode still asks).
+			if (tool === ARTIFACT_TOOL && run.artifacts && run.mode !== 'plan') return { behavior: 'allow', updatedInput: input };
+			// VS Code's browser tools: reading, clicking, typing and screenshots of a page the agent may use
+			// run without asking; opening a page or navigating to an address asks, with VS Code's words.
+			if (run.browser && browserToolOf(tool)) {
+				const confirm = browserConfirmation(tool, input);
+				if (!confirm && run.mode !== 'plan') return { behavior: 'allow', updatedInput: input };
+				if (confirm) opts = { ...opts, title: confirm.title, decisionReason: confirm.message };
+			}
+			// Assisted permissions: the reviewer may let the call through; otherwise the person decides,
+			// told why. A question is always the person's to answer.
+			let review: AssistedReview | null = null;
+			if (run.mode === 'assisted' && !isAskUserQuestion(tool)) {
+				review = await this.review(run, tool, input, opts.signal);
+				if (run.exited || run.stopped || opts.signal?.aborted) return { behavior: 'deny', message: 'cancelled', interrupt: true };
+				// Still assisted (the person may have switched modes meanwhile) and approved: it runs.
+				if (review.verdict === 'approved' && run.mode === 'assisted') {
+					this.emit(run.id, { kind: 'assisted_review', request_id: null, tool, tool_use_id: opts.toolUseID ?? null, verdict: 'approved', reason: review.reason });
+					this.log(`run ${run.id}: ${tool} approved by the Assisted reviewer`);
+					return { behavior: 'allow', updatedInput: input };
+				}
+			}
+			return this.ask(run, tool, input, opts, review);
+		};
+	}
+
+	/** A permission prompt for the person; `review`: why Assisted permissions did not approve it. */
+	private ask(run: Run, tool: string, input: Record<string, unknown>, opts: Parameters<CanUseTool>[2], review: AssistedReview | null): Promise<PermissionResult> {
+		return new Promise<PermissionResult>((resolve) => {
 				const requestId = this.newId();
 				run.pending.set(requestId, { resolve, input, suggestions: opts.suggestions ?? [], tool });
 				opts.signal?.addEventListener('abort', () => {
@@ -831,6 +968,7 @@ export class AgentHost {
 					resolve({ behavior: 'deny', message: 'cancelled', interrupt: true });
 					this.emit(run.id, { kind: 'permission_resolved', request_id: requestId, decision: 'cancelled' });
 				});
+				if (review) this.emit(run.id, { kind: 'assisted_review', request_id: requestId, tool, tool_use_id: opts.toolUseID ?? null, verdict: review.verdict === 'approved' ? 'needs_you' : review.verdict, reason: review.reason });
 				const { summary, detail, diff } = summarizeTool(tool, input);
 				this.emit(run.id, {
 					kind: 'permission_request',
@@ -877,4 +1015,31 @@ export function decisionResult(
 	const fromSuggestions = kept.map((s) => ({ ...s, destination }));
 	const updatedPermissions: PermissionUpdate[] = fromSuggestions.length ? fromSuggestions : [{ type: 'addRules', rules: [{ toolName: p.tool }], behavior: 'allow', destination }];
 	return { behavior: 'allow', updatedInput: p.input, updatedPermissions };
+}
+
+/** One `allowedMcpServers` / `deniedMcpServers` entry: exactly one of name, URL or command. */
+function isMcpMatcher(v: unknown): v is McpServerMatcher {
+	if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+	const m = v as Record<string, unknown>;
+	const keys = Object.keys(m);
+	if (keys.length !== 1) return false;
+	if (keys[0] === 'serverName' || keys[0] === 'serverUrl') return typeof m[keys[0]] === 'string' && (m[keys[0]] as string).length > 0 && (m[keys[0]] as string).length <= 2048;
+	return keys[0] === 'serverCommand' && Array.isArray(m.serverCommand) && m.serverCommand.length > 0 && m.serverCommand.length <= 200 && m.serverCommand.every((a) => typeof a === 'string');
+}
+
+/** `mcpPolicy` of `start`: the lists as Claude Code's settings, or null when neither is set. */
+export function mcpPolicyParam(raw: unknown): { allowedMcpServers?: McpServerMatcher[]; deniedMcpServers?: McpServerMatcher[] } | null {
+	if (raw === undefined || raw === null) return null;
+	const bad = () => new RpcError(INVALID_PARAMS, 'mcpPolicy must be { allowedMcpServers?, deniedMcpServers? } lists of { serverName } | { serverUrl } | { serverCommand }');
+	if (typeof raw !== 'object' || Array.isArray(raw)) throw bad();
+	const r = raw as Record<string, unknown>;
+	const list = (v: unknown) => {
+		if (v === undefined || v === null) return undefined;
+		if (!Array.isArray(v) || v.length > 1000 || !v.every(isMcpMatcher)) throw bad();
+		return v as McpServerMatcher[];
+	};
+	const allowed = list(r.allowedMcpServers);
+	const denied = list(r.deniedMcpServers);
+	if (!allowed && !denied) return null;
+	return { ...(allowed ? { allowedMcpServers: allowed } : {}), ...(denied ? { deniedMcpServers: denied } : {}) };
 }

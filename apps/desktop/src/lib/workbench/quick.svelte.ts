@@ -60,6 +60,11 @@ export type Picker = {
 	onBack?: () => void;
 	/** An input box for a secret (a task's promptString input with `password`): typed text is hidden. */
 	password?: boolean;
+	/** VS Code's quick input `title`: a heading above the input. */
+	title?: string;
+	/** Text shown whole above the input, wrapped (a long question the placeholder would cut off);
+	 * `mono` runs are monospace (an ssh key fingerprint). */
+	message?: { text: string; mono?: boolean }[];
 };
 
 class Quick {
@@ -135,8 +140,8 @@ class Quick {
 	/** VS Code's showInputBox: the typed (trimmed) text on Enter, undefined when dismissed.
 	 * `hint` is the row shown under the input for the current text; `value` is the starting text
 	 * (selected, so typing replaces it); `password` hides what is typed. */
-	async input(opts: { placeholder: string; hint: (value: string) => string; value?: string; password?: boolean }): Promise<string | undefined> {
-		const item = this.choose({ placeholder: opts.placeholder, items: [], password: opts.password, dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
+	async input(opts: { placeholder: string; hint: (value: string) => string; value?: string; password?: boolean; title?: string; message?: Picker['message'] }): Promise<string | undefined> {
+		const item = this.choose({ placeholder: opts.placeholder, title: opts.title, message: opts.message, items: [], password: opts.password, dynamic: (value) => [{ id: value, label: opts.hint(value) }] });
 		if (opts.value) {
 			this.value = opts.value;
 			this.selectRestored = true;

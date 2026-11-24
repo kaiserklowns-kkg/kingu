@@ -40,9 +40,10 @@ const MAX_TOOL_NAME: usize = 200;
 /// The modes a saved chat may keep. "Allow all" (`bypassPermissions`) is never saved: `chats.json`
 /// lives in the folder, so a repository could ship one that turns every prompt off.
 pub const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan"];
-/// The modes a run may start with or switch to: the saved ones, and "Allow all", which the user
-/// picks (and confirms) in the chat for that session only.
-pub const RUN_PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan", "bypassPermissions"];
+/// The modes a run may start with or switch to: the saved ones, and "Allow all" and "Assisted
+/// permissions" (VS Code's elevated levels), which the user picks (and confirms) in the chat for
+/// that session only.
+pub const RUN_PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan", "bypassPermissions", "assisted"];
 
 /// Transcript bounds: the file never grows past this; when it would, the oldest lines go until
 /// it is at most half of it.
@@ -55,6 +56,8 @@ const MAX_TOOL_RESULT: usize = 8 * 1024;
 const MAX_ERROR: usize = 4 * 1024;
 const MAX_INPUT_STRING: usize = 2 * 1024;
 const MAX_INPUT: usize = 16 * 1024;
+/// An MCP App's `CallToolResult` the transcript keeps, at most (larger: kept without it).
+const MAX_APP_RESULT: usize = 256 * 1024;
 /// A tool input a transcript keeps whole (`Transcript::full_inputs`: Arkai's history), at most.
 const MAX_FULL_INPUT: usize = 256 * 1024;
 
@@ -120,6 +123,43 @@ pub struct ChatMeta {
   /// Only ever takes tools away, so a repository's chats.json cannot grant anything.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub disabled_tools: Vec<String>,
+  /// The chat's last turn ended on the agent's usage limit (Orca 1.4.271's usage-limit cut);
+  /// cleared by the next message. Kingu continues it at `resets_at` unless `auto_off`.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub usage_limit: Option<UsageLimitCut>,
+  /// Kingu quit or crashed mid-turn and the chat was not continued yet (Orca 1.4.272's restart
+  /// offer); cleared by the next message or a dismissal.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub interrupted: Option<Interrupted>,
+}
+
+/// The usage limit a chat's turn stopped on.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct UsageLimitCut {
+  /// When the turn stopped (Unix ms).
+  pub at: u64,
+  /// When the limit resets (Unix ms), when the agent said.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub resets_at: Option<u64>,
+  /// `session`, `weekly`, `weeklyModel` or `credits` (Orca's `AgentSessionUsageLimitWindow`).
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub window: Option<String>,
+  /// The user cancelled the automatic continue of this cut.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub auto_off: bool,
+}
+
+/// The usage-limit windows a cut may name.
+pub const USAGE_LIMIT_WINDOWS: &[&str] = &["session", "weekly", "weeklyModel", "credits"];
+
+/// A turn Kingu's exit cut off.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Interrupted {
+  /// When Kingu found it at launch (Unix ms).
+  pub at: u64,
+  /// The run left no `exit` in the transcript: Kingu crashed (or was killed), not quit.
+  #[serde(default)]
+  pub crash: bool,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -216,6 +256,11 @@ pub fn validate(chats: &[ChatMeta]) -> Result<(), String> {
       validate_run_summary(&c.id, r)?;
     }
     check_tool_names(&c.id, &c.disabled_tools)?;
+    if let Some(l) = &c.usage_limit
+      && (l.at == 0 || l.resets_at == Some(0) || l.window.as_deref().is_some_and(|w| !USAGE_LIMIT_WINDOWS.contains(&w)))
+    {
+      return Err(format!("{}: invalid usage limit", c.id));
+    }
   }
   Ok(())
 }
@@ -321,8 +366,16 @@ fn for_transcript_with(ev: &AgentEvent, full_inputs: bool) -> Option<AgentEvent>
   let mut ev = ev.clone();
   match &mut ev {
     AgentEvent::ToolUse { input, .. } if full_inputs && input.to_string().len() <= MAX_FULL_INPUT => {}
-    AgentEvent::Delta { .. } | AgentEvent::Stderr { .. } | AgentEvent::Raw { .. } | AgentEvent::FileSnapshot { .. } | AgentEvent::EditsChanged { .. } => {
+    AgentEvent::Delta { .. } | AgentEvent::Stderr { .. } | AgentEvent::Raw { .. } | AgentEvent::FileSnapshot { .. } | AgentEvent::EditsChanged { .. } | AgentEvent::SignIn { .. } => {
       return None;
+    }
+    // An MCP App's tool calls belong to the live app; its own rendering is kept (`mcp_app` below).
+    AgentEvent::McpAppToolCall { .. } | AgentEvent::McpAppToolCancel { .. } => return None,
+    AgentEvent::McpApp { input, result, .. } => {
+      *input = bounded_input(input);
+      if result.as_ref().is_some_and(|r| r.to_string().len() > MAX_APP_RESULT) {
+        *result = None;
+      }
     }
     AgentEvent::Message { text, .. } => cut(text, MAX_TEXT),
     AgentEvent::Thinking { text, .. } => cut(text, MAX_THINKING),
@@ -360,6 +413,63 @@ pub struct Transcript {
   path: PathBuf,
   max: u64,
   full_inputs: bool,
+  /// The reply being streamed (`checkpointing`), kept crash-safe in `<id>.partial.json`.
+  partial: Option<std::sync::Mutex<Partial>>,
+}
+
+/// Kingu-only (Orca keeps no streamed text): the main agent's reply so far, written to
+/// `<id>.partial.json` at most every `PARTIAL_FLUSH`, dropped once its whole message arrives,
+/// folded into the transcript as the agent's message when the run exits or the next run starts.
+#[derive(Default)]
+struct Partial {
+  text: String,
+  written: Option<std::time::Instant>,
+}
+
+/// How often the streamed reply is written while it grows.
+const PARTIAL_FLUSH: std::time::Duration = std::time::Duration::from_millis(250);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PartialFile {
+  t: u64,
+  text: String,
+}
+
+/// `<root>/.kingu/chats/<id>.partial.json` (next to the transcript, same checks).
+pub fn partial_path(root: &Path, id: &str) -> Result<PathBuf, String> {
+  Ok(transcript_path(root, id)?.with_extension("partial.json"))
+}
+
+/// The streamed reply a crash cut off (empty files and bad JSON count as none).
+pub fn load_partial(root: &Path, id: &str) -> Result<Option<String>, String> {
+  let path = partial_path(root, id)?;
+  if std::fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file()) {
+    return Ok(None);
+  }
+  let Ok(text) = std::fs::read_to_string(&path) else { return Ok(None) };
+  Ok(serde_json::from_str::<PartialFile>(&text).ok().map(|p| p.text).filter(|t| !t.trim().is_empty()))
+}
+
+fn remove_partial(path: &Path) {
+  if let Err(e) = std::fs::remove_file(path)
+    && e.kind() != std::io::ErrorKind::NotFound
+  {
+    log::warn!("{}: {e}", path.display());
+  }
+}
+
+/// What a chat cut off by Kingu's exit left: whether its run ended (`exit` in the transcript, a
+/// quit) or not (a crash or kill), and the streamed reply the checkpoint kept.
+#[derive(Debug, PartialEq, serde::Serialize)]
+pub struct CutOff {
+  pub crash: bool,
+  pub partial: Option<String>,
+}
+
+pub fn cut_off(root: &Path, id: &str) -> Result<CutOff, String> {
+  let lines = load_lines(root, id, 200)?;
+  let last = lines.iter().rev().map(|(_, ev)| ev).find(|ev| !matches!(ev, AgentEvent::Feedback { .. }) && !rust_only(ev));
+  Ok(CutOff { crash: !matches!(last, Some(AgentEvent::Exit { .. })), partial: load_partial(root, id)? })
 }
 
 impl Transcript {
@@ -367,7 +477,77 @@ impl Transcript {
     let path = transcript_path(root, id)?;
     let dir = path.parent().ok_or("transcript path has no parent")?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    Ok(Self { path, max: MAX_TRANSCRIPT_BYTES, full_inputs: false })
+    Ok(Self { path, max: MAX_TRANSCRIPT_BYTES, full_inputs: false, partial: None })
+  }
+
+  /// A run's transcript: its streamed reply is checkpointed (`Partial`). A reply the last run of
+  /// the chat left (Kingu crashed mid-reply) goes into the transcript first, as the agent's message.
+  pub fn checkpointing(mut self) -> Self {
+    let partial = self.path.with_extension("partial.json");
+    if let Ok(text) = std::fs::read_to_string(&partial)
+      && let Ok(p) = serde_json::from_str::<PartialFile>(&text)
+      && !p.text.trim().is_empty()
+      && let Err(e) = self.append_at(&AgentEvent::Message { role: "assistant".into(), text: p.text, parent_tool_use_id: None }, p.t)
+    {
+      log::warn!("chat transcript: {e}");
+    }
+    remove_partial(&partial);
+    self.partial = Some(std::sync::Mutex::new(Partial::default()));
+    self
+  }
+
+  /// Keeps the streamed reply's checkpoint in step with `ev`; at the run's exit a cut-off reply
+  /// goes into the transcript before the `exit`.
+  fn checkpoint(&self, ev: &AgentEvent, t: u64) {
+    let Some(partial) = &self.partial else { return };
+    let mut p = partial.lock().unwrap_or_else(|e| e.into_inner());
+    let path = self.path.with_extension("partial.json");
+    match ev {
+      AgentEvent::Delta { block, text } if block == "text" => {
+        if p.text.len() < MAX_TEXT {
+          p.text.push_str(text);
+          cut(&mut p.text, MAX_TEXT);
+        }
+        if p.written.is_none_or(|w| w.elapsed() >= PARTIAL_FLUSH) {
+          let body = serde_json::to_string(&PartialFile { t, text: p.text.clone() }).unwrap_or_default();
+          let tmp = self.path.with_extension("partial.tmp");
+          let written = (|| {
+            let mut o = std::fs::OpenOptions::new();
+            o.create(true).write(true).truncate(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, libc::O_NOFOLLOW);
+            o.open(&tmp)?.write_all(body.as_bytes())?;
+            std::fs::rename(&tmp, &path)
+          })();
+          if let Err(e) = written {
+            log::warn!("{}: {e}", path.display());
+          }
+          p.written = Some(std::time::Instant::now());
+        }
+      }
+      // The whole message replaces its stream; a result ends the turn.
+      AgentEvent::Message { role, parent_tool_use_id: None, .. } if role == "assistant" => {
+        *p = Partial::default();
+        remove_partial(&path);
+      }
+      AgentEvent::Result { .. } => {
+        *p = Partial::default();
+        remove_partial(&path);
+      }
+      AgentEvent::Exit { .. } => {
+        // A reply cut by the run's end (a quit, a stop): kept as the agent's message.
+        let text = std::mem::take(&mut p.text);
+        *p = Partial::default();
+        drop(p);
+        if !text.trim().is_empty()
+          && let Err(e) = self.write_line(&AgentEvent::Message { role: "assistant".into(), text, parent_tool_use_id: None }, t)
+        {
+          log::warn!("chat transcript: {e}");
+        }
+        remove_partial(&path);
+      }
+      _ => {}
+    }
   }
 
   /// Keeps tool inputs whole (within `MAX_FULL_INPUT`): a runtime whose history is the transcript.
@@ -388,6 +568,11 @@ impl Transcript {
   }
 
   fn append_at(&self, ev: &AgentEvent, t: u64) -> Result<(), String> {
+    self.checkpoint(ev, t);
+    self.write_line(ev, t)
+  }
+
+  fn write_line(&self, ev: &AgentEvent, t: u64) -> Result<(), String> {
     let Some(event) = for_transcript_with(ev, self.full_inputs) else { return Ok(()) };
     let mut line = serde_json::to_vec(&Line { t, event }).map_err(|e| e.to_string())?;
     line.push(b'\n');
@@ -436,6 +621,10 @@ pub(super) fn write_atomic_big(path: &Path, content: &str) -> Result<(), String>
 /// crash) are skipped, and so are `Anchor`s (rewind points, for Rust only).
 pub fn load_transcript(root: &Path, id: &str) -> Result<Vec<AgentEvent>, String> {
   let mut events = load_transcript_full(root, id)?;
+  // A reply a crash cut off (the checkpoint, not yet folded in by the chat's next run).
+  if let Some(text) = load_partial(root, id)? {
+    events.push(AgentEvent::Message { role: "assistant".into(), text, parent_tool_use_id: None });
+  }
   for ev in &mut events {
     if let AgentEvent::ToolUse { input, .. } = ev {
       *input = bounded_input(input);
@@ -492,6 +681,7 @@ pub fn load_lines(root: &Path, id: &str, max: usize) -> Result<Vec<(u64, AgentEv
 }
 
 pub fn delete_transcript(root: &Path, id: &str) -> Result<(), String> {
+  remove_partial(&partial_path(root, id)?);
   let path = transcript_path(root, id)?;
   match std::fs::remove_file(&path) {
     Ok(()) => Ok(()),
@@ -535,6 +725,8 @@ mod tests {
       working: false,
       side_of: None,
       disabled_tools: Vec::new(),
+      usage_limit: None,
+      interrupted: None,
     }
   }
 
@@ -758,8 +950,80 @@ mod tests {
     std::fs::remove_file(tmp.path().join(".kingu/chats")).unwrap();
     std::fs::create_dir(tmp.path().join(".kingu/chats")).unwrap();
     std::os::unix::fs::symlink(outside.path().join("f"), tmp.path().join(".kingu/chats/c.jsonl")).unwrap();
-    let t = Transcript { path: tmp.path().join(".kingu/chats/c.jsonl"), max: MAX_TRANSCRIPT_BYTES, full_inputs: false };
+    let t = Transcript { path: tmp.path().join(".kingu/chats/c.jsonl"), max: MAX_TRANSCRIPT_BYTES, full_inputs: false, partial: None };
     assert!(t.append(&msg("x")).is_err(), "O_NOFOLLOW");
     assert!(!outside.path().join("f").exists());
+  }
+
+  fn delta(text: &str) -> AgentEvent {
+    AgentEvent::Delta { block: "text".into(), text: text.into() }
+  }
+
+  #[test]
+  fn usage_limit_and_interrupted_round_trip_and_are_checked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let limited = ChatMeta {
+      usage_limit: Some(UsageLimitCut { at: 10, resets_at: Some(20), window: Some("weekly".into()), auto_off: true }),
+      interrupted: Some(Interrupted { at: 5, crash: true }),
+      ..chat("a")
+    };
+    save(tmp.path(), std::slice::from_ref(&limited)).unwrap();
+    assert_eq!(load(tmp.path()).unwrap(), [limited]);
+    // The webview sends `null` for a cleared one, and older files have neither.
+    let c: ChatMeta = serde_json::from_value(json!({"id": "b", "title": "B", "cwd": {"kind": "folder"}, "created_at": 1, "usage_limit": null, "interrupted": null})).unwrap();
+    assert_eq!((c.usage_limit, c.interrupted), (None, None));
+    let bad = |l: UsageLimitCut| validate(&[ChatMeta { usage_limit: Some(l), ..chat("a") }]).is_err();
+    assert!(bad(UsageLimitCut { at: 0, resets_at: None, window: None, auto_off: false }));
+    assert!(bad(UsageLimitCut { at: 1, resets_at: Some(0), window: None, auto_off: false }));
+    assert!(bad(UsageLimitCut { at: 1, resets_at: None, window: Some("monthly".into()), auto_off: false }));
+    assert!(!bad(UsageLimitCut { at: 1, resets_at: None, window: None, auto_off: false }));
+  }
+
+  #[test]
+  fn a_streamed_reply_survives_a_crash_and_is_folded_in_by_the_next_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = Transcript::new(tmp.path(), "c").unwrap().checkpointing();
+    t.append(&AgentEvent::Message { role: "user".into(), text: "เขียน".into(), parent_tool_use_id: None }).unwrap();
+    t.append(&delta("ครึ่ง")).unwrap();
+    assert_eq!(load_partial(tmp.path(), "c").unwrap().as_deref(), Some("ครึ่ง"), "the first chunk is written at once");
+    // Throttled: the next chunk waits for the flush interval (or the next chunk after it).
+    t.append(&delta("แรก")).unwrap();
+    std::thread::sleep(PARTIAL_FLUSH);
+    t.append(&delta(" ต่อ")).unwrap();
+    assert_eq!(load_partial(tmp.path(), "c").unwrap().as_deref(), Some("ครึ่งแรก ต่อ"));
+    // Kingu dies here: no message, no exit. Reopened, the chat shows the reply so far…
+    drop(t);
+    let shown = load_transcript(tmp.path(), "c").unwrap();
+    assert_eq!(shown.last(), Some(&msg("ครึ่งแรก ต่อ")));
+    assert_eq!(cut_off(tmp.path(), "c").unwrap(), CutOff { crash: true, partial: Some("ครึ่งแรก ต่อ".into()) });
+    // …and the next run keeps it for good, before its own events.
+    let next = Transcript::new(tmp.path(), "c").unwrap().checkpointing();
+    assert_eq!(load_partial(tmp.path(), "c").unwrap(), None);
+    next.append(&msg("ต่อจากเดิม")).unwrap();
+    let back = load_transcript(tmp.path(), "c").unwrap();
+    assert_eq!(back[back.len() - 2..], [msg("ครึ่งแรก ต่อ"), msg("ต่อจากเดิม")]);
+  }
+
+  #[test]
+  fn a_whole_message_drops_the_checkpoint_and_an_exit_keeps_a_cut_reply() {
+    let tmp = tempfile::tempdir().unwrap();
+    let t = Transcript::new(tmp.path(), "c").unwrap().checkpointing();
+    t.append(&delta("สวัส")).unwrap();
+    t.append(&msg("สวัสดี")).unwrap();
+    assert_eq!(load_partial(tmp.path(), "c").unwrap(), None);
+    t.append(&AgentEvent::Delta { block: "thinking".into(), text: "คิด".into() }).unwrap();
+    assert_eq!(load_partial(tmp.path(), "c").unwrap(), None, "thinking is not checkpointed");
+    // Kingu quits mid-reply: the run's exit arrives with the reply cut.
+    t.append(&delta("กำลังพิม")).unwrap();
+    t.append(&AgentEvent::Exit { code: None, signal: None, stopped: true }).unwrap();
+    let back = load_transcript(tmp.path(), "c").unwrap();
+    assert_eq!(back[back.len() - 2..], [msg("กำลังพิม"), AgentEvent::Exit { code: None, signal: None, stopped: true }]);
+    assert_eq!(cut_off(tmp.path(), "c").unwrap(), CutOff { crash: false, partial: None });
+    // Without checkpointing (feedback, imports) nothing is written, and delete removes a leftover.
+    Transcript::new(tmp.path(), "d").unwrap().append(&delta("x")).unwrap();
+    assert_eq!(load_partial(tmp.path(), "d").unwrap(), None);
+    Transcript::new(tmp.path(), "e").unwrap().checkpointing().append(&delta("y")).unwrap();
+    delete_transcript(tmp.path(), "e").unwrap();
+    assert!(!partial_path(tmp.path(), "e").unwrap().exists());
   }
 }

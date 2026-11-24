@@ -48,7 +48,7 @@ export const ASK_AGENT = 'ask';
 export type ModePick = 'agent' | 'ask' | 'plan' | `custom:${string}`;
 
 /** What the picker shows for a chat: its custom agent or Ask, else Plan or Agent by its permission mode. */
-export function modePick(permission: PermissionMode | 'bypassPermissions' | null | undefined, agent: string | null | undefined): ModePick {
+export function modePick(permission: PermissionMode | 'assisted' | 'bypassPermissions' | null | undefined, agent: string | null | undefined): ModePick {
 	if (agent === ASK_AGENT) return 'ask';
 	if (agent) return `custom:${agent}`;
 	return permission === 'plan' ? 'plan' : 'agent';

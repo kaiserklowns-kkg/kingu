@@ -30,6 +30,7 @@ import { newChatInTask, openChat } from '#lib/agent/chatCommands.svelte.ts';
 import { chats } from '#lib/agent/chats.svelte.ts';
 import { chatHandoffSessions, chatRuntimeFor } from '#lib/agent/sessionHandoff.ts';
 import { cliSessions } from './cliSessions.svelte.ts';
+import { emptyHistory, recordVisit, stepIndex, type WorktreeHistory } from './worktreeHistory';
 
 const FOLDER_ID = '@folder';
 
@@ -249,8 +250,40 @@ export function jumpToWorktree() {
 /** The side bar's visible worktree order (AdeSidebar keeps it): ⌘1–9 jump to row N (Orca). */
 export const sidebarOrder = $state<{ keys: string[] }>({ keys: [] });
 
+/** Orca's worktree history (⌥⌘← / ⌥⌘→) for the open folder; `navigating` keeps a history step from recording itself. */
+const history = $state<{ h: WorktreeHistory; root: string | null; navigating: boolean }>({ h: emptyHistory(), root: null, navigating: false });
+/** A history entry still exists: the folder itself, or a worktree the side bar shows. */
+const liveWorktree = (key: string) => key === PRIMARY || sidebarOrder.keys.includes(key) || adeTasks.find(key) !== undefined;
+
+function stepHistory(back: boolean) {
+	const i = stepIndex(history.h, back, liveWorktree);
+	if (i === null) return;
+	history.navigating = true;
+	try {
+		adeLayout.show(history.h.entries[i]);
+		history.h = { ...history.h, index: i };
+	} finally {
+		history.navigating = false;
+	}
+}
+
 export function installWorktreeCommands(): () => void {
+	// Each worktree shown in the Agents layout is a visit (Orca records on activation, not on the board).
+	const stopHistory = $effect.root(() => {
+		$effect(() => {
+			const root = workspace.root;
+			const key = adeLayout.key;
+			if (!appMode.isAgents || adeLayout.board || root === null) return;
+			if (history.root !== root) history.h = emptyHistory();
+			history.root = root;
+			if (!history.navigating) history.h = recordVisit(history.h, key);
+		});
+	});
 	const unregister = [
+		stopHistory,
+		// Orca's worktree.history.back / forward (Mod+Alt+←/→ on every platform), the Agents layout's keys.
+		commands.register({ id: 'kingu.agents.worktreeHistoryBack', title: 'Worktree History Back', category: 'Agents', key: 'cmd+alt+left', scope: 'agents', when: () => appMode.isAgents && stepIndex(history.h, true, liveWorktree) !== null, run: () => stepHistory(true) }),
+		commands.register({ id: 'kingu.agents.worktreeHistoryForward', title: 'Worktree History Forward', category: 'Agents', key: 'cmd+alt+right', scope: 'agents', when: () => appMode.isAgents && stepIndex(history.h, false, liveWorktree) !== null, run: () => stepHistory(false) }),
 		commands.register({ id: 'kingu.agents.jumpWorktree', title: 'Worktree Jump…', category: 'Agents', key: 'cmd+shift+j', when: () => workspace.root !== null, run: jumpToWorktree }),
 		// Orca's ⌘J in the Agents layout (the IDE keeps ⌘J for its panel).
 		commands.register({ id: 'kingu.agents.jumpWorktreeOrca', title: 'Worktree Jump (Orca key)', category: 'Agents', key: 'cmd+j', scope: 'agents', palette: false, when: () => appMode.isAgents && workspace.root !== null, run: jumpToWorktree }),

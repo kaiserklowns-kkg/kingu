@@ -427,7 +427,7 @@ func (s *Server) me(r *http.Request, oc orgCtx, tx pgx.Tx) (int, any, error) {
 
 // listOrgTasks is GET /v1/tasks?project_id=&status=&limit=, newest change first.
 func (s *Server) listOrgTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, error) {
-	limit, err := parseLimit(r)
+	pg, err := parsePage(r, true, true)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -447,7 +447,8 @@ func (s *Server) listOrgTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, e
 	rows, err := tx.Query(r.Context(),
 		`SELECT `+taskCols+` FROM tasks
 		 WHERE ($1 = '' OR project_id::text = $1) AND ($2 = '' OR status = $2)
-		 ORDER BY updated_at DESC, id LIMIT $3`, projectID, status, limit)
+		   AND ($3::timestamptz IS NULL OR (updated_at, id) < ($3, $4::uuid))
+		 ORDER BY updated_at DESC, id DESC LIMIT $5`, projectID, status, pg.afterTime(), pg.afterID(), pg.Limit+1)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -455,7 +456,7 @@ func (s *Server) listOrgTasks(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, e
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusOK, listResponse[task]{Items: items}, nil
+	return http.StatusOK, pageOf(items, pg.Limit, func(t task) cursor { return cursor{T: &t.UpdatedAt, ID: t.ID} }), nil
 }
 
 type runListItem struct {
@@ -469,7 +470,7 @@ type runListItem struct {
 
 // listRuns is GET /v1/runs?task_id=&limit=, newest first.
 func (s *Server) listRuns(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, error) {
-	limit, err := parseLimit(r)
+	pg, err := parsePage(r, true, true)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -487,7 +488,8 @@ func (s *Server) listRuns(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, error
 		        t.project_id::text, p.name, t.title, t.source, t.external_ref
 		   FROM agent_runs r JOIN tasks t ON t.id = r.task_id JOIN projects p ON p.id = t.project_id
 		  WHERE ($1 = '' OR r.task_id::text = $1)
-		  ORDER BY r.started_at DESC, r.id LIMIT $2`, taskID, limit)
+		    AND ($2::timestamptz IS NULL OR (r.started_at, r.id) < ($2, $3::uuid))
+		  ORDER BY r.started_at DESC, r.id DESC LIMIT $4`, taskID, pg.afterTime(), pg.afterID(), pg.Limit+1)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -499,5 +501,5 @@ func (s *Server) listRuns(r *http.Request, _ orgCtx, tx pgx.Tx) (int, any, error
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusOK, listResponse[runListItem]{Items: items}, nil
+	return http.StatusOK, pageOf(items, pg.Limit, func(it runListItem) cursor { return cursor{T: &it.StartedAt, ID: it.ID} }), nil
 }

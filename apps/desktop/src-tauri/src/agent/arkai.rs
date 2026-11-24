@@ -468,6 +468,79 @@ pub fn switch_provider(config_dir: &std::path::Path, model: &str) -> Option<Wire
   wire_provider(p, &transport, stored_key(&p.id)).ok()
 }
 
+// ---------------------------------------------------------------------------------------------
+// Model routers (VS Code 1.147): `~/.agents/model-routers/<name>.model-router.yaml`, offered in the
+// chat's model picker as `<provider>/model-router:<name>` when `chat.copilot.modelRouter.enabled`
+// is on. Only the picker's fields are read here; the agent host (`src/arkai/modelRouter.ts`) reads
+// and checks the whole file when a turn runs.
+
+/// VS Code's switch for routers (`ModelRouterEnabledSettingId`); off unless `true`.
+pub const ROUTER_SETTING: &str = "chat.copilot.modelRouter.enabled";
+const ROUTER_SUFFIXES: [&str; 2] = [".model-router.yaml", ".model-router.yml"];
+/// Routers listed at most, and the size of a file read (VS Code's `MODEL_ROUTER_MAX_FILE_BYTES`).
+const MAX_ROUTERS: usize = 50;
+const MAX_ROUTER_BYTES: u64 = 32 * 1024;
+
+/// A router as the model picker shows it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct RouterInfo {
+  /// The id the chat stores after `model-router:`.
+  pub name: String,
+  /// `display-name`, else the name.
+  pub label: String,
+  pub description: String,
+}
+
+fn router_name_ok(name: &str) -> bool {
+  !name.is_empty() && name.len() <= 64 && name.split('-').all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+}
+
+/// A top-level scalar of a router file (`key: value`, quoted or plain, or a `|` / `>` block).
+fn router_field(content: &str, key: &str) -> Option<String> {
+  let prefix = format!("{key}:");
+  let mut lines = content.lines();
+  while let Some(line) = lines.next() {
+    let Some(rest) = line.strip_prefix(&prefix) else { continue };
+    let value = rest.trim();
+    if value.starts_with('|') || value.starts_with('>') {
+      let block: Vec<&str> = lines.by_ref().take_while(|l| l.is_empty() || l.starts_with(' ') || l.starts_with('\t')).map(str::trim).filter(|l| !l.is_empty()).collect();
+      return Some(block.join(" "));
+    }
+    let value = value.split(" #").next().unwrap_or("").trim();
+    let unquoted = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))).unwrap_or(value);
+    return Some(unquoted.to_owned());
+  }
+  None
+}
+
+/// The routers in `dir`, by name; files that cannot be read, or name nothing valid, are left out.
+pub fn model_routers(dir: &std::path::Path) -> Vec<RouterInfo> {
+  let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+  let mut out: Vec<RouterInfo> = Vec::new();
+  let mut files: Vec<_> = entries.flatten().map(|e| e.path()).collect();
+  files.sort();
+  for path in files {
+    let Some(file) = path.file_name().and_then(|f| f.to_str()) else { continue };
+    let lower = file.to_lowercase();
+    let Some(suffix) = ROUTER_SUFFIXES.iter().find(|s| lower.ends_with(**s)) else { continue };
+    if std::fs::metadata(&path).map(|m| !m.is_file() || m.len() > MAX_ROUTER_BYTES).unwrap_or(true) {
+      continue;
+    }
+    let Ok(content) = std::fs::read_to_string(&path) else { continue };
+    let name = router_field(&content, "name").unwrap_or_else(|| file[..file.len() - suffix.len()].to_owned());
+    if !router_name_ok(&name) || out.iter().any(|r| r.name == name) {
+      continue;
+    }
+    let description = router_field(&content, "description").unwrap_or_default().chars().take(300).collect();
+    let label = router_field(&content, "display-name").filter(|l| !l.trim().is_empty()).map(|l| l.chars().take(64).collect()).unwrap_or_else(|| name.clone());
+    out.push(RouterInfo { name, label, description });
+    if out.len() >= MAX_ROUTERS {
+      break;
+    }
+  }
+  out
+}
+
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
   tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
@@ -479,6 +552,20 @@ pub async fn arkai_providers(app: tauri::AppHandle) -> Result<Vec<ProviderInfo>,
   blocking(move || {
     let transport = crate::local_ai::http::Reqwest::new()?;
     Ok(infos(&configured(&config), &transport, &stored_key))
+  })
+  .await
+}
+
+/// The chat's model picker: the user's model routers, when `chat.copilot.modelRouter.enabled` is on.
+#[tauri::command]
+pub async fn arkai_model_routers(app: tauri::AppHandle) -> Result<Vec<RouterInfo>, String> {
+  let config = crate::snap::config_dir(&app)?;
+  blocking(move || {
+    if crate::settings::user_value(&config, ROUTER_SETTING).and_then(|v| v.as_bool()) != Some(true) {
+      return Ok(Vec::new());
+    }
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return Ok(Vec::new()) };
+    Ok(model_routers(&home.join(".agents").join("model-routers")))
   })
   .await
 }
@@ -515,6 +602,28 @@ pub async fn arkai_delete_key(provider: String) -> Result<(), String> {
     Err(e) => Err(tr!(ArkaiMsg::DeleteKeyFailed, detail = e)),
   })
   .await
+}
+
+#[cfg(test)]
+mod router_tests {
+  use super::*;
+
+  #[test]
+  fn routers_from_their_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("daily-driver.model-router.yaml"), "version: 1\ndisplay-name: \"Daily Driver\"\ndescription: >\n  Haiku by default,\n  Opus for planning.\nroutes: []\n").unwrap();
+    std::fs::write(dir.path().join("Other.model-router.yml"), "version: 1\nname: quick # the short one\ndescription: 'Fast'\n").unwrap();
+    std::fs::write(dir.path().join("Bad Name.model-router.yaml"), "version: 1\n").unwrap();
+    std::fs::write(dir.path().join("notes.yaml"), "name: nope\n").unwrap();
+    assert_eq!(
+      model_routers(dir.path()),
+      vec![
+        RouterInfo { name: "quick".into(), label: "quick".into(), description: "Fast".into() },
+        RouterInfo { name: "daily-driver".into(), label: "Daily Driver".into(), description: "Haiku by default, Opus for planning.".into() },
+      ]
+    );
+    assert!(model_routers(&dir.path().join("missing")).is_empty());
+  }
 }
 
 #[cfg(test)]

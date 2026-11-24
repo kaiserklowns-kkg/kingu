@@ -11,6 +11,7 @@ import { adeLayout, browserLabel } from './adeLayout.svelte';
 import { browserAction } from '#lib/workbench/floating.ts';
 import { tabPanes } from './adeTabs.ts';
 import { cliName, parseCliCommand } from './agentCli';
+import { profileOf } from './agentProfiles';
 import { isMarkdownEditor } from './adeMarkdown.ts';
 import { settings } from '#lib/settings/settings.svelte.ts';
 import { workspaceSpace } from './workspaceSpace.svelte';
@@ -33,7 +34,7 @@ export function installAdeCommands(): () => void {
 		cmd(K.openMarkdown, () => void adeLayout.openMarkdown(adeLayout.key)),
 		cmd(K.newAgent, () => {
 			const argv = parseCliCommand(settings.get<string>('kingu.agent.cli') ?? '') ?? ['claude'];
-			adeLayout.newTerminal(adeLayout.key, { title: cliName(argv), run: argv });
+			adeLayout.newTerminal(adeLayout.key, { title: cliName(argv), run: argv, launch: { agent: profileOf(argv).id, argv } });
 		}),
 		cmd(K.markdownPreview, () => adeLayout.toggleMarkdownPreview(adeLayout.key), () => {
 			const file = front() ? adeLayout.activeFile() : null;
@@ -73,6 +74,7 @@ export function installAdeCommands(): () => void {
 			const t = terminal();
 			if (t) adeLayout.toggleExpand(t.key, t.tab.id);
 		}, split),
+		cmd(K.quickCommands, () => adeLayout.quickMenuRequest++),
 		cmd(K.equalizePanes, () => {
 			const t = terminal();
 			if (t) adeLayout.equalize(t.key, t.tab.id);
@@ -84,17 +86,34 @@ export function installAdeCommands(): () => void {
 		commands.register({ ...K.clear, category: 'Terminal', scope: 'agents', when: () => front() && focusedTerminal('ade') !== null, run: () => focusedTerminal('ade')?.clear() }),
 		// Orca's Workspace Space: disk used by each task's worktree (IDE and Agents layout alike).
 		// Orca's browser tools while a browser tab is shown (zoom stays on the toolbar: ⌘= ⌘- ⌘0 zoom Kingu).
-		...(['find', 'devtools'] as const).map((action) =>
+		// Back / Forward (⌘[ / ⌘] on macOS) and Focus Address Bar (⌘L): Orca's browser chords
+		// (definitions-core-2/3.ts). Like find, they act while Kingu's own UI has the focus; keys typed
+		// into the page stay with the page. Orca's Alt+← / Alt+→ off macOS are left out: a key scoped
+		// to the Agents layout would take them from the quick input's Back there. ⌘[ / ⌘] are the
+		// pane-focus keys too (a terminal tab is never the browser tab in front), and ⌘L (Toggle Right
+		// Side Bar) gives way while a browser tab is in front, as Orca's browser scope does.
+		...(
+			[
+				{ action: 'find', title: 'Browser: Find in Page', key: 'cmd+f' },
+				{ action: 'devtools', title: 'Browser: Toggle Developer Tools', key: 'alt+cmd+i' },
+				{ action: 'back', title: 'Browser: Go Back', mac: 'cmd+[' },
+				{ action: 'forward', title: 'Browser: Go Forward', mac: 'cmd+]' },
+				{ action: 'address', title: 'Browser: Focus Address Bar', key: 'cmd+l', weight: 1 },
+				// Orca's browser.hardReload (Mod+Shift+R). It takes ⇧⌘R in the Agents layout only, where the
+				// IDE's Search Again (a Search Editor) and Rerun Task (a task terminal) do not act.
+				{ action: 'hardReload', title: 'Browser: Hard Reload', key: 'cmd+shift+r' }
+			] as const
+		).map(({ action, title, ...keys }) =>
 			commands.register({
 				id: `kingu.browser.${action}`,
-				title: action === 'find' ? 'Browser: Find in Page' : 'Browser: Toggle Developer Tools',
+				title,
 				category: 'Browser',
-				key: action === 'find' ? 'cmd+f' : 'alt+cmd+i',
+				...keys,
 				scope: 'agents',
 				when: () => front() && adeLayout.activeBrowser() !== null,
 				run: () => {
 					const b = adeLayout.activeBrowser();
-					if (b) browserAction(browserLabel(b.key, b.tab.id), action);
+					if (b) browserAction(browserLabel(b.key, b.tab.id, b.tab.profile), action);
 				}
 			})
 		),

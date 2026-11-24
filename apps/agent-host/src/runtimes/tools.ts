@@ -144,7 +144,9 @@ const MODE_IDS: Record<PermissionMode, readonly string[]> = {
 	default: ['default'],
 	acceptEdits: ['acceptEdits', 'autoEdit', 'auto_edit', 'auto-edit'],
 	plan: ['plan'],
-	bypassPermissions: ['bypassPermissions', 'yolo']
+	bypassPermissions: ['bypassPermissions', 'yolo'],
+	// Kingu's reviewer is the Claude runtime's; another agent asks as in `default`.
+	assisted: ['default']
 };
 export function agentModeFor(mode: PermissionMode, available: unknown): string | null {
 	const ids = new Set((Array.isArray(available) ? available.filter(isObj) : []).map((m) => str(m.id)).filter(Boolean));
@@ -206,7 +208,7 @@ export function codexToolView(item: Obj, cwd: string): ToolView | null {
 			const changes = Array.isArray(item.changes) ? item.changes.filter(isObj) : [];
 			const paths = [...new Set(changes.map((c) => absPath(c.path, cwd)).filter((p): p is string => !!p))];
 			const added = changes.length === 1 && isObj(changes[0]!.kind) && changes[0]!.kind.type === 'add';
-			const diff = changes.map((c) => str(c.diff) ?? '').join('\n');
+			const diff = codexFileChangePatch(changes);
 			return { name: added ? 'Write' : 'Edit', kind: 'edit', paths, input: { file_path: paths[0] ?? '', ...(paths.length > 1 ? { files: paths } : {}), ...(diff ? { diff: truncate(diff, MAX_TOOL_RESULT_CHARS) } : {}) } };
 		}
 		case 'mcpToolCall':
@@ -216,6 +218,61 @@ export function codexToolView(item: Obj, cwd: string): ToolView | null {
 		default:
 			return null;
 	}
+}
+
+/** A plain -/+ replacement hunk of the given text (Orca's replacementHunk). */
+function replacementHunk(oldText: string, newText: string): string {
+	const lines = (text: string, prefix: string) => {
+		if (!text) return { count: 0, text: '' };
+		const entries = text.split('\n');
+		if (entries.at(-1) === '') entries.pop();
+		return { count: entries.length, text: entries.map((l) => `${prefix}${l}\n`).join('') + (text.endsWith('\n') ? '' : '\\ No newline at end of file\n') };
+	};
+	const o = lines(oldText, '-');
+	const n = lines(newText, '+');
+	return `@@ -${o.count ? 1 : 0},${o.count} +${n.count ? 1 : 0},${n.count} @@\n${o.text}${n.text}`;
+}
+
+/** Header parsing cuts names at a tab and trims them, so such a name would be shown wrong. */
+const UNSAFE_HEADER_PATH = /[\t\r\n]|^\s|\s$/;
+/** Codex appends `Moved to: <path>` as the last line of a moved file's update. */
+const MOVE_MARKER = /(?:^|\n)Moved to: (.+)$/;
+
+/** One file of a fileChange under its own `diff --git` header; null when its name cannot go in one. */
+function fileChangeSection(c: Obj): string | null {
+	const path = str(c.path) ?? '';
+	const diff = str(c.diff) ?? '';
+	const kind = isObj(c.kind) ? c.kind : {};
+	const type = str(kind.type);
+	const whole = type === 'add' || type === 'delete';
+	// Only an update carries the Moved to marker; raw add/delete content may end in that text.
+	const moved = whole ? null : MOVE_MARKER.exec(diff);
+	const update = whole ? null : { body: moved ? diff.slice(0, moved.index) : diff, movedTo: moved ? moved[1]!.trim() : null };
+	const oldPath = type === 'add' ? null : path;
+	const newPath = type === 'delete' ? null : (str(kind.move_path) ?? update?.movedTo ?? path);
+	if (!path || UNSAFE_HEADER_PATH.test(path) || (newPath !== null && UNSAFE_HEADER_PATH.test(newPath))) return null;
+	// Add and delete arrive as raw file content, so they become one whole-file hunk.
+	const body = update ? update.body.replace(/\n+$/, '') : (type === 'add' ? replacementHunk('', diff) : replacementHunk(diff, '')).replace(/\r?\n$/, '');
+	return [`diff --git a/${oldPath ?? path} b/${newPath ?? path}`, `--- ${oldPath === null ? '/dev/null' : `a/${oldPath}`}`, `+++ ${newPath === null ? '/dev/null' : `b/${newPath}`}`, ...(body === '' ? [] : [body])].join('\n');
+}
+
+/**
+ * A Codex fileChange's diff (Orca c6594b2c2 codex-file-change-patch.ts): each file of a multi-file
+ * apply_patch under its own `diff --git` header (Codex's own diffs carry none, so a plain join
+ * could not be told apart). One file, a patch past the row's limit, or a header-unsafe name keeps
+ * the plain join.
+ */
+export function codexFileChangePatch(changes: readonly Obj[]): string {
+	const plain = () => changes.map((c) => str(c.diff) ?? '').join('\n');
+	const raw = changes.reduce((n, c) => n + (str(c.diff)?.length ?? 0), 0);
+	if (changes.length <= 1 || raw > MAX_TOOL_RESULT_CHARS) return plain();
+	const sections: string[] = [];
+	for (const c of changes) {
+		const s = fileChangeSection(c);
+		if (s === null) return plain();
+		sections.push(s);
+	}
+	return sections.join('\n');
 }
 
 /** A finished Codex tool item's `tool_result`. */

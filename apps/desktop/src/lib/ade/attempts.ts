@@ -5,6 +5,7 @@
 
 import { slugify } from '#lib/agent/events.ts';
 import { aggregateStats, type StatTotals, type TaskMeta, type TaskStatus, type TaskView } from './model';
+import { emojiToShortcodes } from './emojiShortcodes.ts';
 
 export const MAX_ATTEMPTS = 4;
 const LETTERS = 'abcd';
@@ -22,7 +23,7 @@ export function validModel(m: string): boolean {
  */
 export function attemptSlugs(title: string, count: number, taken: ReadonlySet<string>): { group: string; slugs: string[] } {
 	const n = Math.max(1, Math.min(MAX_ATTEMPTS, Math.floor(count)));
-	const root = slugify(title).slice(0, MAX_SLUG - 2).replace(/-+$/, '');
+	const root = slugify(emojiToShortcodes(title)).slice(0, MAX_SLUG - 2).replace(/-+$/, '');
 	for (let k = 1; ; k++) {
 		const suffix = k === 1 ? '' : `-${k}`;
 		const group = root.slice(0, MAX_SLUG - 2 - suffix.length).replace(/-+$/, '') + suffix;

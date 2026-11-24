@@ -5,6 +5,7 @@
 	// debug.console.acceptSuggestionOnEnter on). Font, line height, wrapping and collapsing of
 	// identical lines follow the debug.console.* settings. While debugging, the adapter's completions
 	// (DAP `completions`) come first, as you type and on ⌃Space (VS Code's REPL suggest widget).
+	import { untrack } from 'svelte';
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { debug } from './debug.svelte.ts';
@@ -12,6 +13,7 @@
 	import type { CompletionItem } from './protocol.ts';
 	import { applyCompletion, rankCompletions, wordBefore } from './replCompletion.ts';
 	import { replFilter } from './debugViewKeys.ts';
+	import { findInLines, pieces, stepMatch } from './replFind.ts';
 	import { t } from '#lib/i18n/index.ts';
 
 	let input = $state('');
@@ -29,6 +31,54 @@
 		const keep = replFilter(filter);
 		return filter.trim() ? allOutput.filter((l) => keep(l.text)) : allOutput;
 	});
+	// Find (repl.ts `repl.action.find`, ⌥⌘F): highlights every match in the shown lines; ↵ / ⇧↵ move
+	// between them, Escape closes the box and goes back to the input.
+	let findOpen = $state(false);
+	let findQuery = $state('');
+	let findAt = $state(-1);
+	let findEl: HTMLInputElement | undefined = $state();
+	const matches = $derived(findOpen ? findInLines(output.map((l) => l.text), findQuery) : []);
+	/** The index of each line's first match (for cutting the line into pieces). */
+	const firstMatch = $derived.by(() => {
+		const first = new Map<number, number>();
+		matches.forEach((m, i) => first.has(m.line) || first.set(m.line, i));
+		return first;
+	});
+	$effect(() => {
+		if (!debug.consoleFindRequested) return;
+		debug.consoleFindRequested = false;
+		findOpen = true;
+		queueMicrotask(() => (findEl?.focus(), findEl?.select()));
+	});
+	// A new query starts at the first match; matches that went away clamp the current one.
+	$effect(() => {
+		void findQuery;
+		findAt = untrack(() => matches.length) ? 0 : -1;
+		revealMatch();
+	});
+	$effect(() => {
+		if (findAt >= matches.length) findAt = matches.length ? matches.length - 1 : -1;
+	});
+	function revealMatch() {
+		queueMicrotask(() => scroller?.querySelector('[data-current-match]')?.scrollIntoView({ block: 'nearest' }));
+	}
+	function onFindKey(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			findAt = stepMatch(findAt, matches.length, !e.shiftKey);
+			revealMatch();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			e.stopPropagation();
+			closeFind();
+		}
+	}
+	function closeFind() {
+		findOpen = false;
+		findQuery = '';
+		inputEl?.focus();
+	}
+
 	const MAC = typeof navigator !== 'undefined' && navigator.userAgent.includes('Mac');
 	function onConsoleKey(e: KeyboardEvent) {
 		if (e.key.toLowerCase() !== 'f' || !(MAC ? e.metaKey : e.ctrlKey) || e.altKey || e.shiftKey) return;
@@ -140,8 +190,39 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="flex h-full flex-col" data-debug-console onkeydown={onConsoleKey}>
-	{#if allOutput.length || filter}
-		<div class="flex shrink-0 justify-end px-2 pt-1">
+	{#if allOutput.length || filter || findOpen || debug.sessions.length > 1}
+		<div class="flex shrink-0 flex-wrap items-center justify-end gap-1 px-2 pt-1">
+			{#if debug.sessions.length > 1}
+				<!-- VS Code's Select Debug Console (repl.ts `workbench.action.debug.selectRepl`), shown with several sessions. -->
+				<select
+					aria-label={t('debugger.console.select')}
+					title={t('debugger.console.select')}
+					value={debug.focusedKey}
+					onchange={(e) => debug.focusSession(Number(e.currentTarget.value))}
+					class="mr-auto h-[22px] max-w-56 rounded-sm border border-(--vscode-dropdown-border,transparent) bg-(--vscode-dropdown-background) px-1 text-xs text-(--vscode-dropdown-foreground) outline-none focus:border-(--vscode-focusBorder)"
+				>
+					{#each debug.sessions as s (s.key)}<option value={s.key}>{s.parentKey !== null ? `\u00a0\u00a0${s.name}` : s.name}</option>{/each}
+				</select>
+			{/if}
+			{#if findOpen}
+				<div class="flex items-center gap-0.5 rounded-sm border border-(--vscode-input-border,transparent) bg-(--vscode-input-background) pr-0.5 focus-within:border-(--vscode-focusBorder)">
+					<input
+						bind:this={findEl}
+						bind:value={findQuery}
+						aria-label={t('debugger.console.find')}
+						placeholder={t('debugger.console.find')}
+						spellcheck="false"
+						onkeydown={onFindKey}
+						class="h-[20px] w-40 bg-transparent px-1.5 text-xs text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground)"
+					/>
+					<span class="min-w-14 px-1 text-[11px] whitespace-nowrap text-(--vscode-descriptionForeground)" role="status">
+						{findQuery ? (matches.length ? t('debugger.console.findCount', { current: findAt + 1, count: matches.length }) : t('debugger.console.findNone')) : ''}
+					</span>
+					<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40" aria-label={t('debugger.console.findPrevious')} title={t('debugger.console.findPrevious')} disabled={!matches.length} onclick={() => ((findAt = stepMatch(findAt, matches.length, false)), revealMatch())}><Icon name="arrowUp" size={14} /></button>
+					<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground) disabled:opacity-40" aria-label={t('debugger.console.findNext')} title={t('debugger.console.findNext')} disabled={!matches.length} onclick={() => ((findAt = stepMatch(findAt, matches.length, true)), revealMatch())}><Icon name="arrowDown" size={14} /></button>
+					<button class="grid size-5 place-items-center rounded hover:bg-(--vscode-toolbar-hoverBackground)" aria-label={t('common.close')} title={t('common.close')} onclick={closeFind}><Icon name="close" size={14} /></button>
+				</div>
+			{/if}
 			<input
 				bind:this={filterEl}
 				bind:value={filter}
@@ -167,7 +248,10 @@
 			{#each output as line, i (i)}<span class={color[line.category]}>{#if line.count > 1}<span
 							class="mr-1 rounded-full bg-(--vscode-badge-background) px-1.5 text-[11px] text-(--vscode-badge-foreground)"
 							title={t('legacySettings.debugConsole.repeated', { count: line.count })}>{line.count}</span
-						>{/if}{line.text}</span
+						>{/if}{#if firstMatch.has(i)}{#each pieces(line.text, matches, i, firstMatch.get(i) ?? 0) as p, j (j)}{#if p.match === null}{p.text}{:else}<mark
+								data-current-match={p.match === findAt ? '' : undefined}
+								class={p.match === findAt ? 'bg-(--vscode-editor-findMatchBackground) text-inherit outline outline-1 outline-(--vscode-editor-findMatchBorder,transparent)' : 'bg-(--vscode-editor-findMatchHighlightBackground) text-inherit'}>{p.text}</mark
+							>{/if}{/each}{:else}{line.text}{/if}</span
 				>{/each}
 		{:else}
 			<span class="text-(--vscode-descriptionForeground)">{filter.trim() && allOutput.length ? t('debugger.console.filterNone') : debug.active ? '' : t('legacySettings.debugConsole.empty')}</span>

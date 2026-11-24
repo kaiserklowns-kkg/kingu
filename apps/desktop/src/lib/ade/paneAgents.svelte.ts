@@ -9,11 +9,13 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { applyHook, initialHookState, type HookState } from './agentHooks';
-import { paneRow, type AgentRow, type PtyListing } from './agentPresence';
+import { paneRow, topRow, type AgentRow, type PtyListing } from './agentPresence';
+import { foregroundProgram } from './agentProfiles';
 import { applyTitle, type TitleTrack } from './agentTitle';
 import { adeLayout } from './adeLayout.svelte';
 import { tabPanes } from './adeTabs';
 import { cliSessions } from './cliSessions.svelte';
+import { turnStart } from './hibernation';
 import { PRIMARY } from './adeLayout.svelte';
 
 const POLL_MS = 2000;
@@ -21,7 +23,8 @@ const POLL_MS = 2000;
 /** The platform reports the job in front of a shell (procinfo.rs: macOS and Linux). */
 const foregroundKnown = () => typeof navigator === 'undefined' || !/win/i.test(navigator.platform);
 
-type Pane = { title?: TitleTrack; hook?: HookState; hookAgent?: string; foreground?: string | null; lastOutput?: number };
+/** `inputAt`: the last key typed into the pane; `turnAt`: when its agent's latest working stretch began (hibernation.ts). */
+type Pane = { title?: TitleTrack; hook?: HookState; hookAgent?: string; foreground?: string | null; lastOutput?: number; inputAt?: number; turnAt?: number };
 
 class PaneAgents {
 	/** Per PTY key of an ADE terminal pane. */
@@ -29,6 +32,8 @@ class PaneAgents {
 	/** Set every poll, so output timing and stale hooks are judged again without new events. */
 	now = $state(Date.now());
 	#offsets: Record<string, number> = {};
+	/** Output chunks per pane, unthrottled (hibernation's two-look confirmation: Orca's output epoch). */
+	#outputs: Record<string, number> = {};
 	#polling = false;
 	#timer: ReturnType<typeof setInterval> | undefined;
 
@@ -47,10 +52,31 @@ class PaneAgents {
 
 	/** Output arrived (throttled: one state write per 500ms per pane). */
 	output(key: string) {
+		this.#outputs[key] = (this.#outputs[key] ?? 0) + 1;
 		const p = this.panes[key];
 		if (!p?.foreground) return;
 		const now = Date.now();
 		if (now - (p.lastOutput ?? 0) > 500) this.panes[key] = { ...p, lastOutput: now };
+	}
+
+	/** A key was typed into the pane (throttled like output): a draft keeps its agent from hibernating. */
+	input(key: string) {
+		const p = this.panes[key];
+		if (!p?.foreground) return;
+		const now = Date.now();
+		if (now - (p.inputAt ?? 0) > 500) this.panes[key] = { ...p, inputAt: now };
+	}
+
+	/** The pane's process was closed by hibernation: its state goes, and its hook file is read from the start once a new shell resets it. */
+	forget(key: string) {
+		delete this.panes[key];
+		delete this.#offsets[key];
+		delete this.#outputs[key];
+	}
+
+	/** How many output chunks the pane printed (not reactive). */
+	outputs(key: string): number {
+		return this.#outputs[key] ?? 0;
 	}
 
 	/** The agents of a task's terminal panes (its launched CLI is not one: that is cliSessions'). */
@@ -66,6 +92,25 @@ class PaneAgents {
 				if (row) out.push(row);
 			}
 		return out;
+	}
+
+	/**
+	 * The agent of one terminal tab (Orca: every agent terminal tab shows its own state). A tab with
+	 * split panes shows its most urgent agent: needs you, then working, then idle.
+	 */
+	tabRow(slug: string, tabId: string): AgentRow | undefined {
+		if (slug === PRIMARY) return undefined;
+		const tab = (adeLayout.terminals[slug] ?? []).find((t) => t.id === tabId);
+		if (!tab) return undefined;
+		const now = Math.max(this.now, cliSessions.now);
+		const rows: AgentRow[] = [];
+		for (const pane of tabPanes(tab)) {
+			const key = adeLayout.ptyKey(slug, pane);
+			const p = this.panes[key];
+			const row = p && paneRow({ id: key, ...p }, now);
+			if (row) rows.push(row);
+		}
+		return topRow(rows);
 	}
 
 	/** The tab id of a pane's PTY key in task `slug`, for labels. */
@@ -99,7 +144,8 @@ class PaneAgents {
 			for (const key of panes.keys()) {
 				const info = byKey.get(key);
 				if (!info) continue;
-				const foreground = info.alive && foregroundKnown() ? (info.foreground?.name ?? null) : undefined;
+				// A CLI that runs as `node` or `python` is named by its script (Orca reads the command line).
+				const foreground = info.alive && foregroundKnown() ? (info.foreground ? foregroundProgram(info.foreground) : null) : undefined;
 				const p = this.panes[key];
 				if (foreground === null) {
 					// Back at the prompt: whatever ran there exited; its hooks and title no longer count.
@@ -123,9 +169,15 @@ class PaneAgents {
 		const p = this.panes[key];
 		if (!p) return;
 		const now = Date.now();
-		const hook = r.events.reduce<HookState>((st, ev) => applyHook(st, ev, now), p.hook ?? initialHookState(now));
+		let hook = p.hook ?? initialHookState(now);
+		let turnAt = p.turnAt;
+		for (const ev of r.events) {
+			const next = applyHook(hook, ev, now);
+			turnAt = turnStart(turnAt, hook.phase, next.phase, now);
+			hook = next;
+		}
 		const last = r.events.at(-1) as { kingu_hook?: unknown } | undefined;
-		this.panes[key] = { ...p, hook, hookAgent: typeof last?.kingu_hook === 'string' ? last.kingu_hook : p.hookAgent };
+		this.panes[key] = { ...p, hook, turnAt, hookAgent: typeof last?.kingu_hook === 'string' ? last.kingu_hook : p.hookAgent };
 	}
 
 	dispose() {

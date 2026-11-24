@@ -13,7 +13,8 @@
 //! - cursor-agent: `~/.cursor/projects/<path slug>/.workspace-trusted`.
 //! - copilot: the path appended to `trustedFolders` in `~/.copilot/config.json` (0600).
 //!
-//! Safety: only `<repo>/.kingu/worktrees/<slug>` (resolved here, never a path from the page) and
+//! Safety: only `<repo>/.kingu/worktrees/<slug>`, or for an agent started in a tab of the project
+//! the open folder itself (both resolved here, never a path from the page) and
 //! never a filesystem root, a home folder or an ancestor of one; an already-trusted path changes
 //! nothing; a file that does not parse is left alone; other keys are kept; the previous file is
 //! copied to `<file>.kingu.bak` before it is replaced; writes go to a temp file with the original
@@ -519,17 +520,34 @@ pub fn launch_homes(app: &tauri::AppHandle, program: &str) -> Result<Homes, Stri
   Ok(Homes { home, claude_config_dir: from("CLAUDE_CONFIG_DIR"), codex_home: from("CODEX_HOME") })
 }
 
-/// Before an agent CLI starts in task `slug`'s worktree (`kingu.agent.trustWorkspace`): trusts it
-/// for that CLI, in the config of the account the launch uses. Returns what happened, for the log.
+/// The folder a launch is trusted in: task `slug`'s worktree, or with no slug the open folder
+/// itself (an agent started in a tab of the project). Both come from the workspace, never the page.
+pub fn launch_folder(root: &Path, slug: Option<&str>) -> Result<PathBuf, String> {
+  match slug {
+    Some(slug) => {
+      super::worktree::validate_slug(slug)?;
+      Ok(super::worktree::worktree_path(root, slug))
+    }
+    None => Ok(root.to_path_buf()),
+  }
+}
+
+/// Before an agent CLI starts in task `slug`'s worktree, or with no slug in the open folder (an
+/// agent tab of the project; Orca pre-trusts the repo for every fresh agent launch)
+/// (`kingu.agent.trustWorkspace`): trusts it for that CLI, in the config of the account the launch
+/// uses. A folder on an SSH host is not a local folder and is refused by `trust`. Returns what
+/// happened, for the log.
 #[tauri::command]
-pub async fn agent_trust_workspace(app: tauri::AppHandle, ws: crate::workspace::Workspace, slug: String, program: String) -> Result<Option<Outcome>, String> {
-  super::worktree::validate_slug(&slug)?;
+pub async fn agent_trust_workspace(app: tauri::AppHandle, ws: crate::workspace::Workspace, slug: Option<String>, program: String) -> Result<Option<Outcome>, String> {
   let Some(preset) = Preset::of_program(&program) else { return Ok(None) };
-  let root = ws.root()?;
-  let worktree = super::worktree::worktree_path(&root, &slug);
+  let folder = launch_folder(&ws.root()?, slug.as_deref())?;
   let homes = launch_homes(&app, &program)?;
-  let outcome = tauri::async_runtime::spawn_blocking(move || trust(preset, &worktree, &homes)).await.map_err(|e| e.to_string())??;
-  log::info!("agent trust {slug} ({program}): {outcome:?}");
+  // The open folder can be anything the user opened: never a home or above, for any CLI.
+  if slug.is_none() && too_broad(&folder, &[homes.home.as_path()]) {
+    return Ok(Some(Outcome::TooBroad));
+  }
+  let outcome = tauri::async_runtime::spawn_blocking(move || trust(preset, &folder, &homes)).await.map_err(|e| e.to_string())??;
+  log::info!("agent trust {} ({program}): {outcome:?}", slug.as_deref().unwrap_or("<open folder>"));
   Ok(Some(outcome))
 }
 
@@ -552,6 +570,21 @@ mod tests {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(&wt).unwrap();
     Env { _dir: dir, root, home, wt }
+  }
+
+  #[test]
+  fn the_launch_folder_is_a_task_worktree_or_the_open_folder() {
+    let e = env();
+    let repo = e.root.join("repo");
+    assert_eq!(launch_folder(&repo, Some("fix-bug")).unwrap(), e.wt);
+    assert_eq!(launch_folder(&repo, None).unwrap(), repo);
+    assert!(launch_folder(&repo, Some("../home")).is_err());
+    assert!(launch_folder(&repo, Some("")).is_err());
+    // The open folder is trusted like a worktree; a home or a remote name never is.
+    assert_eq!(trust(Preset::Cursor, &repo, &homes(&e)).unwrap(), Outcome::Trusted);
+    assert_eq!(trust(Preset::Claude, &e.home, &homes(&e)).unwrap(), Outcome::TooBroad);
+    assert!(too_broad(&e.home, &[e.home.as_path()]) && too_broad(&e.root, &[e.home.as_path()]) && !too_broad(&repo, &[e.home.as_path()]));
+    assert!(trust(Preset::Codex, Path::new("ssh://host/repo"), &homes(&e)).is_err());
   }
 
   fn homes(e: &Env) -> Homes {

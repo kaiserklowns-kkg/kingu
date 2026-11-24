@@ -3,6 +3,7 @@
 
 import type { Cookies } from '@sveltejs/kit';
 import { KINGU_API_URL } from '$app/env/private';
+import { cookieMaxAge } from '#lib/cookieAge.ts';
 
 export const TOKEN_COOKIE = 'kingu_token';
 const TOKEN_RE = /^kgu_[A-Za-z0-9_-]{43}$/;
@@ -14,13 +15,14 @@ export function getToken(cookies: Cookies): string | null {
 	return t && isToken(t) ? t : null;
 }
 
-export function setToken(cookies: Cookies, token: string, secure: boolean) {
+/** `expiresAt`: the token's own expiry when known (an SSO session's 12 hours), so the cookie never outlives it. */
+export function setToken(cookies: Cookies, token: string, secure: boolean, expiresAt?: string | null) {
 	cookies.set(TOKEN_COOKIE, token, {
 		path: '/',
 		httpOnly: true,
 		secure,
 		sameSite: 'strict',
-		maxAge: 60 * 60 * 24 * 30
+		maxAge: cookieMaxAge(expiresAt)
 	});
 }
 

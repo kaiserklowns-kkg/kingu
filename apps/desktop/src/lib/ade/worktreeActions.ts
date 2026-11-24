@@ -1,8 +1,10 @@
 // Actions of a worktree card in the Agents side bar (Orca's worktree context menu) and the rows
 // of the Worktree Jump palette. Pure: the menu is data; Svelte code runs the chosen id.
 
+import { matchPaletteTokens, paletteQueryTokens } from './paletteMatch';
 import type { TaskStatus } from './model';
 import { t } from '#lib/i18n/index.ts';
+import { emojiToShortcodes } from './emojiShortcodes.ts';
 
 export type WorktreeAction =
 	| 'open'
@@ -91,6 +93,9 @@ export const JUMP_FOLDER = '__folder';
 
 const NEEDS_YOU: readonly TaskStatus[] = ['waiting'];
 
+/** Token matches (paletteMatch.ts) rank under every in-order fuzzy match, whose scores are far above this. */
+const TOKEN_MATCH_BELOW = 1_000_000;
+
 /**
  * Orca's Worktree Jump (⌘J, `components/worktree-jump`, docs model/quick-open.mdx). With nothing
  * typed: the worktrees that need you, then the most recently used (opened or active), then the
@@ -118,6 +123,7 @@ export function jumpItems(
 		];
 	}
 	const pr = /^#?(\d+)$/.exec(q)?.[1];
+	const tokens = paletteQueryTokens(q);
 	const scored: { item: JumpItem; score: number }[] = [];
 	for (const x of tasks) {
 		if (pr && x.pr === Number(pr)) {
@@ -126,8 +132,17 @@ export function jumpItems(
 		}
 		const m = match(q, x.title);
 		const b = m ? null : match(q, x.branch);
+		// Orca: an emoji-named workspace matches by its shortcode (🚀 fix → "rocket").
+		const e = m || b || !/[^\x00-\x7f]/.test(x.title) ? null : match(q, emojiToShortcodes(x.title).replace(/\s+/g, ' ').trim());
 		if (m) scored.push({ item: { id: x.slug, label: x.title, description: describe(x), positions: m.positions }, score: m.score + 1000 });
 		else if (b) scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: b.score });
+		else if (e) scored.push({ item: { id: x.slug, label: x.title, description: describe(x) }, score: e.score + 500 });
+		else {
+			// Orca's palette matcher: words in another order, spread over title and branch, or one typo away.
+			// Below every in-order match, so what was found before keeps its place.
+			const w = tokens && matchPaletteTokens(tokens, [x.title, x.branch]);
+			if (w) scored.push({ item: { id: x.slug, label: x.title, description: describe(x), positions: w.positions }, score: w.score - TOKEN_MATCH_BELOW });
+		}
 	}
 	const f = match(q, folder.name);
 	if (f) scored.push({ item: { ...folderItem, positions: f.positions }, score: f.score });

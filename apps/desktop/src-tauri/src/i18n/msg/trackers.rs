@@ -115,6 +115,18 @@ crate::i18n::messages! {
       en: "Jira is not connected: run Jira: Connect with your site, email and API token",
       th: "ยังไม่ได้เชื่อมต่อ Jira: รันคำสั่ง Jira: Connect ด้วย site อีเมล และ API token",
     },
+    BadLabel {
+      en: "Invalid label: {label}",
+      th: "label ไม่ถูกต้อง: {label}",
+    },
+    BadUser {
+      en: "Invalid {service} user: {user}",
+      th: "ผู้ใช้ของ {service} ไม่ถูกต้อง: {user}",
+    },
+    BadTransition {
+      en: "Invalid Jira transition",
+      th: "transition ของ Jira ไม่ถูกต้อง",
+    },
     JiraBadEmail {
       en: "Enter the email of your Atlassian account",
       th: "กรอกอีเมลของบัญชี Atlassian",

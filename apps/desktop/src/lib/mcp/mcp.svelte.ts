@@ -51,6 +51,7 @@ export const STATE_LABEL = {
 	off: 'mcp.state.off',
 	untrusted: 'mcp.state.untrusted',
 	invalid: 'mcp.state.invalid',
+	blocked: 'mcp.state.blocked',
 	idle: 'mcp.state.idle'
 } as const satisfies Record<McpState, MessageKey>;
 

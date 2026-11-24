@@ -268,12 +268,25 @@ pub fn window_focused<R: Runtime>(app: &AppHandle<R>, label: &str) {
   }
 }
 
+/// Menu items that close the board pop-out while it is in front.
+pub fn popout_closes(id: &str) -> bool {
+  matches!(id, "workbench.action.closeWindow" | "workbench.action.closeActiveEditor")
+}
+
 /// Forwards clicks on the webview's own items to the active window; predefined items never get here.
 pub fn install<R: Runtime>(app: &AppHandle<R>) {
   app.on_menu_event(|app, event| {
     let id = event.id().0.clone();
     let known = app.try_state::<MenuState>().is_some_and(|s| s.items.lock().is_ok_and(|items| items.contains_key(&id)));
     if !known {
+      return;
+    }
+    // The board pop-out has no workbench: with it in front, Close Editor / Close Window close it and
+    // other items do nothing (they must not act on a workspace window behind it).
+    if let Some(popout) = app.get_webview_window(crate::workspace::BOARD_POPOUT).filter(|w| w.is_focused().unwrap_or(false)) {
+      if popout_closes(&id) {
+        let _ = popout.close();
+      }
       return;
     }
     let target = app.try_state::<crate::workspace::Workspaces>().and_then(|w| w.last_active()).map(|w| w.label().to_string());
@@ -290,6 +303,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) {
 // ---------------------------------------------------------------------------------------------
 // Title bar double-click (the overlay title bar is drawn by the webview)
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[derive(Debug, PartialEq, Eq)]
 pub enum DoubleClickAction {
   Zoom,
@@ -300,6 +314,7 @@ pub enum DoubleClickAction {
 /// macOS "Double-click a window's title bar to": `AppleActionOnDoubleClick` is `Maximize` (Zoom),
 /// `Fill` (macOS 15, treated as Zoom), `Minimize` or `None`; older systems only set the boolean
 /// `AppleMiniaturizeOnDoubleClick`. Unset means Zoom.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn double_click_action(action: Option<&str>, miniaturize: Option<&str>) -> DoubleClickAction {
   match action.map(str::trim) {
     Some("Minimize") => DoubleClickAction::Minimize,
@@ -348,6 +363,12 @@ pub fn app_quit(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn the_popout_closes_on_close_items_only() {
+    assert!(super::popout_closes("workbench.action.closeWindow") && super::popout_closes("workbench.action.closeActiveEditor"));
+    assert!(!super::popout_closes("workbench.action.files.save"));
+  }
+
   use super::*;
 
   /// Records the menu as indented lines.

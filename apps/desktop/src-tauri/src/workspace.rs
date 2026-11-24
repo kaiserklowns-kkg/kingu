@@ -27,6 +27,15 @@ use crate::watcher::{FileWatcher, GitWatcher, RepoWatcher};
 pub const MAIN_WINDOW: &str = "main";
 /// Windows opened later are `window-1`, `window-2`, … (the capability lists `window-*`).
 pub const WINDOW_PREFIX: &str = "window-";
+/// The task board's pop-out window (Orca's Agent Dashboard "Open as Pop-out", windows.rs): not a
+/// workspace. It never gets one, so it is not saved or restored as a session, not found by
+/// "the window with these folders", and a workspace command called from it fails.
+pub const BOARD_POPOUT: &str = "board-popout";
+
+/// Whether window `label` is a workspace window (every window but the board's pop-out).
+pub fn is_workspace_window(label: &str) -> bool {
+  label != BOARD_POPOUT
+}
 
 /// One root folder of a workspace. `name` is the `.code-workspace` folder's `name`, else the
 /// folder's own name; the Explorer shows it and Search's `./name/` picks the folder by it.
@@ -153,6 +162,9 @@ impl<'de, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for Workspace {
   fn from_command(command: tauri::ipc::CommandItem<'de, R>) -> Result<Self, tauri::ipc::InvokeError> {
     use tauri::Manager;
     let webview = command.message.webview_ref();
+    if !is_workspace_window(webview.label()) {
+      return Err(tauri::ipc::InvokeError::from(format!("window {} has no workspace", webview.label())));
+    }
     Ok(webview.state::<Workspaces>().get(webview.label()))
   }
 }
@@ -392,7 +404,7 @@ impl Workspaces {
     if let Some(state) = self.windows.read().unwrap_or_else(|e| e.into_inner()).get(label) {
       return Workspace { label: label.into(), state: state.clone() };
     }
-    if self.closed.lock().unwrap_or_else(|e| e.into_inner()).contains(label) {
+    if !is_workspace_window(label) || self.closed.lock().unwrap_or_else(|e| e.into_inner()).contains(label) {
       return Workspace { label: label.into(), state: Arc::default() };
     }
     let mut windows = self.windows.write().unwrap_or_else(|e| e.into_inner());
@@ -423,6 +435,9 @@ impl Workspaces {
   }
 
   pub fn focused(&self, label: &str) {
+    if !is_workspace_window(label) {
+      return;
+    }
     let mut focus = self.focus.lock().unwrap_or_else(|e| e.into_inner());
     focus.retain(|l| l != label);
     focus.push(label.into());
@@ -657,6 +672,19 @@ impl Recent {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn the_board_pop_out_never_becomes_a_workspace() {
+    let all = Workspaces::default();
+    all.get(MAIN_WINDOW);
+    all.get(BOARD_POPOUT).set_session(WindowSession { folders: vec![Folder::new(PathBuf::from("/tmp"))], ..Default::default() });
+    all.focused(BOARD_POPOUT);
+    assert_eq!(all.labels(), vec![MAIN_WINDOW.to_string()]);
+    assert_eq!(all.last_active().map(|w| w.label().to_string()).as_deref(), Some(MAIN_WINDOW));
+    assert_eq!(all.window_with(&[PathBuf::from("/tmp")], None), None);
+    assert!(!is_workspace_window(BOARD_POPOUT));
+    assert!(is_workspace_window(MAIN_WINDOW) && is_workspace_window("window-3"));
+  }
 
   #[test]
   fn rejects_paths_outside_the_workspace() {

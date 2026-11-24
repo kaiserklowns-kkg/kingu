@@ -40,7 +40,8 @@
 		{/if}
 		<button class={ICON_BUTTON} aria-label={tr('forge.comments.refresh')} title={tr('forge.comments.refresh')} disabled={entry?.loading} onclick={() => prStatuses.refreshThreads(slug)}><Icon name="refresh" size={14} /></button>
 	</div>
-	{#if entry?.error}
+	<!-- A failed refresh keeps threads already read in view (Orca 207212b6b comments-list.tsx `emptyReadError`). -->
+	{#if entry?.error && !entry.list.length}
 		<p class="text-(--vscode-errorForeground)">{entry.error}</p>
 	{:else if !entry || (entry.loading && !entry.list.length)}
 		<p class="text-(--vscode-descriptionForeground)">{tr('forge.comments.reading')}</p>

@@ -12,8 +12,12 @@ import { chat } from './th/chat';
 import { chatView } from './th/chatView';
 import { chatEdits } from './th/chatEdits';
 import { chatRewind } from './th/chatRewind';
+import { chatResilience } from './th/chatResilience';
 import { chatTranscript } from './th/chatTranscript';
 import { chatRuntime } from './th/chatRuntime';
+import { managedCli } from './th/managedCli';
+import { agentAccounts } from './th/agentAccounts';
+import { sshAgentInstall } from './th/sshAgentInstall';
 import { chatInput } from './th/chatInput';
 import { chatContext } from './th/chatContext';
 import { chatParts } from './th/chatParts';
@@ -71,6 +75,8 @@ import { chatMcp } from './th/chatMcp';
 import { titleBar } from './th/titleBar';
 import { chatWelcome } from './th/chatWelcome';
 import { mobile } from './th/mobile';
+import { automationsCron } from './th/automationsCron';
+import { sessionsInbox } from './th/sessionsInbox';
 
 import { editing } from './th/editing';
 import { terminal } from './th/terminal';
@@ -80,6 +86,7 @@ import { legacyAde } from './th/legacyAde';
 import { legacyWorkbench } from './th/legacyWorkbench';
 import { legacySettings } from './th/legacySettings';
 import { legacyMisc } from './th/legacyMisc';
+import { agentBrowser } from './th/agentBrowser';
 
 
-export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...sshRemote, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...workspaceCleanup, ...terminalDaemon, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome, ...mobile } satisfies Record<keyof typeof en, string>;
+export const th = { ...common, ...ade, ...adeTasks, ...workbench, ...team, ...settings, ...panes, ...tools, ...chat, ...chatView, ...chatEdits, ...chatParts, ...chatEditor, ...chatSystem, ...chatRewind, ...chatResilience, ...chatTranscript, ...chatInput, ...chatContext, ...adeWorktrees, ...adeProjects, ...sshRemote, ...adeWorkflow, ...mcp, ...vault, ...adeAttempts, ...localAi, ...chatRuntime, ...managedCli, ...agentAccounts, ...sshAgentInstall, ...chatExtras, ...adeSources, ...cli, ...artifacts, ...skills, ...arkai, ...forge, ...scmEditor, ...scmRepos, ...localHistory, ...ideTasks, ...language, ...workspaces, ...searchEditor, ...output, ...profiles, ...debugger_, ...testing, ...debugExtras, ...testingExtras, ...chatCustomize, ...editing, ...composer, ...voice, ...workspaceCleanup, ...terminalDaemon, ...usage, ...keybindings, ...markdownPreview, ...refactorPreview, ...markdown, ...scmGraph, ...scmGit, ...terminal, ...trust, ...snapContrib, ...snapPlatform, ...setup, ...legacyAde, ...legacyWorkbench, ...legacySettings, ...legacyMisc, ...notebook, ...accessibility, ...chatRender, ...chatToolRules, ...chatObserve, ...chatMcp, ...home, ...titleBar, ...chatWelcome, ...mobile, ...automationsCron, ...sessionsInbox, ...agentBrowser } satisfies Record<keyof typeof en, string>;

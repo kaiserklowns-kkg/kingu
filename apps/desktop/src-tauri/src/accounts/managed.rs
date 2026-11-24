@@ -129,6 +129,13 @@ impl Managed {
     std::fs::rename(&tmp, self.state_file(p)).map_err(|e| tr!(ProvidersMsg::SaveFailed, detail = e))
   }
 
+  /// Every OpenCode account's data folder (Orca `managedOpenCodeAccountDataDirs`): their stores
+  /// are invisible to the default lookup, which reads only the user's own XDG data home.
+  pub fn opencode_data_dirs(&self) -> Vec<PathBuf> {
+    let p = DataProvider::Opencode;
+    self.load(p).unwrap_or_default().accounts.iter().filter_map(|a| self.profile(p, &a.id).ok()).map(|d| d.join("data").join("opencode")).collect()
+  }
+
   /// Both providers' accounts (`accounts.listData`).
   pub fn list(&self) -> BTreeMap<String, State> {
     DataProvider::ALL.iter().map(|&p| (p.name().to_owned(), self.load(p).unwrap_or_default())).collect()
@@ -340,10 +347,10 @@ pub fn opencode_credential_ok(v: &Value) -> bool {
   }
 }
 
-const SQLITE: &str = "/usr/bin/sqlite3";
+pub(crate) const SQLITE: &str = "/usr/bin/sqlite3";
 
 /// Rows of a read-only query through the system `sqlite3` (JSON output).
-fn sqlite_rows(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
+pub(crate) fn sqlite_rows(db: &Path, sql: &str) -> Result<Vec<serde_json::Map<String, Value>>, String> {
   let out = Command::new(SQLITE)
     .args(["-readonly", "-json", "-cmd", ".timeout 1500"])
     .arg(db)

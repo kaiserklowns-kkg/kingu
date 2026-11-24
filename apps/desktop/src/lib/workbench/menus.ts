@@ -447,6 +447,13 @@ export type MenuNode =
 	| { type: 'separator' }
 	| { type: 'submenu'; id: string; text: string; mnemonic?: number; items: MenuNode[] };
 
+
+/** Keeps a popup's left edge on screen (a margin of 4px). */
+export const menuLeft = (x: number, width: number, viewport: number): number => Math.max(4, Math.min(x, viewport - width - 4));
+
+/** Keeps a popup's top edge on screen; `height` is 0 until the menu is measured. */
+export const menuTop = (y: number, height: number, viewport: number): number => Math.max(4, Math.min(y, viewport - Math.max(height, 0) - 4));
+
 export type RecentFolder = { path: string; label: string; detail?: string };
 
 export type MenuContext = {

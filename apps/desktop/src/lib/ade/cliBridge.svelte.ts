@@ -24,16 +24,38 @@ import { dirOf, editorOpens, openTarget, profileFor, waitOver, type CliRequest, 
 import { setBuiltInPluginProvider } from './mcp.ts';
 import { adeTasks } from './tasks.svelte.ts';
 import { cleanup } from './cleanup.svelte.ts';
+import { AUTO_CLEANUP_ID } from './autoCleanup.svelte.ts';
+import { nextAutoRunAt } from './autoCleanup.ts';
+import { WORKSPACE_CLEANUP_RULE_KEYS } from './workspaceCleanupPolicy.ts';
+import { settings } from '#lib/settings/settings.svelte.ts';
+import { floating } from '#lib/workbench/floating.svelte.ts';
+import { askRelayGrant, RELAY_GRANT_METHOD } from './sshBrowserRelay.ts';
 
 async function handle(req: CliRequest): Promise<unknown> {
 	switch (req.method) {
 		case 'task.create': {
 			const p = req.params as CreateParams;
 			if (!workspace.root) throw new Error(t('cli.noFolder'));
-			const slug = await adeTasks.create({ title: p.title, prompt: p.prompt, base: p.base ?? '', mode: p.mode ?? undefined, open: p.open, dispatchedBy: p.dispatchedBy ?? undefined });
+			// The same request id is the same task: the task itself remembers it, so a retry after a
+			// lost answer (or a restart) returns it instead of making another.
+			if (p.requestId) {
+				const existing = adeTasks.views.find((v) => v.meta.request_id === p.requestId);
+				if (existing) return { slug: existing.meta.slug, replayed: true };
+			}
+			const slug = await adeTasks.create({ title: p.title, prompt: p.prompt, base: p.base ?? '', mode: p.mode ?? undefined, open: p.open, dispatchedBy: p.dispatchedBy ?? undefined, requestId: p.requestId ?? undefined, origin: 'cli' });
 			if (!slug) throw new Error(t('cli.taskNotCreated'));
 			return { slug };
 		}
+		case 'browser.page': {
+			// A page an agent opened (Rust floating_browser/agent.rs): shown as a floating browser tab.
+			const label = String(req.params.label ?? '');
+			if (!label.startsWith('agent-browser-')) throw new Error('not an agent page');
+			floating.newAgentBrowser(label, String(req.params.url ?? ''));
+			return null;
+		}
+		case RELAY_GRANT_METHOD:
+			// An agent on an SSH host opens a page or loads an address (Rust ssh_browser_relay.rs).
+			return askRelayGrant(req.params);
 		case 'task.open': {
 			const slug = String(req.params.slug ?? '');
 			if (!appMode.isAgents) appMode.setMode('agents');
@@ -51,6 +73,23 @@ async function handle(req: CliRequest): Promise<unknown> {
 			return cleanup.preview();
 		case 'workspaceCleanup.run':
 			return cleanup.runRules('cli');
+		case 'workspaceCleanup.report': {
+			// Orca's `workspace cleanup report`: the rules, the schedule and recent runs. Activity is kept
+			// in localStorage, so it outlives a restart and includes other windows' runs, and it is kept per
+			// folder. Before the first run, or when a check is overdue, the next check is
+			// "as soon as a folder is open" (null with `auto` on).
+			cleanup.reloadActivity();
+			const auto = settings.get<boolean>(AUTO_CLEANUP_ID) === true;
+			const { lastRunAt } = cleanup;
+			return {
+				rules: WORKSPACE_CLEANUP_RULE_KEYS.filter((k) => cleanup.policy.rules[k].enabled),
+				source: cleanup.policy.source,
+				auto,
+				lastRunAt,
+				nextRunAt: nextAutoRunAt(auto, lastRunAt, Date.now()),
+				activity: cleanup.activity
+			};
+		}
 		case 'open': {
 			const p = req.params as OpenParams;
 			const target = openTarget(workspace.root, p);

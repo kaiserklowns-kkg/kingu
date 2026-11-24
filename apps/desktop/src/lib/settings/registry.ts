@@ -383,6 +383,23 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.chat.autoContinueAfterUsageLimit',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description:
+			'เมื่อแชตหยุดเพราะ agent ใช้ครบโควตา (usage limit) และรู้เวลารีเซ็ต Kingu จะส่ง "Continue where you left off." ให้เองเมื่อโควตารีเซ็ต ยกเลิกรายแชตได้ (Orca: nativeChatAutoContinueAfterUsageLimit) (When a chat stops on the agent\'s usage limit with a known reset time, Kingu sends it "Continue where you left off." once the limit resets, unless that chat was told not to.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.chat.confirmDelete',
+		group: 'Agent Chat',
+		type: 'boolean',
+		default: true,
+		description: 'ถามก่อนลบแชต แชตที่ลบแล้วกู้คืนไม่ได้ (Orca: skipDeleteChatConfirm กลับค่า) (Ask before deleting a chat. A deleted chat cannot be brought back.)',
+		scope: 'application'
+	},
+	{
 		id: 'kingu.artifacts.showButton',
 		group: 'Workbench',
 		type: 'boolean',
@@ -523,7 +540,7 @@ const CORE_SETTINGS: SettingSchema[] = [
 	},
 	{
 		id: 'kingu.browser.profile',
-		group: 'Agent',
+		group: 'Browser',
 		type: 'string',
 		default: '',
 		description:
@@ -531,11 +548,71 @@ const CORE_SETTINGS: SettingSchema[] = [
 	},
 	{
 		id: 'kingu.browser.openLinksInApp',
-		group: 'Agent',
+		group: 'Browser',
 		type: 'boolean',
 		default: true,
 		description:
 			'ลิงก์เว็บที่ตามจาก terminal ใน Agents layout เปิดเป็นแท็บเบราว์เซอร์ใน worktree นั้น (แบบ Orca) กด Shift ค้างไว้ตอนคลิกเพื่อเปิดในเบราว์เซอร์ของระบบแทน (Web links followed in an Agents-layout terminal open as a browser tab of that worktree, like Orca; hold Shift too for the system browser.)'
+	},
+	{
+		id: 'kingu.browser.searchEngine',
+		group: 'Browser',
+		type: 'string',
+		enum: ['google', 'duckduckgo', 'bing', 'kagi'],
+		enumDescriptions: ['Google', 'DuckDuckGo', 'Bing', 'Kagi'],
+		default: 'google',
+		description:
+			'ข้อความที่ไม่ใช่ที่อยู่เว็บในช่อง address ของเบราว์เซอร์ในแอปจะค้นด้วย search engine นี้ (Orca: Default Search Engine) (Text that is not an address in the in-app browser address bar is searched with this engine.)'
+	},
+	{
+		id: 'kingu.browser.sshRouting',
+		group: 'Browser',
+		type: 'boolean',
+		default: true,
+		description:
+			"เมื่อเปิดงานบน SSH host แท็บเบราว์เซอร์ที่ไป localhost:<port> จะเปิดหน้าของเครื่องนั้นผ่าน port forward ที่ Kingu ตั้งให้ (ใกล้เคียง Orca: Browse through SSH workspace hosts แต่ส่งผ่านเฉพาะที่อยู่ localhost ที่อยู่อื่นยังออกจากเครื่องนี้) (With a worktree on an SSH host open, browser tabs going to localhost:<port> load that host's page through a port forward Kingu sets up; only localhost addresses go through the host.)",
+		scope: 'application'
+	},
+	{
+		id: 'kingu.browser.defaultZoom',
+		group: 'Browser',
+		type: 'number',
+		default: 100,
+		minimum: 50,
+		maximum: 300,
+		integer: true,
+		description:
+			'ระดับซูม (%) ของแท็บเบราว์เซอร์ที่เปิดใหม่ และระดับที่ ⌘0 กลับไป ซูมของแต่ละแท็บด้วย ⌘= ⌘- ยังปรับได้ (Orca: Default Zoom) (Zoom, in percent, of newly opened browser tabs and the level ⌘0 returns to; ⌘= ⌘- still zoom each tab.)'
+	},
+	{
+		id: 'kingu.browser.agentTools',
+		group: 'Browser',
+		type: 'boolean',
+		default: false,
+		description:
+			'ให้ agent ในแชตใช้เบราว์เซอร์ของ Kingu (VS Code 1.147: browser tools): เปิดหน้า อ่าน คลิก พิมพ์ และถ่ายภาพหน้าจอ ทุกครั้งที่ agent จะเปิดหน้าใหม่หรือไปที่ที่อยู่ใหม่ Kingu ถามก่อน (อนุญาตครั้งเดียว / ใน session นี้ / ในโฟลเดอร์นี้ / ตลอด) หน้าที่ agent เปิดใช้พื้นที่เก็บข้อมูลแยก ไม่เห็น login ของคุณ แท็บของคุณใช้ได้เฉพาะเมื่อกด แชร์ให้ agent ระหว่างที่ agent ใช้หน้าจะมีแถบบอกพร้อมปุ่มหยุด มีผลกับแชตที่เริ่มหลังเปิด (Lets chat agents use Kingu\'s browser, like VS Code\'s browser tools: open pages, read them, click, type and take screenshots. Kingu asks before an agent opens a page or goes to a new address (once, this session, this folder or always). Pages an agent opens use storage of their own, never your logins; your tabs only when you Share with Agent. A bar with Stop shows while an agent uses a page. Applies to chats started after it is turned on. Off by default; VS Code\'s is on.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.browser.memorySaver',
+		group: 'Browser',
+		type: 'boolean',
+		default: true,
+		description:
+			'คืนหน่วยความจำของแท็บเบราว์เซอร์ที่ไม่ได้เปิดดู (Orca: Memory Saver): แท็บยังอยู่ หน้าเว็บจะโหลดใหม่เมื่อกลับมาที่แท็บ หน้าที่พิมพ์ค้างไว้ กำลังเล่นเสียง/วิดีโอ มี frame ย่อย หรือเปิด DevTools อยู่จะไม่ถูกคืน (Frees the memory of browser tabs you are not looking at, like Orca\'s Memory Saver: the tab stays and its page loads again when you return. A page you typed in, one playing media, one with child frames or with DevTools open is left alone.)',
+		scope: 'application'
+	},
+	{
+		id: 'kingu.browser.memorySaverHours',
+		group: 'Browser',
+		type: 'number',
+		default: 4,
+		minimum: 1,
+		maximum: 168,
+		integer: true,
+		description:
+			'จำนวนชั่วโมง (นับเฉพาะตอนเครื่องตื่น) ที่แท็บไม่ถูกเปิดดูก่อน Memory Saver จะคืนหน่วยความจำ (Orca: Unviewed for) (Awake hours a tab goes unviewed before Memory Saver frees it.)',
+		scope: 'application'
 	},
 	{
 		id: 'kingu.agent.statusHooks',
@@ -548,12 +625,22 @@ const CORE_SETTINGS: SettingSchema[] = [
 		scope: 'application'
 	},
 	{
+		id: 'kingu.ssh.terminalHost',
+		group: 'Agent',
+		type: 'boolean',
+		default: true,
+		description:
+			'ให้ terminal และ agent บน SSH host ทำงานต่อเมื่อการเชื่อมต่อหลุด แบบ Orca: ตอนเชื่อมต่อ Kingu ติดตั้ง terminal host ของตัวเอง (kingu-ptyd ราว 1 MB) ไว้ที่ ~/.kingu/host บน host นั้น แล้วแท็บ terminal จะกลับมาแสดง session เดิมหลังเชื่อมต่อใหม่ ปิดแล้ว Kingu จะไม่ติดตั้งอะไรบน host: terminal จบพร้อมการเชื่อมต่อ และ agent ถูกเริ่มใหม่ด้วยคำสั่ง resume ของ CLI นั้น (Keep terminals and agents on an SSH host running when the connection drops, like Orca: on connect Kingu installs its terminal host (kingu-ptyd, about 1 MB) under ~/.kingu/host there, and a terminal tab shows its session again after a reconnect. Off: nothing is installed; a terminal ends with its connection and an agent is started again with its CLI’s resume command.)',
+		// User-only: it puts a program on the user's hosts.
+		scope: 'application'
+	},
+	{
 		id: 'kingu.agent.trustWorkspace',
 		group: 'Agent',
 		type: 'boolean',
 		default: true,
 		description:
-			'เชื่อถือ worktree ของงานให้ agent CLI ก่อนเริ่ม (claude, codex, cursor-agent, copilot) เพื่อไม่ให้คำถาม "trust this folder?" ครั้งแรกกลืน prompt — Kingu เขียนลงไฟล์ config ของ CLI นั้นเฉพาะ path ของ worktree ที่ Kingu สร้าง (~/.claude.json หรือ $CLAUDE_CONFIG_DIR/.claude.json, $CODEX_HOME/config.toml, ~/.cursor/projects, ~/.copilot/config.json) เก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak (Trust a task worktree for the agent CLI before it starts, so its first-run folder-trust prompt does not swallow the prompt. Edits only that CLI\'s config, only for Kingu worktrees, keeping a .kingu.bak copy.)',
+			'เชื่อถือ worktree ของงานให้ agent CLI ก่อนเริ่ม (claude, codex, cursor-agent, copilot) เพื่อไม่ให้คำถาม "trust this folder?" ครั้งแรกกลืน prompt — Kingu เขียนลงไฟล์ config ของ CLI นั้นเฉพาะ path ของ worktree ที่ Kingu สร้าง และโฟลเดอร์โปรเจกต์ที่เปิดอยู่เมื่อเริ่ม agent ในแท็บของมัน (ไม่ใช่ home หรือโฟลเดอร์ที่อยู่เหนือ home) (~/.claude.json หรือ $CLAUDE_CONFIG_DIR/.claude.json, $CODEX_HOME/config.toml, ~/.cursor/projects, ~/.copilot/config.json) เก็บไฟล์เดิมไว้ที่ <ไฟล์>.kingu.bak (Trust a task worktree for the agent CLI before it starts, so its first-run folder-trust prompt does not swallow the prompt. Edits only that CLI\'s config, only for Kingu worktrees and, for an agent started in a tab, the open project folder (never a home folder or above), keeping a .kingu.bak copy.)',
 		// User-only: it edits the user's own CLI config files.
 		scope: 'application'
 	},

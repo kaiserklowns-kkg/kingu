@@ -10,6 +10,7 @@
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { t } from '#lib/i18n/index.ts';
 	import Toggle from '#lib/settings/Toggle.svelte';
+	import AntigravityChatAuth from './AntigravityChatAuth.svelte';
 	import { usage as live } from '#lib/workbench/usage.svelte.ts';
 	import { clampPct, PROVIDER_NAME, windowWhen, type ProviderId, type ProviderState, type Window } from '#lib/workbench/usage.ts';
 	import { loadSecretStatus, pastable, saveSecret, toStatus, type SecretId, type SecretStatus } from '#lib/workbench/usageCredentials.ts';
@@ -229,6 +230,7 @@
 				</div>
 			</div>
 		{/each}
+		<AntigravityChatAuth />
 		{@render toggleRow(t('settings.providers.agyStatusBar'), t('settings.providers.agyStatusBarHint'), agyUsage, (on) => setSetting('kingu.usage.antigravity', on || undefined))}
 		{#if agyUsage}{@render usage(of('antigravity'))}{/if}
 		<p class="text-[11px] text-(--vscode-descriptionForeground)">{t('settings.providers.agyFooter')}</p>

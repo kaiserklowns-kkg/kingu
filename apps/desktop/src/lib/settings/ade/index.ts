@@ -20,7 +20,7 @@ export const ADE_SETTINGS: SettingSchema[] = [...AGENT_SETTINGS, ...REPO_SETTING
 export const AI_SECTION_GROUPS = ['Agent', 'Orchestration', 'Voice', 'Local AI'];
 
 /** The ADE section's groups, in Orca's settings page order. */
-export const ADE_SECTION_GROUPS = ['Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests', 'Workspace Cleanup'];
+export const ADE_SECTION_GROUPS = ['Agent Chat', 'Notifications', 'Worktrees', 'Repository', 'ADE Sidebar', 'ADE Terminal', 'Source Control AI', 'Pull Requests', 'Browser', 'Workspace Cleanup'];
 
 /** Groups of the System section that come from Orca's Appearance / General pages. */
 export const SYSTEM_SECTION_GROUPS = ['Appearance'];

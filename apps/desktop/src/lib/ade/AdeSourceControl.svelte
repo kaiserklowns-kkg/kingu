@@ -1,6 +1,12 @@
+<script lang="ts" module>
+	import type { AmendedPending as Pending } from './amend.ts';
+	/** Amends whose old copy is still on the upstream, per worktree draft key (survives remounts). */
+	const pendingAmends = new SvelteMap<string, Pending>();
+</script>
+
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { SvelteSet } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	// Orca's Source Control tab for the selected worktree (the folder or a task's worktree): a
 	// header with the PR link, a name filter and more actions, the branch → base line with ahead /
 	// behind and the +/− line total, the commit box (inside the scroll area) with Orca's primary
@@ -22,6 +28,8 @@
 	import { adeTasks } from './tasks.svelte';
 	import { worktreeDir } from './keys';
 	import { draftKey, drafts } from './scmDrafts';
+	import { amendBlock, amendedPending, amendPlan, stillAmended, type AmendInfo } from './amend.ts';
+	import { commitOptions } from '#lib/workbench/scmSettings.ts';
 	import { quick } from '#lib/workbench/quick.svelte.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { aiTextEnabled, generateCommitMessage, generatePrDetails, prTemplate } from './aiText.svelte';
@@ -128,7 +136,26 @@
 	});
 	const rows = $derived(Math.min(12, Math.max(2, message.split('\n').length)));
 
-	type Kind = 'commit' | 'stage' | 'publish' | 'push' | 'pull' | 'sync' | 'none';
+	/**
+	 * After amending a commit the upstream has, the branch is ahead and behind by the old copy:
+	 * Sync or Pull would merge it back and undo the amend, so the primary action is Force Push.
+	 */
+	const amended = $derived(!!repo && stillAmended(pendingAmends.get(draft), { branch: repo.branch, upstream: repo.upstream, ahead: repo.ahead, behind: repo.behind }));
+	$effect(() => {
+		if (repo && pendingAmends.has(draft) && !amended && !busy) pendingAmends.delete(draft);
+	});
+	async function forcePushAmend(): Promise<boolean> {
+		const upstream = repo?.upstream ?? '';
+		if (!(await ask(t('ade.amend.forceAsk', { upstream }), { title: t('ade.amend.forceTitle'), kind: 'warning', okLabel: t('ade.amend.forceOk') }))) return false;
+		return !busy && (await run('Force Push', 'git_force_push', {}));
+	}
+	/** Pull or Sync while an amend is pending brings the old commit back: say so first. */
+	async function pullOverAmend(): Promise<boolean> {
+		if (!amended) return true;
+		return ask(t('ade.amend.pullBack', { upstream: repo?.upstream ?? '' }), { title: t('ade.amend.pullBackTitle'), kind: 'warning', okLabel: t('ade.amend.pullBackOk') });
+	}
+
+	type Kind = 'commit' | 'stage' | 'publish' | 'push' | 'pull' | 'sync' | 'forcePush' | 'none';
 	/** Orca's primary action, in its order of checks. */
 	const primary = $derived.by((): { kind: Kind; label: string; title: string; enabled: boolean } => {
 		if (busy) return { kind: 'commit', label: busy, title: `${busy} in progress…`, enabled: false };
@@ -138,12 +165,13 @@
 		if (stageable) return { kind: 'stage', label: 'Stage All', title: 'Stage all changes', enabled: true };
 		if (!repo?.branch) return { kind: 'publish', label: 'Publish Branch', title: 'Check out a branch before publishing commits.', enabled: false };
 		if (!repo.upstream) return { kind: 'publish', label: 'Publish Branch', title: 'Publish this branch to origin', enabled: true };
+		if (amended) return { kind: 'forcePush', label: 'Force Push', title: t('ade.amend.forceTip', { upstream: repo.upstream }), enabled: true };
 		if (repo.ahead && repo.behind) return { kind: 'sync', label: 'Sync', title: `Pull ${repo.behind}, push ${repo.ahead}`, enabled: true };
 		if (repo.behind) return { kind: 'pull', label: 'Pull', title: `Pull ${repo.behind} commit${repo.behind === 1 ? '' : 's'}`, enabled: true };
 		if (repo.ahead) return { kind: 'push', label: 'Push', title: `Push ${repo.ahead} commit${repo.ahead === 1 ? '' : 's'}`, enabled: true };
 		return { kind: 'none', label: 'Commit', title: 'Nothing to commit. Branch is up to date.', enabled: false };
 	});
-	const ICON: Partial<Record<Kind, 'check' | 'plus' | 'send' | 'sync' | 'publish'>> = { commit: 'check', stage: 'plus', push: 'send', sync: 'sync', publish: 'publish' };
+	const ICON: Partial<Record<Kind, 'check' | 'plus' | 'send' | 'sync' | 'publish'>> = { commit: 'check', stage: 'plus', push: 'send', forcePush: 'send', sync: 'sync', publish: 'publish' };
 
 	async function commit(then?: 'push' | 'sync') {
 		const text = message.trim();
@@ -153,6 +181,48 @@
 			if (then) await run(then === 'push' ? 'Push' : 'Sync', 'git_sync', {});
 		}
 	}
+	/**
+	 * Commit (Amend): staged changes and/or the typed message go into the last commit (an empty box
+	 * keeps its message). A commit a remote branch already has is rewritten only after the user
+	 * agrees, and its upstream is only ever updated by a force push with lease the user chooses.
+	 */
+	const amendOff = $derived(amendBlock({ busy: !!busy, head: repo?.head ?? null, detached: !!repo?.detached, operation: repo?.operation ?? null, conflicts, staged, message }));
+	let amending = false;
+	async function amend() {
+		if (amendOff || amending) return;
+		amending = true;
+		try {
+			await amendNow();
+		} finally {
+			amending = false;
+		}
+	}
+	async function amendNow() {
+		const at = draft;
+		const typed = message;
+		let info: AmendInfo | null;
+		try {
+			info = await invoke<AmendInfo | null>('git_amend_info', { slug: slug || null });
+		} catch (e) {
+			error = String(e);
+			return void statusBar.error(String(e), 8000);
+		}
+		if (!info) return;
+		const upstream = repo?.upstream ?? null;
+		const plan = amendPlan(info, { message: typed, staged, upstream });
+		if (plan.kind === 'unchanged') return void statusBar.flash(t('ade.amend.unchanged'), 4000);
+		if (plan.confirm.length && !(await ask(t('ade.amend.confirm', { refs: plan.confirm.join(', ') }), { title: t('ade.amend.confirmTitle'), kind: 'warning', okLabel: t('ade.amend.confirmOk') }))) return;
+		// The worktree was switched or something else started while the question was open.
+		if (busy || draft !== at) return;
+		if (!(await run(t('ade.amend.busy'), 'git_commit', { message: plan.message, options: commitOptions((id) => settings.get(id), { amend: true }) }))) return;
+		if (draft === at && message === typed) message = '';
+		statusBar.flash(t('adeTasks.git.amended', { branch: repo?.branch ?? '' }), 4000);
+		if (!collapsed.history) void loadCommits();
+		if (!plan.forcePush || !upstream || draft !== at || !repo) return;
+		const pending = amendedPending(repo);
+		if (pending) pendingAmends.set(at, pending);
+		if (draft === at && !(await forcePushAmend())) statusBar.flash(t('ade.amend.forceLater', { upstream }), 6000);
+	}
 	function runPrimary() {
 		const p = primary;
 		if (!p.enabled) return;
@@ -160,6 +230,7 @@
 		if (p.kind === 'stage') return void run('Stage All', 'git_stage', { paths: (repo?.entries ?? []).filter((e) => e.worktree).map((e) => e.path) });
 		if (p.kind === 'push') return void run('Push', 'git_push', {});
 		if (p.kind === 'pull') return void run('Pull', 'git_pull', {});
+		if (p.kind === 'forcePush') return void forcePushAmend();
 		// Sync pulls then pushes; without an upstream it publishes the branch to origin.
 		return void run(p.label, 'git_sync', {});
 	}
@@ -172,6 +243,7 @@
 			menuItem('commit', 'Commit', { enabled: can }),
 			menuItem('commitPush', 'Commit & Push', { enabled: can && !!repo?.upstream }),
 			menuItem('commitSync', 'Commit & Sync', { enabled: can && !!repo?.upstream }),
+			menuItem('amend', t('ade.amend.item'), { enabled: !amendOff }),
 			menuSeparator,
 			menuItem('push', repo?.ahead ? `Push (${repo.ahead})` : 'Push', { enabled: up && !!repo?.ahead }),
 			menuItem('forcePush', repo?.ahead ? `Force Push (${repo.ahead})` : 'Force Push', { enabled: up && !!repo?.ahead && !!repo.behind }),
@@ -190,17 +262,19 @@
 			case 'commitPush':
 				return void commit('push');
 			case 'commitSync':
-				return void commit('sync');
+				return void pullOverAmend().then((ok) => void (ok && commit('sync')));
+			case 'amend':
+				return void amend();
 			case 'push':
 				return void run('Push', 'git_push', {});
 			case 'forcePush':
 				return void ask('Force push with lease? Commits on the remote that you do not have locally will be replaced.', { title: 'Force Push', kind: 'warning', okLabel: 'Force Push', cancelLabel: 'Cancel' }).then((ok) => ok && run('Force Push', 'git_force_push', {}));
 			case 'pull':
-				return void run('Pull', 'git_pull', {});
+				return void pullOverAmend().then((ok) => ok && run('Pull', 'git_pull', {}));
 			case 'ff':
 				return void run('Fast-forward', 'git_pull_ff_only', {});
 			case 'sync':
-				return void run('Sync', 'git_sync', {});
+				return void pullOverAmend().then((ok) => ok && run('Sync', 'git_sync', {}));
 			case 'rebase':
 				return void (remoteBase && run('Rebase', 'git_rebase', { base: remoteBase }));
 			case 'fetch':

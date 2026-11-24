@@ -7,6 +7,7 @@ import { untrack } from 'svelte';
 import { ask } from '#lib/workbench/messageBox.ts';
 import { adeLayout } from '#lib/ade/adeLayout.svelte.ts';
 import { cliSessions } from '#lib/ade/cliSessions.svelte.ts';
+import { paneSleep } from '#lib/ade/paneSleep.svelte.ts';
 import { killPty, listPtys } from '#lib/terminal/pty.ts';
 import { backgroundAgentKeys, backgroundKeys, orphanKeys, ownSessions, rootTag } from '#lib/terminal/sessions.ts';
 import { terminals } from '#lib/terminal/terminals.svelte.ts';
@@ -27,6 +28,7 @@ export function installTerminalSessions(): () => void {
 	async function show(root: string | null, key: string | null) {
 		const mine = ++generation;
 		terminals.unload();
+		paneSleep.unload();
 		adeLayout.unloadTerminals();
 		cliSessions.unload();
 		// Another window's terminals are neither adopted nor killed here.
@@ -36,6 +38,7 @@ export function installTerminalSessions(): () => void {
 		const panelTag = rootTag(key);
 		terminals.load(panelTag);
 		adeLayout.loadTerminals(tag);
+		paneSleep.load(tag);
 		cliSessions.load(tag, new Set(live.filter((s) => s.alive).map((s) => s.key)));
 		// This workspace's PTYs that no restored terminal shows (closed while the app was not looking).
 		for (const t of new Set([tag, panelTag])) for (const k of orphanKeys(live.map((s) => s.key), shown(), t)) killPty(k);

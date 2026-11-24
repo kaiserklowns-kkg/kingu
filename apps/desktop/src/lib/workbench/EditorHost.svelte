@@ -26,6 +26,7 @@
 	import { indentLabel } from './textFiles';
 	import { textFiles } from './textFileService.svelte';
 	import { installEditorActions } from './editorActions.svelte';
+	import { openInEditor } from './editorOpen';
 
 	let { group }: { group: number } = $props();
 
@@ -36,6 +37,8 @@
 	let shown = $state<string | null>(null);
 	/** True while a model is being switched in: its cursor moves are not navigation. */
 	let switching = false;
+	/** Set when this host is torn down; loads still in flight then leave the group alone. */
+	let destroyed = false;
 	/** Breakpoint glyphs and the stopped line for the shown file. */
 	let debugDecorations = $state<DebugDecorations | undefined>();
 	/** Test run icons, failure messages and the failure peek for the shown file. */
@@ -166,6 +169,7 @@
 
 		return () => {
 			disposed = true;
+			destroyed = true;
 			unregister();
 			debugDecorations?.dispose();
 			testingDecorations?.dispose();
@@ -283,9 +287,13 @@
 			shown = null;
 			return;
 		}
-		modelEntry(api, p)
-			.then((entry) => {
-				if (editors.group(group)?.active !== p || editor !== ed || entry.model.isDisposed()) return;
+		const m = api;
+		void openInEditor({
+			load: () => modelEntry(m, p),
+			// This host may be destroyed (and a new one created for the group) while the file loads.
+			alive: () => !destroyed && editor === ed,
+			wanted: () => editors.group(group)?.active === p,
+			show: (entry) => {
 				switching = true;
 				try {
 					ed.setModel(entry.model);
@@ -297,12 +305,13 @@
 					switching = false;
 				}
 				clientLog('info', `opened ${p} in group ${group} as ${entry.model.getLanguageId()} (${entry.model.getLineCount()} lines)`);
-			})
-			.catch((e) => {
+			},
+			failed: (e) => {
 				clientLog('error', `open ${p}: ${e}`);
 				// VS Code keeps the tab and shows why (binary, too large, an error) with "Open Anyway".
 				textFiles.openFailed(p, e);
-			});
+			}
+		});
 	});
 </script>
 

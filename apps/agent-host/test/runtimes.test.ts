@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentHost } from '../src/host.ts';
 import type { AgentEvent } from '../src/protocol.ts';
-import { acpOptionFor, acpToolView, autoDecision, codexPolicy, planTodos } from '../src/runtimes/tools.ts';
+import { acpOptionFor, acpToolView, autoDecision, codexFileChangePatch, codexPolicy, codexToolView, planTodos } from '../src/runtimes/tools.ts';
 import { runtimeSpec } from '../src/runtimes/index.ts';
 
 type Out = { id?: number | string | null; method?: string; params?: any; result?: unknown; error?: { code: number; message: string } };
@@ -385,5 +385,51 @@ describe('runtime helpers', () => {
 		expect(acpOptionFor('deny', [options[0]!])).toBeNull();
 		expect(codexPolicy('bypassPermissions')).toEqual({ approvalPolicy: 'never', sandbox: 'danger-full-access' });
 		expect(planTodos([{ content: ' x ', status: 'in_progress' }, { content: '' }])).toEqual({ todos: [{ content: 'x', status: 'in_progress', activeForm: 'x' }] });
+	});
+});
+
+describe('codex fileChange diff (Orca c6594b2c2)', () => {
+	test('each file of one multi-file apply_patch gets its own diff --git section', () => {
+		const patch = codexFileChangePatch([
+			{ path: 'C:\\w\\a.txt', kind: { type: 'update', move_path: null }, diff: '@@ -1 +1 @@\n-Original A\n+Updated A\n' },
+			{ path: '/w/new.txt', kind: { type: 'add' }, diff: 'one\ntwo\n' },
+			{ path: '/w/old.txt', kind: { type: 'delete' }, diff: 'gone' },
+			{ path: '/w/from.txt', kind: { type: 'update', move_path: '/w/to.txt' }, diff: '@@ -2 +2 @@\n-x\n+y\n\n\nMoved to: /w/to.txt' }
+		]);
+		expect(patch.split('\n')).toEqual([
+			'diff --git a/C:\\w\\a.txt b/C:\\w\\a.txt',
+			'--- a/C:\\w\\a.txt',
+			'+++ b/C:\\w\\a.txt',
+			'@@ -1 +1 @@',
+			'-Original A',
+			'+Updated A',
+			'diff --git a//w/new.txt b//w/new.txt',
+			'--- /dev/null',
+			'+++ b//w/new.txt',
+			'@@ -0,0 +1,2 @@',
+			'+one',
+			'+two',
+			'diff --git a//w/old.txt b//w/old.txt',
+			'--- a//w/old.txt',
+			'+++ /dev/null',
+			'@@ -1,1 +0,0 @@',
+			'-gone',
+			'\\ No newline at end of file',
+			'diff --git a//w/from.txt b//w/to.txt',
+			'--- a//w/from.txt',
+			'+++ b//w/to.txt',
+			'@@ -2 +2 @@',
+			'-x',
+			'+y'
+		]);
+	});
+	test('one file, or a name a header would cut, keeps the plain join', () => {
+		expect(codexFileChangePatch([{ path: '/w/a', kind: { type: 'update' }, diff: '-a\n+b' }])).toBe('-a\n+b');
+		expect(codexFileChangePatch([{ path: '/w/a\tb', kind: { type: 'update' }, diff: '-a' }, { path: '/w/c', kind: { type: 'update' }, diff: '+c' }])).toBe('-a\n+c');
+	});
+	test('the Edit row carries the sectioned diff and every path', () => {
+		const view = codexToolView({ type: 'fileChange', changes: [{ path: 'a.ts', kind: { type: 'update' }, diff: '-a\n+b' }, { path: 'b.ts', kind: { type: 'add' }, diff: 'x\n' }] }, '/w');
+		expect(view?.paths).toEqual(['/w/a.ts', '/w/b.ts']);
+		expect(String(view?.input.diff)).toContain('diff --git a/b.ts b/b.ts');
 	});
 });

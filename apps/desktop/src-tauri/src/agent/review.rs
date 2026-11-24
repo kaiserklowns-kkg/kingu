@@ -403,8 +403,7 @@ pub fn pr_create(gh: &Path, dir: &Path, slug: &str, base: &str, title: &str, bod
     return Err(tr!(TasksMsg::PrTitleEmpty));
   }
   let branch = push_task_branch(dir, slug)?;
-  let out = crate::shell_env::command(gh)
-    .current_dir(dir)
+  let out = super::gh_account::command(gh, dir, Some("pr"))?
     .args(pr_create_args(base, &branch, title, body, draft))
     .output()
     .map_err(|e| format!("gh: {e}"))?;
@@ -562,8 +561,7 @@ pub fn pr_view(gh: &Path, dir: &Path, slug: Option<&str>) -> Result<Option<serde
     args.push(super::worktree::pr_number_of(dir, &branch).map_or(branch, |n| n.to_string()));
   }
   args.extend(["--json".to_owned(), format!("{PR_FIELDS},{PR_VIEW_FIELDS}")]);
-  let out = crate::shell_env::command(gh)
-    .current_dir(dir)
+  let out = super::gh_account::command(gh, dir, args.first().map(String::as_str))?
     .env("GH_PROMPT_DISABLED", "1")
     .args(&args)
     .output()

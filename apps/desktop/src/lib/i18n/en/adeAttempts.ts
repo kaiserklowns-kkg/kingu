@@ -37,13 +37,12 @@ export const adeAttempts = {
 	'adeAttempts.cleanup.title': 'Clean Up Tasks',
 	'adeAttempts.cleanup.titleLosers': 'Clean Up the Other Attempts',
 	'adeAttempts.cleanup.onlyDone': 'Only finished ones',
-	'adeAttempts.cleanup.hint': 'Removes their worktrees and takes them off the list. A task whose agent is working cannot be picked.',
+	'adeAttempts.cleanup.hint': 'Deletes their worktrees, or only archives them when the cleanup rules say archive; either way they leave the list. A task whose agent is working cannot be picked.',
 	'adeAttempts.cleanup.hintLosers': 'The attempts that did not win. Removing them deletes their worktrees; their branches stay unless you tick the box below.',
 	'adeAttempts.cleanup.empty': 'No tasks',
 	'adeAttempts.cleanup.deleteBranches': 'Also delete their merged branches',
 	'adeAttempts.cleanup.deleteBranchesLosers': 'Also delete their branches (their work is lost)',
-	'adeAttempts.cleanup.progress': 'Removing {done}/{total}…',
-	'adeAttempts.cleanup.remove': 'Remove {count}',
+	'adeAttempts.cleanup.progress': 'Cleaning {done}/{total}…',
 	// worktreeActions.ts, the side bar and the board
 	'adeAttempts.action.newFromTask': 'New Task from This Task',
 	'adeAttempts.action.compare': 'Compare Attempts…',
@@ -51,6 +50,10 @@ export const adeAttempts = {
 	'adeAttempts.badge.dispatched': 'Sub-task dispatched by the agent of {task}',
 	'adeAttempts.badge.hibernated': 'Agent hibernated {ago}: resume it to continue its session',
 	'adeAttempts.badge.resume': 'Resume agent',
+	// AdeTabBar.svelte: a terminal tab whose agent was hibernated
+	'adeAttempts.pane.sleeping': 'Agent hibernated {ago}: it continues its session when you open this tab',
 	// AgentsLayout.svelte
-	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.'
+	'adeAttempts.hibernated.text': 'The agent was idle, so Kingu closed it {ago} to free memory. Its session is saved.',
+	'adeAttempts.hibernated.resuming': 'Resuming the agent’s session…',
+	'adeAttempts.hibernated.resumeFailed': 'Could not resume the agent of {title}: {error}'
 } as const;

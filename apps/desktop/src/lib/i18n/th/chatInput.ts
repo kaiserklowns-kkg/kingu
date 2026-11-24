@@ -41,6 +41,7 @@ export const chatInput = {
 	'chatInput.allowAll': 'อนุญาตทั้งหมด',
 	'chatInput.allowAllConfirm':
 		'อนุญาตทั้งหมดจะให้ agent ใช้เครื่องมือทุกอย่างโดยไม่ถาม รวมถึงคำสั่ง shell และการแก้ไฟล์ จนกว่าคุณจะเลือกระดับอื่น ใช้กับแชตนี้จนกว่าจะปิด Kingu ทำต่อไหม?',
+	'chatInput.assistedConfirm': 'เปิด Assisted permissions สำหรับแชตนี้?\n\nก่อน tool call แต่ละครั้ง Claude รุ่นเล็กจะอ่าน call นั้น (ชื่อ tool และ input) ผ่านบัญชี Claude ของคุณ แล้วตัดสินว่ารันได้โดยไม่ต้องถามหรือไม่ คำสั่งที่ safety pattern ของ Kingu จับได้ และ call ที่ตัวตรวจไม่อนุมัติชัดเจน จะยังถามคุณเหมือนเดิม การตรวจแต่ละครั้งเสีย request เล็ก ๆ หนึ่งครั้ง',
 	'chatInput.allowAllNote': 'อนุญาตทั้งหมด: เครื่องมือทำงานโดยไม่ถาม',
 
 	'chatInput.ctx.label': 'context window: ใช้ไป {percent}%',

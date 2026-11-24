@@ -2,15 +2,20 @@
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { page } from '$app/state';
+	import { isAdmin } from '#lib/admin.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
 
-	const nav = [
+	const nav = $derived([
 		{ href: '/', label: 'บอร์ดทีม' },
+		{ href: '/projects', label: 'โปรเจกต์' },
 		{ href: '/runs', label: 'ประวัติการรัน' },
-		{ href: '/snaps', label: 'Snap ของทีม' }
-	];
+		{ href: '/snaps', label: 'Snap ของทีม' },
+		{ href: '/members', label: 'สมาชิก' },
+		{ href: '/tokens', label: 'Token' },
+		...(isAdmin(data.me?.role) ? [{ href: '/audit', label: 'Audit log' }] : [])
+	]);
 </script>
 
 <svelte:head>
@@ -25,7 +30,7 @@
 	<header class="sticky top-0 z-10 border-b border-(--vscode-titleBar-border) bg-(--vscode-titleBar-activeBackground)">
 		<div class="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2">
 			<span class="font-semibold text-(--vscode-tab-activeForeground)">Kingu ทีม</span>
-			<nav aria-label="หลัก" class="flex gap-1">
+			<nav aria-label="หลัก" class="flex flex-wrap gap-1">
 				{#each nav as item (item.href)}
 					<a
 						href={item.href}

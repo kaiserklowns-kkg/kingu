@@ -1,8 +1,28 @@
 //! The floating workspace's browser tabs (Orca's): real child webviews of the main window,
 //! placed by the panel's browser tab. A page gets its own webview with no Tauri API, and only
 //! http(s) navigation is allowed.
+//!
+//! The boundary between a page, the app and an agent (checked against Orca 1.4.269):
+//! - A web page cannot call the app: Tauri answers IPC only for local origins, and the one local
+//!   page a tab can show, the new-tab page, is served with a policy that lets no script of its own run.
+//! - An agent reaches a tab only through [`agent`]: a chat run started with `kingu.browser.agentTools`
+//!   on, on a page it opened (its own in-memory store) or one the user shared, after the agent host
+//!   asked the user to open or navigate it (VS Code 1.147's browser tools and grants). The `kingu`
+//!   command itself has no browser method, and no agent touches a profile's cookies.
+//! - The one way page content reaches an agent is Design Mode, and only for a pick the user armed
+//!   on that tab ([`floating_browser_pick`]): a page that sends a pick on its own is ignored
+//!   (Orca's `browser-grab-session-controller.ts` settles only the operation it armed).
+//! - Session cookies kept across a restart are sealed with a Keychain key (session_cookies.rs).
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
+
+/// Orca's cookie import into a browser profile (Chrome / Edge / a cookie file).
+pub mod cookies;
+/// Orca's session cookies kept across a restart.
+pub mod session_cookies;
+/// Agent browser use (VS Code 1.147's browser tools): pages an agent opens or the user shares.
+pub mod agent;
 
 use tauri::http::{header, Request, Response};
 use tauri::{
@@ -75,13 +95,22 @@ h2 {{ margin: 0 0 20px; font-size: 12px; font-weight: 600; letter-spacing: .12em
 }
 
 /// The new-tab page's URL (Tauri serves custom schemes as `http://<scheme>.localhost` on Windows).
+/// The new-tab page is a local origin to Tauri (its scheme is registered by the app), so unlike a
+/// web page it could call the app. It is static: no script of its own may run on it.
+const NEW_TAB_POLICY: &str = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'";
+
 fn new_tab_url() -> String {
   if cfg!(any(windows, target_os = "android")) { format!("http://{SCHEME}.localhost/") } else { format!("{SCHEME}://localhost/") }
 }
 
 pub fn handle<R: Runtime>(_ctx: UriSchemeContext<'_, R>, _req: Request<Vec<u8>>) -> Response<Vec<u8>> {
+  handle_page()
+}
+
+fn handle_page() -> Response<Vec<u8>> {
   Response::builder()
     .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+    .header(header::CONTENT_SECURITY_POLICY, NEW_TAB_POLICY)
     .body(new_tab_page().into_bytes())
     .unwrap_or_else(|_| Response::new(Vec::new()))
 }
@@ -103,12 +132,25 @@ pub fn picked(url: &Url) -> Option<serde_json::Value> {
   if bytes.len() > 64 * 1024 {
     return None;
   }
-  serde_json::from_slice(&bytes).ok().filter(serde_json::Value::is_object)
+  let mut v: serde_json::Value = serde_json::from_slice(&bytes).ok().filter(serde_json::Value::is_object)?;
+  // The page wrote it: the source location stays one short line of text (never opened).
+  if let Some(obj) = v.as_object_mut() {
+    let ok = obj.get("source").and_then(|s| s.as_str()).is_some_and(|s| s.chars().count() <= SOURCE_MAX && !s.chars().any(char::is_control));
+    if !ok {
+      obj.remove("source");
+    }
+  }
+  Some(v)
 }
 
+/// Orca's `GRAB_BUDGET.sourceFileMaxLength` (500) plus the " (truncated)" the picker appends.
+const SOURCE_MAX: usize = 512;
+
 /// Orca's Design Mode picker (docs browser/design-mode.mdx): outlines the element under the
-/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box and text;
-/// Escape stops. Turning it off removes it.
+/// pointer; a click takes its selector, trimmed HTML, a few computed styles, its box, its text, the
+/// page's CSS width (`vw`, to scale the box onto the view for the screenshot) and, in a React dev
+/// build, its source location; Escape stops. Turning it off removes it (before the pick is sent, so
+/// the outline is not in the screenshot).
 const PICK_SCRIPT: &str = r#"(() => {
   const w = window;
   if (w.__kinguPick) w.__kinguPick.stop();
@@ -131,6 +173,38 @@ const PICK_SCRIPT: &str = r#"(() => {
     }
     return parts.join(' > ');
   };
+  // Orca's grab-guest-react-script.ts: the file:line:col a React dev build records on the fiber
+  // (`_debugSource`, or its owner's), first found walking up at most 35 fibers; dev-server
+  // prefixes and query strings stripped; dropped if it looks like a secret; at most 500 chars.
+  const SECRETS = ['access_token','auth_token','api_key','apikey','client_secret','oauth_state','x-amz-','session_id','sessionid','csrf','secret','password','passwd'];
+  const cleanSource = (p) => String(p)
+    .replace(/[?#].*$/, '')
+    .replace(/^turbopack:\/\/\/\[project\]\//, '')
+    .replace(/^webpack-internal:\/\/\/\.\//, '')
+    .replace(/^webpack-internal:\/\/\//, '')
+    .replace(/^webpack:\/\/\/\.\//, '')
+    .replace(/^webpack:\/\/\//, '')
+    .replace(/^turbopack:\/\/\//, '')
+    .replace(/^https?:\/\/[^/]+\//, '')
+    .replace(/^file:\/\/\//, '/')
+    .replace(/^\([^)]+\)\/\.\//, '')
+    .replace(/^\.\//, '');
+  const source = (el) => {
+    try {
+      const k = Object.keys(el).find((n) => n.indexOf('__reactFiber$') === 0 || n.indexOf('__reactInternalInstance$') === 0);
+      let fiber = k ? el[k] : null;
+      for (let depth = 0; fiber && depth < 35; depth++, fiber = fiber.return) {
+        const s = fiber._debugSource || (fiber._debugOwner && fiber._debugOwner._debugSource);
+        if (s && s.fileName && s.lineNumber) {
+          const out = cleanSource(s.fileName) + ':' + s.lineNumber + (s.columnNumber !== undefined ? ':' + s.columnNumber : '');
+          const low = out.toLowerCase();
+          if (SECRETS.some((x) => low.indexOf(x) !== -1)) continue;
+          return out.length > 500 ? out.slice(0, 500) + ' (truncated)' : out;
+        }
+      }
+    } catch (_) {}
+    return null;
+  };
   const KEYS = ['display','position','width','height','margin','padding','color','background-color','font-family','font-size','font-weight','line-height','border','border-radius','gap','flex-direction','justify-content','align-items'];
   const move = (e) => { const r = e.target.getBoundingClientRect(); Object.assign(box.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' }); };
   const click = (e) => {
@@ -139,7 +213,9 @@ const PICK_SCRIPT: &str = r#"(() => {
     for (const k of KEYS) { const v = cs.getPropertyValue(k); if (v) styles[k] = v; }
     const r = el.getBoundingClientRect();
     const html = el.outerHTML.length > 3000 ? el.outerHTML.slice(0, 3000) + '…' : el.outerHTML;
-    const data = { url: location.href, selector: sel(el), html, styles, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, text: (el.innerText || '').slice(0, 300) };
+    const data = { url: location.href, selector: sel(el), html, styles, rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }, text: (el.innerText || '').slice(0, 300), vw: innerWidth };
+    const src = source(el);
+    if (src) data.source = src;
     stop();
     const json = JSON.stringify(data);
     location.href = BASE + '#' + btoa(unescape(encodeURIComponent(json)));
@@ -156,10 +232,38 @@ pub fn pick_script(on: bool) -> String {
   PICK_SCRIPT.replace("__ON__", if on { "true" } else { "false" }).replace("__BASE__", &serde_json::to_string(&pick_url()).unwrap_or_default())
 }
 
+/// The tabs whose Design Mode the user turned on: only their next pick is taken.
+static ARMED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+
+fn arm(label: &str, on: bool) {
+  let mut armed = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+  if on {
+    armed.insert(label.to_owned());
+  } else {
+    armed.remove(label);
+  }
+}
+
+fn armed(label: &str) -> bool {
+  ARMED.lock().unwrap_or_else(|e| e.into_inner()).contains(label)
+}
+
+/// Takes the tab's armed pick: true once, for the tab the user armed. A pick from any other tab
+/// (a page navigating to the pick address by itself) is refused.
+pub fn take_pick(label: &str) -> bool {
+  ARMED.lock().unwrap_or_else(|e| e.into_inner()).remove(label)
+}
+
 /// Orca's Design Mode on (or off) in a browser tab.
 #[tauri::command]
 pub fn floating_browser_pick(app: AppHandle, label: String, on: bool) -> Result<(), String> {
-  webview(&app, &label)?.eval(pick_script(on)).map_err(|e| e.to_string())
+  let wv = webview(&app, &label)?;
+  // Armed before the picker runs, and never left armed when it could not start.
+  arm(&label, on);
+  wv.eval(pick_script(on)).map_err(|e| {
+    arm(&label, false);
+    e.to_string()
+  })
 }
 
 /// A browser profile's own cookies and storage (Orca's browser profiles): a WebKit data store per
@@ -223,6 +327,7 @@ fn webview(app: &AppHandle, label: &str) -> Result<Webview, String> {
 
 /// Opens a browser tab's webview over the panel (logical px, relative to the window's client area).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
 pub async fn floating_browser_open(
   app: AppHandle,
   label: String,
@@ -233,25 +338,34 @@ pub async fn floating_browser_open(
   height: f64,
   profile: Option<String>,
 ) -> Result<(), String> {
-  if app.get_webview(&label).is_some() {
-    return Ok(());
+  if let Some(wv) = app.get_webview(&label) {
+    // Already open, or a page an agent opened off screen (agent.rs): placed where its tab is.
+    wv.set_position(LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    return wv.set_size(LogicalSize::new(width, height)).map_err(|e| e.to_string());
   }
   let url = parsed(&url)?;
   let start = if url.as_str() == "about:blank" { Url::parse(&new_tab_url()).map_err(|e| e.to_string())? } else { url };
   let window = app.get_window("main").ok_or("no main window")?;
+  // The profile's saved session cookies go back before its first page loads.
+  session_cookies::before_open(&app, &label, profile.as_deref().unwrap_or("")).await;
   let emitter = app.clone();
   let tab = label.clone();
   let (picker, pick_tab) = (app.clone(), label.clone());
   let (loader, load_tab) = (app.clone(), label.clone());
   let downloads = app.path().download_dir().ok();
+  let tab_label = label.clone();
   let mut builder = WebviewBuilder::new(label, WebviewUrl::External(start))
     .on_navigation(move |u| {
       if let Some(data) = picked(u) {
-        let _ = picker.emit("browser-pick", serde_json::json!({ "label": pick_tab, "element": data }));
+        // Only the pick the user armed on this tab; the address itself never loads.
+        if take_pick(&pick_tab) {
+          let _ = picker.emit("browser-pick", serde_json::json!({ "label": pick_tab, "element": data }));
+        }
         return false;
       }
       allowed(u)
     })
+    .initialization_script(EDITS_SCRIPT)
     // Orca's downloads: into the Downloads folder, each reported to the tab's surface.
     .on_download(move |_wv, event| {
       match event {
@@ -268,14 +382,21 @@ pub async fn floating_browser_open(
       true
     })
     .on_page_load(move |_wv, payload| {
+      agent::page_event(&tab, payload.event() == tauri::webview::PageLoadEvent::Finished, Some(payload.url().as_str()));
       if payload.event() != tauri::webview::PageLoadEvent::Finished {
+        // A new document has no picker: a pick armed on the last one is over.
+        arm(&tab, false);
         return;
       }
       let url = payload.url();
       remember(url);
+      session_cookies::nudge();
       let _ = emitter.emit("floating-browser", serde_json::json!({ "label": tab, "url": url.to_string() }));
     });
-  if let Some(id) = profile.as_deref().and_then(profile_store) {
+  if agent::is_agent_label(tab_label.as_str()) {
+    // A page an agent opened keeps a store of its own, never a profile's cookies.
+    builder = builder.incognito(true);
+  } else if let Some(id) = profile.as_deref().and_then(profile_store) {
     builder = builder.data_store_identifier(id);
   }
   window.add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(width, height)).map_err(|e| e.to_string())?;
@@ -302,9 +423,134 @@ pub fn floating_browser_history(app: AppHandle, label: String, back: bool) -> Re
   webview(&app, &label)?.eval(if back { "history.back()" } else { "history.forward()" }).map_err(|e| e.to_string())
 }
 
+/// Reload, or Orca's Hard Reload (`browser.hardReload`, ⇧⌘R; Electron's `reloadIgnoringCache`):
+/// WKWebView's `reloadFromOrigin` on macOS, which revalidates every resource with the server.
+/// Elsewhere a hard reload is a plain reload (wry exposes no cache-skipping reload there).
 #[tauri::command]
-pub fn floating_browser_reload(app: AppHandle, label: String) -> Result<(), String> {
-  webview(&app, &label)?.reload().map_err(|e| e.to_string())
+pub fn floating_browser_reload(app: AppHandle, label: String, hard: Option<bool>) -> Result<(), String> {
+  reload(&webview(&app, &label)?, hard.unwrap_or(false))
+}
+
+fn reload<R: Runtime>(wv: &Webview<R>, hard: bool) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  if hard {
+    return wv
+      .with_webview(|pv| unsafe {
+        use objc2::{msg_send, runtime::AnyObject};
+        let _: *mut AnyObject = msg_send![pv.inner() as *mut AnyObject, reloadFromOrigin];
+      })
+      .map_err(|e| e.to_string());
+  }
+  #[cfg(not(target_os = "macos"))]
+  let _ = hard;
+  wv.reload().map_err(|e| e.to_string())
+}
+
+/// The reload button's right-click menu (Orca's `BrowserReloadControl`): Reload and Hard Reload.
+/// A native menu, so it shows over the page's native view. Its items name the tab they act on.
+const RELOAD_ITEM: &str = "kingu.browser.reload\u{1f}";
+const HARD_RELOAD_ITEM: &str = "kingu.browser.hardReload\u{1f}";
+
+/// A reload menu item's (hard, tab label).
+pub fn reload_item(id: &str) -> Option<(bool, &str)> {
+  id.strip_prefix(HARD_RELOAD_ITEM).map(|l| (true, l)).or_else(|| id.strip_prefix(RELOAD_ITEM).map(|l| (false, l))).filter(|(_, l)| !l.is_empty())
+}
+
+/// Shows the reload menu at (x, y) (logical px in the calling window); the labels come localized.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
+pub fn floating_browser_reload_menu(app: AppHandle, window: tauri::Window, label: String, x: f64, y: f64, reload: String, hard_reload: String) -> Result<(), String> {
+  use tauri::menu::{Menu, MenuItem};
+  webview(&app, &label)?;
+  let soft = MenuItem::with_id(&app, format!("{RELOAD_ITEM}{label}"), reload, true, None::<&str>).map_err(|e| e.to_string())?;
+  let hard = MenuItem::with_id(&app, format!("{HARD_RELOAD_ITEM}{label}"), hard_reload, true, None::<&str>).map_err(|e| e.to_string())?;
+  let menu = Menu::with_items(&app, &[&soft, &hard]).map_err(|e| e.to_string())?;
+  window.popup_menu_at(&menu, LogicalPosition::new(x, y)).map_err(|e| e.to_string())
+}
+
+/// Clicks on the reload menu's items (other menu items are left to menu.rs).
+pub fn install<R: Runtime>(app: &AppHandle<R>) {
+  app.on_menu_event(|app, event| {
+    if let Some((hard, label)) = reload_item(&event.id().0)
+      && let Some(wv) = app.get_webview(label)
+      && let Err(e) = reload(&wv, hard)
+    {
+      log::warn!("browser reload: {e}");
+    }
+  });
+}
+
+/// Orca's `GRAB_BUDGET.screenshotMaxBytes`: a larger element screenshot is left out.
+const SCREENSHOT_MAX: usize = 2 * 1024 * 1024;
+
+/// The picked element's box (CSS px of a page `vw` CSS px wide) in the view's own points (the view
+/// is `view_w` × `view_h`), clipped to the view: (x, y, width, height). None when nothing of it shows.
+pub fn snapshot_rect(x: f64, y: f64, w: f64, h: f64, vw: Option<f64>, view_w: f64, view_h: f64) -> Option<(f64, f64, f64, f64)> {
+  if ![x, y, w, h, view_w, view_h].iter().all(|n| n.is_finite()) || w <= 0.0 || h <= 0.0 {
+    return None;
+  }
+  // Like Orca's crop: the scale is the view's width over the page's (page zoom, magnification).
+  let scale = vw.filter(|v| v.is_finite() && *v > 0.0).map_or(1.0, |v| view_w / v);
+  let (x0, y0) = ((x * scale).max(0.0), (y * scale).max(0.0));
+  let (x1, y1) = (((x + w) * scale).min(view_w), ((y + h) * scale).min(view_h));
+  (x1 - x0 >= 1.0 && y1 - y0 >= 1.0).then_some((x0, y0, x1 - x0, y1 - y0))
+}
+
+/// Orca's Design Mode screenshot (`captureSelectionScreenshot`): the picked element's box cropped
+/// from the page, saved as a PNG with the pasted images (attachments.rs: private, swept after 30
+/// days) so the agent can be handed its path. None when it could not be taken (macOS only; Orca
+/// treats a missing screenshot as non-fatal too).
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a Tauri command: its arguments are the IPC payload
+pub async fn floating_browser_snapshot(app: AppHandle, label: String, x: f64, y: f64, width: f64, height: f64, viewport: Option<f64>) -> Result<Option<String>, String> {
+  let wv = webview(&app, &label)?;
+  let scale = wv.window().scale_factor().map_err(|e| e.to_string())?;
+  let size = wv.size().map_err(|e| e.to_string())?.to_logical::<f64>(scale);
+  let Some(rect) = snapshot_rect(x, y, width, height, viewport, size.width, size.height) else { return Ok(None) };
+  let Some(png) = snapshot_png(&wv, rect).await? else { return Ok(None) };
+  if png.len() > SCREENSHOT_MAX {
+    return Ok(None);
+  }
+  let dir = crate::attachments::paste_dir(&app)?;
+  let file = tauri::async_runtime::spawn_blocking(move || crate::attachments::save_image(&dir, &png)).await.map_err(|e| e.to_string())??;
+  Ok(file.to_str().map(str::to_owned))
+}
+
+/// WKWebView's `takeSnapshotWithConfiguration:completionHandler:` with the rect (view points): the
+/// page draws itself, so no Screen Recording permission is needed.
+#[cfg(target_os = "macos")]
+async fn snapshot_png<R: Runtime>(wv: &Webview<R>, rect: (f64, f64, f64, f64)) -> Result<Option<Vec<u8>>, String> {
+  let (tx, rx) = std::sync::mpsc::channel::<Option<Vec<u8>>>();
+  wv.with_webview(move |pv| {
+    use block2::RcBlock;
+    use objc2::{msg_send, rc::Retained, runtime::{AnyClass, AnyObject}};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    let wk = pv.inner() as *mut AnyObject;
+    let Some(class) = AnyClass::get(c"WKSnapshotConfiguration") else {
+      let _ = tx.send(None);
+      return;
+    };
+    let config: Option<Retained<AnyObject>> = unsafe { msg_send![class, new] };
+    let Some(config) = config else {
+      let _ = tx.send(None);
+      return;
+    };
+    let r = NSRect::new(NSPoint::new(rect.0, rect.1), NSSize::new(rect.2, rect.3));
+    let done = RcBlock::new(move |image: *mut AnyObject, _error: *mut AnyObject| {
+      let _ = tx.send(unsafe { crate::screenshot::png_bytes(image) });
+    });
+    unsafe {
+      let _: () = msg_send![&*config, setRect: r];
+      let _: () = msg_send![wk, takeSnapshotWithConfiguration: &*config, completionHandler: &*done];
+    }
+  })
+  .map_err(|e| e.to_string())?;
+  tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(5)).ok().flatten()).await.map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn snapshot_png<R: Runtime>(_wv: &Webview<R>, _rect: (f64, f64, f64, f64)) -> Result<Option<Vec<u8>>, String> {
+  Ok(None)
 }
 
 /// Orca's browser zoom (⌘= / ⌘- / ⌘0): the page's own scale, 25%–500%.
@@ -361,6 +607,56 @@ pub fn floating_browser_show(app: AppHandle, label: String, visible: bool) -> Re
   .map_err(|e| e.to_string())
 }
 
+/// Runs in every page before its own scripts: remembers that the user edited something in this
+/// document (Orca's `dirty`, kept until the next document), so Memory Saver leaves the page alone.
+const EDITS_SCRIPT: &str = "addEventListener('input', (e) => { if (e.isTrusted) window.__kinguEdited = true; }, true);";
+
+/// Why Memory Saver may not free the page, or `clean` (Orca's `readBrowserGuestDiscardProtection`,
+/// the reasons a WKWebView page can answer for itself): only web pages; not one the user edited,
+/// with child frames (their edits are not seen), in picture-in-picture, showing a PDF or playing media.
+const PROTECTION_SCRIPT: &str = r#"(() => { try {
+  if (!/^https?:$/.test(location.protocol)) return 'url';
+  if (window.__kinguEdited) return 'edits';
+  if (window.frames.length > 0) return 'frames';
+  if (document.pictureInPictureElement) return 'picture-in-picture';
+  if (document.contentType === 'application/pdf') return 'pdf';
+  for (const m of document.querySelectorAll('video, audio')) { if (!m.paused && !m.ended) return 'audio'; }
+  return 'clean';
+} catch (_) { return 'unknown'; } })()"#;
+
+/// The page's answer to [`PROTECTION_SCRIPT`] (a JSON string): anything else is `unknown`, which
+/// is never freed.
+pub fn protection(answer: Option<&str>) -> &'static str {
+  const REASONS: [&str; 7] = ["clean", "url", "edits", "frames", "picture-in-picture", "pdf", "audio"];
+  let said = answer.and_then(|a| serde_json::from_str::<String>(a).ok());
+  REASONS.iter().find(|r| said.as_deref() == Some(**r)).copied().unwrap_or("unknown")
+}
+
+/// Orca's Memory Saver asks before it frees a hidden tab's page: `clean` when nothing would be
+/// lost by loading the page again, else the reason it stays (`unknown` when the page did not say).
+#[tauri::command]
+pub async fn floating_browser_discardable(app: AppHandle, label: String) -> Result<String, String> {
+  let wv = webview(&app, &label)?;
+  if armed(&label) {
+    return Ok("picking".into());
+  }
+  // Orca's Memory Saver leaves a page in use alone; an agent's page keeps its logins in memory only.
+  if agent::in_use(&label) {
+    return Ok("agent".into());
+  }
+  #[cfg(any(debug_assertions, feature = "devtools"))]
+  if wv.is_devtools_open() {
+    return Ok("devtools".into());
+  }
+  let (tx, rx) = std::sync::mpsc::channel::<String>();
+  wv.eval_with_callback(PROTECTION_SCRIPT, move |answer| {
+    let _ = tx.send(answer);
+  })
+  .map_err(|e| e.to_string())?;
+  let answer = tauri::async_runtime::spawn_blocking(move || rx.recv_timeout(std::time::Duration::from_secs(3)).ok()).await.map_err(|e| e.to_string())?;
+  Ok(protection(answer.as_deref()).to_owned())
+}
+
 /// The page in the system's browser (a site that refuses to be embedded still opens here).
 #[tauri::command]
 pub fn floating_browser_open_external(url: String) -> Result<(), String> {
@@ -369,6 +665,9 @@ pub fn floating_browser_open_external(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn floating_browser_close(app: AppHandle, label: String) -> Result<(), String> {
+  arm(&label, false);
+  agent::closed(&label);
+  session_cookies::closed(&label);
   match app.get_webview(&label) {
     Some(wv) => wv.close().map_err(|e| e.to_string()),
     None => Ok(()),
@@ -399,9 +698,73 @@ mod tests {
     assert!(picked(&Url::parse(&format!("https://evil.dev/pick#{enc}")).unwrap()).is_none());
     assert!(picked(&Url::parse(&format!("{}#not-base64!", pick_url())).unwrap()).is_none());
     assert!(picked(&Url::parse(&new_tab_url()).unwrap()).is_none());
+    let pick = |json: &str| picked(&Url::parse(&format!("{}#{}", pick_url(), base64::engine::general_purpose::STANDARD.encode(json))).unwrap()).unwrap();
+    assert_eq!(pick(r#"{"source":"src/App.tsx:12:5"}"#)["source"], "src/App.tsx:12:5");
+    assert!(pick(r#"{"source":"a\nb"}"#).get("source").is_none());
+    assert!(pick(r#"{"source":7}"#).get("source").is_none());
+    assert!(pick(&format!(r#"{{"source":"{}"}}"#, "x".repeat(600))).get("source").is_none());
+    assert!(pick_script(true).contains("_debugSource") && pick_script(true).contains("data.source = src"));
     assert!(pick_script(true).contains("if (!true) return;") && pick_script(false).contains("if (!false) return;"));
     assert!(profile_store("") .is_none());
     assert_ne!(profile_store("work"), profile_store("personal"));
+  }
+
+  #[test]
+  fn a_pick_is_taken_only_from_the_tab_the_user_armed_and_only_once() {
+    assert!(!take_pick("t-unarmed"));
+    arm("t-a", true);
+    assert!(armed("t-a") && !armed("t-b"));
+    assert!(!take_pick("t-b"));
+    assert!(take_pick("t-a"));
+    assert!(!take_pick("t-a"));
+    arm("t-a", true);
+    arm("t-a", false);
+    assert!(!take_pick("t-a"));
+  }
+
+  /// The boundary in the module doc: what agents run (`kingu`, its skill) asks the app for no
+  /// browser tab, page or cookie. The agent host's browser tools reach tabs only through
+  /// `agent::dispatch`, which needs a chat run's session token and `kingu.browser.agentTools`.
+  #[test]
+  fn the_agents_command_reaches_no_browser_tab() {
+    let protocol = include_str!("../../../../crates/kingu-cli/src/protocol.rs");
+    let methods: Vec<&str> = protocol.lines().filter(|l| l.trim_start().starts_with("pub const METHOD_")).filter_map(|l| l.split('"').nth(1)).collect();
+    assert!(methods.len() >= 10 && methods.contains(&"task.create"), "{methods:?}");
+    for m in &methods {
+      let low = m.to_ascii_lowercase();
+      assert!(!["browser", "cookie", "webview", "page.", "tab."].iter().any(|w| low.contains(w)), "{m}: a browser method needs a grant the user gives");
+    }
+    assert!(!crate::cli_server::SKILL_MD.to_ascii_lowercase().contains("browser tab"));
+    // The socket's browser methods are the agent module's, and it refuses a request without a session first.
+    assert!(agent::METHODS.iter().all(|m| m.starts_with("browser.") && !methods.contains(m)));
+    let server = include_str!("cli_server.rs");
+    assert!(server.contains("agent::METHODS.contains(&m) => crate::floating_browser::agent::dispatch"));
+    let dispatch = include_str!("floating_browser/agent.rs").split("pub fn dispatch(").nth(1).unwrap();
+    let (session_check, enabled_check, first_step) = (dispatch.find("r.session(&token)").unwrap(), dispatch.find("enabled(app)").unwrap(), dispatch.find("Step::parse").unwrap());
+    assert!(session_check < enabled_check && enabled_check < first_step);
+  }
+
+  #[test]
+  fn the_new_tab_page_runs_no_script_of_its_own() {
+    let res = handle_page();
+    let policy = res.headers().get(header::CONTENT_SECURITY_POLICY).unwrap().to_str().unwrap();
+    assert!(policy.contains("default-src 'none'") && !policy.contains("script-src"));
+    assert!(!String::from_utf8(res.into_body()).unwrap().contains("<script"));
+  }
+
+  #[test]
+  fn only_a_page_that_says_clean_is_freed() {
+    assert_eq!(protection(Some(r#""clean""#)), "clean");
+    assert_eq!(protection(Some(r#""edits""#)), "edits");
+    assert_eq!(protection(Some(r#""audio""#)), "audio");
+    assert_eq!(protection(Some(r#""anything""#)), "unknown");
+    assert_eq!(protection(Some("null")), "unknown");
+    assert_eq!(protection(Some("clean")), "unknown");
+    assert_eq!(protection(None), "unknown");
+    for reason in ["url", "edits", "frames", "picture-in-picture", "pdf", "audio", "clean"] {
+      assert!(PROTECTION_SCRIPT.contains(&format!("'{reason}'")), "{reason}");
+    }
+    assert!(EDITS_SCRIPT.contains("isTrusted"));
   }
 
   #[test]
@@ -413,6 +776,28 @@ mod tests {
     std::fs::write(&first, "x").unwrap();
     assert_eq!(download_path(dir.path(), std::path::Path::new("/tmp/report.pdf"), &url), dir.path().join("report (2).pdf"));
     assert_eq!(download_path(dir.path(), std::path::Path::new(".bashrc"), &url), dir.path().join("_.bashrc"));
+  }
+
+  #[test]
+  fn reload_menu_items_name_their_tab() {
+    assert_eq!(reload_item(&format!("{RELOAD_ITEM}ade-browser-1")), Some((false, "ade-browser-1")));
+    assert_eq!(reload_item(&format!("{HARD_RELOAD_ITEM}ade-browser-1")), Some((true, "ade-browser-1")));
+    assert_eq!(reload_item(RELOAD_ITEM), None);
+    assert_eq!(reload_item("workbench.action.reloadWindow"), None);
+  }
+
+  #[test]
+  fn snapshot_rect_scales_and_clips_to_the_view() {
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(800.0), 800.0, 600.0), Some((10.0, 20.0, 100.0, 50.0)));
+    // Page zoom 200%: 400 CSS px across an 800 pt view.
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(400.0), 800.0, 600.0), Some((20.0, 40.0, 200.0, 100.0)));
+    // Partly scrolled out: only the visible part.
+    assert_eq!(snapshot_rect(-50.0, 580.0, 100.0, 100.0, Some(800.0), 800.0, 600.0), Some((0.0, 580.0, 50.0, 20.0)));
+    assert_eq!(snapshot_rect(10.0, 700.0, 100.0, 50.0, Some(800.0), 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(10.0, 20.0, 0.0, 50.0, None, 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(f64::NAN, 20.0, 10.0, 50.0, None, 800.0, 600.0), None);
+    assert_eq!(snapshot_rect(10.0, 20.0, 100.0, 50.0, Some(0.0), 800.0, 600.0), Some((10.0, 20.0, 100.0, 50.0)));
+    assert!(pick_script(true).contains("vw: innerWidth"));
   }
 
   #[test]

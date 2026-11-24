@@ -296,6 +296,11 @@ mod tests {
     let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
     assert!(server_live(&home));
     drop(listener);
+    // macOS can accept one more connection for a moment after the listener closed.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while server_live(&home) && std::time::Instant::now() < deadline {
+      std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     assert!(!server_live(&home), "a left-behind socket file is not a live server");
   }
 }

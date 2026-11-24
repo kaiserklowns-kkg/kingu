@@ -38,7 +38,7 @@
 		class="grid size-4 shrink-0 place-items-center rounded text-(--vscode-descriptionForeground) hover:bg-(--vscode-toolbar-hoverBackground) hover:text-(--vscode-foreground)"
 		title="{t('adeAttempts.badge.hibernated', { ago: timeAgo(meta.hibernated_at ?? 0, adeTasks.now) })} · {t('adeAttempts.badge.resume')}"
 		aria-label={t('adeAttempts.badge.resume')}
-		onclick={(e) => (e.stopPropagation(), adeTasks.openTask(meta.slug), void adeTasks.resumeCli(meta.slug))}
+		onclick={(e) => (e.stopPropagation(), adeTasks.openTask(meta.slug), void attempts.resume(meta.slug))}
 		ondblclick={(e) => e.stopPropagation()}><Icon name="sleep" size={11} /></button
 	>
 {/if}

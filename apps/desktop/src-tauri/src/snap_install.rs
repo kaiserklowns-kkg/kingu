@@ -303,8 +303,37 @@ fn candidates(src: &Path) -> Result<Vec<Candidate>, String> {
   Ok(out)
 }
 
-/// Removes staging folders left behind (the app quit during a confirm).
-fn prune_staging(staging: &Path) {
+/// Set when Kingu quits: a Snap or skill clone or fetch still running stops, so no `git` outlives
+/// the app (Orca 70a1f42a3, `abortPluginGitForShutdown` on will-quit). Its staging folder is left
+/// to [`sweep_stale_staging`].
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Stops every running and later Snap/skill git call (the app is quitting).
+pub fn stop_git_for_shutdown() {
+  SHUTDOWN.store(true, Ordering::SeqCst);
+}
+
+/// How long after start-up the leftover sweep waits, so deleting a large clone doesn't compete
+/// with start-up disk work (Orca's `SWEEP_STARTUP_DELAY_MS`).
+const SWEEP_DELAY: Duration = Duration::from_secs(30);
+
+/// A quit, crash or kill during a fetch skips its own cleanup, and staging is otherwise only
+/// pruned when the next install starts. Shortly after start-up, the Snap and skill staging
+/// folders older than an hour (far past any live fetch, so another Kingu's is never touched)
+/// are removed in the background (Orca 70a1f42a3, `scheduleStalePluginGitTempSweep`).
+pub fn sweep_stale_staging(app: &AppHandle) {
+  let dirs: Vec<PathBuf> = [staging_dir(app).ok(), crate::skill_hub::staging_dir(app).ok()].into_iter().flatten().collect();
+  std::thread::spawn(move || {
+    std::thread::sleep(SWEEP_DELAY);
+    for d in &dirs {
+      prune_staging(d);
+    }
+  });
+}
+
+/// Removes staging folders left behind (the app quit during a confirm, or mid-fetch) once older
+/// than [`STAGING_TTL`].
+pub(crate) fn prune_staging(staging: &Path) {
   let Ok(read) = std::fs::read_dir(staging) else { return };
   for entry in read.flatten() {
     let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > STAGING_TTL);
@@ -370,7 +399,7 @@ pub(crate) fn clone(dir: &Path, spec: &GitSpec, timeout: Duration) -> Result<Str
   }
   args.extend(["--", spec.url.as_str(), "src"]);
   let env = [("GIT_ALLOW_PROTOCOL", "https:ssh:file"), ("GIT_LFS_SKIP_SMUDGE", "1")];
-  crate::git_remote::net_env(dir, &args, &env, &AtomicBool::new(false), timeout)?;
+  crate::git_remote::net_env(dir, &args, &env, &SHUTDOWN, timeout)?;
   let src = dir.join("src");
   let commit = crate::git::run(&src, &["rev-parse", "HEAD"]).map(|o| String::from_utf8_lossy(&o).trim().to_string())?;
   std::fs::remove_dir_all(src.join(".git")).map_err(|e| tr!(SnapMsg::RemoveGitFailed, detail = e))?;
@@ -452,10 +481,9 @@ pub fn is_sha256(s: &str) -> bool {
 pub(crate) fn fetch_commit(dir: &Path, spec: &GitSpec, commit: &str, timeout: Duration) -> Result<(), String> {
   const SAFE: [&str; 6] = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"];
   let env = [("GIT_ALLOW_PROTOCOL", "https:ssh:file"), ("GIT_LFS_SKIP_SMUDGE", "1")];
-  let stop = AtomicBool::new(false);
   let git = |root: &Path, args: &[&str]| -> Result<String, String> {
     let all: Vec<&str> = SAFE.iter().copied().chain(args.iter().copied()).collect();
-    crate::git_remote::net_env(root, &all, &env, &stop, timeout)
+    crate::git_remote::net_env(root, &all, &env, &SHUTDOWN, timeout)
   };
   git(dir, &["init", "-q", "--template=", "src"])?;
   let src = dir.join("src");
@@ -1208,6 +1236,22 @@ mod tests {
   use std::process::Command;
 
   const T: Duration = Duration::from_secs(60);
+
+  #[test]
+  fn the_staging_sweep_removes_only_folders_older_than_an_hour() {
+    let staging = tempfile::tempdir().unwrap();
+    let (old, fresh) = (staging.path().join("old"), staging.path().join("fresh"));
+    for d in [&old, &fresh] {
+      std::fs::create_dir_all(d.join("src/.git")).unwrap();
+    }
+    let two_hours_ago = SystemTime::now() - Duration::from_secs(2 * 60 * 60);
+    std::fs::File::open(&old).unwrap().set_modified(two_hours_ago).unwrap();
+    prune_staging(staging.path());
+    assert!(!old.exists(), "a clone a quit left behind goes");
+    assert!(fresh.exists(), "a fetch that may still run stays");
+    // No staging folder yet: nothing to do.
+    prune_staging(&staging.path().join("missing"));
+  }
 
   fn git(dir: &Path, args: &[&str]) {
     let out = Command::new("git")

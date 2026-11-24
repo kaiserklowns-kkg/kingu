@@ -3,10 +3,12 @@
 	// bottom right that can be dragged anywhere and keeps its place relative to the nearest corner,
 	// or a small button in the status bar. An amber dot means new output in a hidden tab.
 	// Right-click: move it to the status bar (or back), or hide the floating workspace.
+	// It never covers a page part marked keep-clear (the chat composer, Orca's keep-clear): it shows
+	// just below or above it. A drag follows the pointer; once dropped, it shows, and saves, clear of them.
 	import Icon from './Icon.svelte';
 	import PopupMenu, { menuItem, menuSeparator } from './PopupMenu.svelte';
 	import { floating } from './floating.svelte';
-	import { BUTTON, MARGIN, TITLEBAR } from './floating';
+	import { clampButton } from './floating';
 
 	let { variant = 'floating' }: { variant?: 'floating' | 'status-bar' } = $props();
 
@@ -29,10 +31,7 @@
 		const dy = e.clientY - drag.py;
 		if (!drag.moved && Math.hypot(dx, dy) < 4) return;
 		drag.moved = true;
-		preview = {
-			left: Math.min(Math.max(drag.left + dx, MARGIN), window.innerWidth - BUTTON - MARGIN),
-			top: Math.min(Math.max(drag.top + dy, TITLEBAR), window.innerHeight - BUTTON - MARGIN)
-		};
+		preview = clampButton({ left: drag.left + dx, top: drag.top + dy }, window.innerWidth, window.innerHeight);
 	}
 	function up() {
 		if (drag?.moved && preview) {

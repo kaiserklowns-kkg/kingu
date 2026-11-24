@@ -8,6 +8,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -15,7 +16,8 @@ use crate::procinfo::{self, Foreground};
 
 /// Output kept per session for a re-attaching viewer.
 pub const SCROLLBACK_BYTES: usize = 256 * 1024;
-const EXITED: &str = "\r\n[process exited]\r\n";
+/// A session's last output, sent as a chunk of its own once its shell has exited.
+pub const EXITED: &str = "\r\n[process exited]\r\n";
 
 /// Receives a session's live output; returns false once the viewer is gone (a reloaded page, a
 /// closed connection), and the session then keeps buffering until the next attach.
@@ -93,6 +95,28 @@ pub fn shell_quote(arg: &str) -> String {
   } else {
     format!("'{}'", arg.replace('\'', "'\\''"))
   }
+}
+
+/// A typed line this long may not fit the tty's canonical input queue (MAX_CANON: 1024 on macOS).
+const CANONICAL_LINE_SAFE: usize = 900;
+/// How long a long line waits for the shell's line editor before it is typed anyway.
+const LINE_EDITOR_WAIT: Duration = Duration::from_secs(10);
+const LATE_LINE_CHUNK: usize = 256;
+
+/// Whether the tty behind `fd` is in canonical (line-buffered) mode; None when it cannot be read.
+#[cfg(unix)]
+fn canonical(fd: i32) -> Option<bool> {
+  let mut t = std::mem::MaybeUninit::<libc::termios>::uninit();
+  // SAFETY: `t` is a valid place for one termios, and tcgetattr only writes there on success.
+  let ok = unsafe { libc::tcgetattr(fd, t.as_mut_ptr()) } == 0;
+  // SAFETY: tcgetattr returned 0, so it filled `t`.
+  ok.then(|| unsafe { t.assume_init() }.c_lflag & libc::ICANON != 0)
+}
+
+/// No canonical input queue to overflow here: the line is typed at once.
+#[cfg(not(unix))]
+fn canonical(_fd: i32) -> Option<bool> {
+  Some(false)
 }
 
 /// The command line typed into a new terminal for `run` (each argument quoted, so a prompt or a
@@ -333,10 +357,22 @@ impl Host {
 
     let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+    // A short line is typed at once: the tty buffers it until the shell reads its first line. A long
+    // one cannot wait there: before the shell's line editor starts, the tty is in canonical mode and
+    // keeps at most MAX_CANON bytes of a line (1024 on macOS), so an agent CLI started with hook
+    // settings arrived cut off and never ran. It is typed once the editor has the tty (`type_when_ready`).
+    let mut late_line = None;
     if let Some(line) = line {
-      // The tty buffers it until the shell reads its first line.
-      writer.write_all(format!("{line}\r").as_bytes()).map_err(|e| e.to_string())?;
+      if line.len() < CANONICAL_LINE_SAFE {
+        writer.write_all(format!("{line}\r").as_bytes()).map_err(|e| e.to_string())?;
+      } else {
+        late_line = Some(line);
+      }
     }
+    #[cfg(unix)]
+    let tty: Option<i32> = pair.master.as_raw_fd();
+    #[cfg(not(unix))]
+    let tty: Option<i32> = Some(0);
     let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
     let output = Arc::new(Mutex::new(Output { scrollback: Scrollback::new(SCROLLBACK_BYTES), sink: Some(sink) }));
 
@@ -376,7 +412,41 @@ impl Host {
     if let Some(old) = self.sessions.lock().unwrap().insert(key.to_string(), session) {
       old.kill();
     }
+    if let Some(line) = late_line {
+      self.type_when_ready(key, id, tty, line);
+    }
     Ok(Attached { replay: String::new(), spawned: true, epoch: 0 })
+  }
+
+  /// Types `line` into session `key` (the one with `id`) once its shell reads keys itself: the tty
+  /// has left canonical mode, or `LINE_EDITOR_WAIT` passed (a shell without a line editor gets the
+  /// line anyway, as before). Written in pieces, so the sessions lock is never held across a write
+  /// that waits for the shell to read.
+  fn type_when_ready(&self, key: &str, id: u32, tty: Option<i32>, line: String) {
+    let sessions = self.sessions.clone();
+    let key = key.to_string();
+    std::thread::spawn(move || {
+      let until = Instant::now() + LINE_EDITOR_WAIT;
+      while Instant::now() < until {
+        let live = sessions.lock().unwrap().get(&key).is_some_and(|s| s.id == id);
+        if !live {
+          return;
+        }
+        // The lock was released, so the fd may be gone by now: a failed read just keeps waiting.
+        if tty.and_then(canonical) == Some(false) {
+          break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+      }
+      let text = format!("{line}\r");
+      for piece in text.as_bytes().chunks(LATE_LINE_CHUNK) {
+        let mut map = sessions.lock().unwrap();
+        let Some(s) = map.get_mut(&key).filter(|s| s.id == id) else { return };
+        if s.writer.write_all(piece).is_err() {
+          return;
+        }
+      }
+    });
   }
 
   pub fn write(&self, key: &str, data: &[u8]) -> Result<(), String> {
@@ -625,6 +695,28 @@ pub(crate) mod tests {
   }
 
   #[cfg(unix)]
+  /// The agent CLI's command line with its hook settings is longer than the tty's canonical queue
+  /// (1024 bytes on macOS): typed before the shell's line editor started, it arrived cut off.
+  #[test]
+  fn a_long_run_line_reaches_the_shell_whole() {
+    if !Path::new("/bin/zsh").exists() {
+      return;
+    }
+    let host = Host::default();
+    let (sink, seen) = collecting();
+    let env = BTreeMap::new();
+    // No rc files: only the line editor matters here.
+    let args = vec!["-f".to_string()];
+    let long = "x".repeat(3000);
+    let run = vec!["/bin/echo".to_string(), format!("begin-{long}-end")];
+    let spec = ShellSpec { cwd: Path::new("/"), cols: 200, rows: 24, run: Some(&run), env: &env, shell: Some("/bin/zsh"), args: Some(&args), unset: &[], clean_env: false };
+    host.spawn_shell("test:long-line", &spec, sink).unwrap();
+    // echo's own output is one unbroken line; the typed copy is wrapped by the line editor.
+    let whole = format!("begin-{long}-end");
+    wait_for("the whole argument echoed back", || seen.lock().unwrap().replace(['\r', '\n'], "").contains(&whole));
+    host.kill("test:long-line");
+  }
+
   #[test]
   fn reports_the_foreground_job_not_the_idle_shell() {
     if !Path::new("/bin/sh").exists() || !Path::new("/bin/sleep").exists() {

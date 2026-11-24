@@ -1,8 +1,8 @@
 // Orca 1.4.259's Workspace Cleanup policy, ported from the installed app.asar
 // (`out/shared/workspace-cleanup/workspace-cleanup-policy.js`; see
 // docs/REA-essence-vscode-orca-cursor.md §9). Rules are off by default; a project can turn cleanup
-// off or replace the global rules. Archive is not supported yet, so an archive rule is resolved as
-// unavailable instead of silently deleting.
+// off or replace the global rules. An inactive rule either deletes the worktree or archives the
+// task (hides it from the side bar; the worktree, branch and session stay).
 
 export const WORKSPACE_CLEANUP_POLICY_MIN_DAYS = 1;
 export const WORKSPACE_CLEANUP_POLICY_MAX_DAYS = 3650;
@@ -10,7 +10,6 @@ export const WORKSPACE_CLEANUP_POLICY_MAX_DAYS = 3650;
 export const WORKSPACE_CLEANUP_KEEP_WHEN_VALUES = ['uncommitted', 'any-local-files'] as const;
 export const WORKSPACE_CLEANUP_INACTIVE_ACTIONS = ['delete', 'archive'] as const;
 export const WORKSPACE_CLEANUP_RULE_KEYS = ['merged', 'unchanged', 'inactive', 'automationRuns', 'orchestrationWorkers'] as const;
-export const WORKSPACE_ARCHIVE_SUPPORTED = false;
 
 export type WorkspaceCleanupKeepWhen = (typeof WORKSPACE_CLEANUP_KEEP_WHEN_VALUES)[number];
 export type WorkspaceCleanupInactiveAction = (typeof WORKSPACE_CLEANUP_INACTIVE_ACTIONS)[number];
@@ -33,7 +32,6 @@ export type WorkspaceCleanupPolicySource = 'global' | 'project-custom' | 'projec
 export type WorkspaceCleanupPolicy = {
 	source: WorkspaceCleanupPolicySource;
 	rules: WorkspaceCleanupRules;
-	inactiveActionSupported: boolean;
 };
 
 export function hasEnabledWorkspaceCleanupRule(rules: WorkspaceCleanupRules): boolean {
@@ -105,12 +103,6 @@ export function withEveryRuleOff(rules: WorkspaceCleanupRules): WorkspaceCleanup
 	};
 }
 
-const withArchiveSupport = (source: WorkspaceCleanupPolicySource, rules: WorkspaceCleanupRules): WorkspaceCleanupPolicy => ({
-	source,
-	rules,
-	inactiveActionSupported: rules.inactive.action !== 'archive' || WORKSPACE_ARCHIVE_SUPPORTED
-});
-
 /** The one place that decides which cleanup rules apply to a project's workspaces. */
 export function resolveWorkspaceCleanupPolicy(
 	settings: { workspaceCleanupPolicy?: WorkspaceCleanupRules },
@@ -118,7 +110,7 @@ export function resolveWorkspaceCleanupPolicy(
 ): WorkspaceCleanupPolicy {
 	const globalRules = settings.workspaceCleanupPolicy ?? getDefaultWorkspaceCleanupRules();
 	const override = repo?.workspaceCleanupPolicy;
-	if (override?.mode === 'custom') return withArchiveSupport('project-custom', override.rules);
-	if (override?.mode === 'off') return withArchiveSupport('project-off', withEveryRuleOff(globalRules));
-	return withArchiveSupport('global', globalRules);
+	if (override?.mode === 'custom') return { source: 'project-custom', rules: override.rules };
+	if (override?.mode === 'off') return { source: 'project-off', rules: withEveryRuleOff(globalRules) };
+	return { source: 'global', rules: globalRules };
 }

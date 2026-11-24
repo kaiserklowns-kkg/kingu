@@ -7,7 +7,11 @@ import {
 	jisYenInput,
 	paneOpacity,
 	parseOsc52,
+	primaryQuickCommand,
+	withQuickCommand,
+	withoutQuickCommand,
 	quickCommandInput,
+	quickAppendsEnter,
 	quickCommands,
 	stripSelectionGutter,
 	tuiWheelReports,
@@ -101,5 +105,40 @@ describe('ADE terminal settings (Orca Terminal page)', () => {
 			{ label: 'Two', command: 'a\nb' }
 		]);
 		expect(quickCommandInput('a\nb')).toBe('a\rb\r');
+		// Orca's Insert run mode (appendEnter off): one line on the prompt, nothing run.
+		expect(quickCommandInput('npm run deploy', false)).toBe('npm run deploy');
+		expect(quickCommandInput('cd web\n\n  bun dev  \r\n', false)).toBe('cd web; bun dev');
+		expect(quickAppendsEnter({ Deploy: true }, 'Deploy')).toBe(false);
+		expect(quickAppendsEnter({ Deploy: true }, 'Tests')).toBe(true);
+		expect(quickAppendsEnter(undefined, 'Tests')).toBe(true);
 	});
+});
+
+test('the tab bar runs the quick command used last, else the first', () => {
+	const list = [
+		{ label: 'Dev', command: 'bun run dev' },
+		{ label: 'Tests', command: 'bun test' }
+	];
+	expect(primaryQuickCommand(list, 'Tests')?.label).toBe('Tests');
+	expect(primaryQuickCommand(list, 'Gone')?.label).toBe('Dev');
+	expect(primaryQuickCommand(list, null)?.label).toBe('Dev');
+	expect(primaryQuickCommand([], 'Dev')).toBeNull();
+});
+
+test('Add Quick Command checks the label and command, replacing one of the same label', () => {
+	expect(withQuickCommand({ Dev: 'bun run dev' }, ' Tests ', 'bun test\n')).toEqual({ Dev: 'bun run dev', Tests: 'bun test' });
+	expect(withQuickCommand({ Dev: 'bun run dev' }, 'Dev', 'vite')).toEqual({ Dev: 'vite' });
+	expect(withQuickCommand(undefined, 'A', 'x')).toEqual({ A: 'x' });
+	expect(withQuickCommand({}, '  ', 'x')).toBe('label');
+	expect(withQuickCommand({}, 'a\nb', 'x')).toBe('label');
+	expect(withQuickCommand({}, 'A', '   ')).toBe('command');
+	expect(withQuickCommand({}, 'A', 'x'.repeat(4001))).toBe('command');
+	const full = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`c${i}`, 'x']));
+	expect(withQuickCommand(full, 'new', 'x')).toBe('tooMany');
+	expect(withQuickCommand(full, 'c1', 'y')).not.toBe('tooMany');
+});
+
+test('a quick command leaves its scope by label', () => {
+	expect(withoutQuickCommand({ Dev: 'a', Tests: 'b', Bad: 1 }, 'Dev')).toEqual({ Tests: 'b' });
+	expect(withoutQuickCommand(undefined, 'Dev')).toEqual({});
 });

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { BRANCH_CHOICES, branchPrefix, branchRemoval, defaultBaseBranch, dirtyLabel, dirtyPreview, scriptPreview, scriptRunSummary, setupCommand, setupPolicy, validBranchPrefix } from './worktreeSettings';
-import { agentCommand, YOLO_ARGS } from './agentCli';
+import { agentCommand, AUTO_ARGS, YOLO_ARGS } from './agentCli';
 import { PROFILES } from './agentProfiles';
 import { notificationSound, noticeFor, shouldNotify } from './agentNotify';
 
@@ -83,6 +83,18 @@ describe('agent command', () => {
 		expect(agentCommand(from({ ...yolo, 'kingu.agent.cli': 'mycli' }))).toEqual(['mycli']);
 		expect(agentCommand(from({ 'kingu.agent.cliPermissions': 'manual' }))).toEqual(['claude']);
 		for (const [id, flags] of Object.entries(YOLO_ARGS)) expect([id, PROFILES.some((p) => p.id === id), flags.length > 0]).toEqual([id, true, true]);
+	});
+
+	test('Agent Permissions default: no flag for any profile, whatever else is set', () => {
+		const permission = new Set([...Object.values(YOLO_ARGS), ...Object.values(AUTO_ARGS)].flat().filter((w) => w.startsWith('-')));
+		for (const p of PROFILES) {
+			for (const s of [{}, { 'kingu.agent.cliPermissions': 'manual' }, { 'kingu.agent.cliPermissions': 'yes' }] as Record<string, string>[]) {
+				const argv = agentCommand(from({ ...s, 'kingu.agent.cli': p.bins[0] }))!;
+				expect([p.id, argv]).toEqual([p.id, [p.bins[0]]]);
+				expect(argv.some((w) => permission.has(w))).toBe(false);
+			}
+		}
+		for (const [id, flags] of Object.entries(AUTO_ARGS)) expect([id, PROFILES.some((p) => p.id === id), flags.length > 0]).toEqual([id, true, true]);
 	});
 
 	test('a custom command gets no profile arguments; shell syntax is refused', () => {

@@ -8,14 +8,17 @@
 	import Icon from '#lib/workbench/Icon.svelte';
 	import { notifications } from '#lib/workbench/notifications.svelte.ts';
 	import { workspace } from '#lib/workbench/workspace.svelte.ts';
-	import { cleanup } from '#lib/ade/cleanup.svelte.ts';
+	import { ask } from '#lib/workbench/messageBox.ts';
+	import { CHAT_HISTORY_ID, cleanup } from '#lib/ade/cleanup.svelte.ts';
+	import { codexHistoryBadge } from '#lib/ade/autoCleanup.ts';
+	import { formatBytes } from '#lib/ade/workspaceCleanupBrowse.ts';
+	import { untrack } from 'svelte';
 	import { t } from '#lib/i18n/index.ts';
 	import {
 		getDefaultWorkspaceCleanupRules,
 		hasEnabledWorkspaceCleanupRule,
 		normalizeRepoWorkspaceCleanupPolicy,
 		normalizeWorkspaceCleanupRules,
-		WORKSPACE_ARCHIVE_SUPPORTED,
 		WORKSPACE_CLEANUP_POLICY_MAX_DAYS,
 		WORKSPACE_CLEANUP_POLICY_MIN_DAYS,
 		type RepoWorkspaceCleanupPolicy,
@@ -29,6 +32,19 @@
 	import Switch from './Switch.svelte';
 	import { timeAgo } from '#lib/ade/model.ts';
 	import { adeTasks } from '#lib/ade/tasks.svelte.ts';
+
+	// Activity is per folder: show the open folder's rows, and again when the folder changes.
+	$effect(() => {
+		void workspace.root;
+		untrack(() => cleanup.reloadActivity());
+	});
+
+	// Codex history size beside the switch (Orca's badge): read when the page shows, and again after each run, which may have freed some.
+	$effect(() => {
+		void cleanup.activity;
+		untrack(() => void cleanup.readCodexUsage());
+	});
+	const codexBadge = $derived(codexHistoryBadge(cleanup.codexUsage));
 
 	const RULES_ID = 'kingu.workspaceCleanup.rules';
 	const PROJECT_ID = 'kingu.workspaceCleanup.project';
@@ -55,6 +71,13 @@
 		} catch (e) {
 			notifications.error(t('workspaceCleanup.saveFailed', { error: String(e) }));
 		}
+	}
+
+	/** Turning it on deletes history of workspaces deleted before now, so it asks first (as Orca), then sweeps the open folder. */
+	async function setChatHistory(on: boolean) {
+		if (on && !(await ask(t('workspaceCleanup.chatHistory.confirm'), { title: t('workspaceCleanup.chatHistory.confirmTitle'), kind: 'warning', okLabel: t('workspaceCleanup.chatHistory.turnOn') }))) return;
+		await save(CHAT_HISTORY_ID, on ? true : undefined, 'user');
+		if (on && cleanup.chatHistoryOn && workspace.root && !cleanup.running) void cleanup.runRules('dialog', { rules: false }).catch(() => {});
 	}
 
 	const sameAsDefault = (rules: WorkspaceCleanupRules) => JSON.stringify(rules) === JSON.stringify(getDefaultWorkspaceCleanupRules());
@@ -122,10 +145,8 @@
 						onchange={(a) => void setAction(a)}
 					/>
 				</div>
-				{#if editing.inactive.action === 'archive' && !WORKSPACE_ARCHIVE_SUPPORTED}
-					<div class="mt-2 flex items-start gap-1.5 text-xs text-(--vscode-editorWarning-foreground)">
-						<Icon name="warning" size={13} /><span>{t('workspaceCleanup.archiveUnavailable')}</span>
-					</div>
+				{#if editing.inactive.action === 'archive'}
+					<div class="mt-2 text-xs text-(--vscode-descriptionForeground)">{t('workspaceCleanup.archiveHint')}</div>
 				{/if}
 			{/if}
 		</div>
@@ -200,17 +221,43 @@
 			<Switch id="kingu.workspaceCleanup.auto" label={t('workspaceCleanup.auto.label')} hint={t('workspaceCleanup.auto.hint')} />
 		</div>
 
+		<h2 class={SECTION}>{t('workspaceCleanup.chatHistory.title')}</h2>
+		<div class={CARD}>
+			<div class="flex items-center gap-3 px-4 py-3">
+				<div class="min-w-0 flex-1">
+					<div class="flex flex-wrap items-center gap-2 text-[13px]">
+						{t('workspaceCleanup.chatHistory.label')}
+						{#if codexBadge}
+							<span
+								class="min-w-0 rounded-full border border-(--vscode-widget-border) px-2 py-px text-[11px] [overflow-wrap:anywhere] text-(--vscode-descriptionForeground)"
+								title={t(codexBadge.atLeast ? 'workspaceCleanup.chatHistory.codexTooltipAtLeast' : 'workspaceCleanup.chatHistory.codexTooltip')}
+							>
+								{t(codexBadge.atLeast ? 'workspaceCleanup.chatHistory.codexBadgeAtLeast' : 'workspaceCleanup.chatHistory.codexBadge', { size: formatBytes(codexBadge.bytes) })}
+							</span>
+						{/if}
+					</div>
+					<div class={HINT}>{t('workspaceCleanup.chatHistory.hint')}</div>
+				</div>
+				<Toggle checked={cleanup.chatHistoryOn} label={t('workspaceCleanup.chatHistory.label')} onchange={(on) => void setChatHistory(on)} />
+			</div>
+		</div>
+
 		<h2 class={SECTION}>{t('workspaceCleanup.activity.title')}</h2>
 		{#if cleanup.activity.length}
 			<ul class={CARD}>
 				{#each cleanup.activity as a (a.at)}
 					<li class="px-4 py-2.5 text-[13px]">
 						<div>
-							{t('workspaceCleanup.activity.row', { source: t(`workspaceCleanup.activity.source.${a.source}`), removed: a.removed.length, failed: a.failed.length, kept: a.kept })}
+							{t('workspaceCleanup.activity.row', { source: t(`workspaceCleanup.activity.source.${a.source}`), removed: a.removed.length, archived: a.archived.length, failed: a.failed.length, kept: a.kept })}
 							<span class={HINT}>· {timeAgo(a.at, adeTasks.now)}</span>
 						</div>
 						{#if a.removed.length}<div class="truncate font-mono {HINT}">{a.removed.join(', ')}</div>{/if}
+						{#if a.archived.length}<div class="truncate font-mono {HINT}">{a.archived.join(', ')}</div>{/if}
 						{#each a.failed as f (f.slug)}<div class="truncate text-xs text-(--vscode-errorForeground)">{f.slug}: {f.error}</div>{/each}
+						{#if a.chatHistory && a.chatHistory.deleted > 0}
+							<div class={HINT}>{t('workspaceCleanup.chatHistory.deleted', { count: a.chatHistory.deleted })}{a.chatHistory.freedBytes > 0 ? ` · ${formatBytes(a.chatHistory.freedBytes)}` : ''}</div>
+						{/if}
+						{#if a.chatHistory && a.chatHistory.failed > 0}<div class="text-xs text-(--vscode-errorForeground)">{t('workspaceCleanup.chatHistory.failed', { count: a.chatHistory.failed })}</div>{/if}
 					</li>
 				{/each}
 			</ul>

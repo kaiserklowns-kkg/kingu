@@ -1,0 +1,102 @@
+# Kingu team server + dashboard behind Caddy (automatic HTTPS).
+#   cp deploy/.env.example deploy/.env   # fill it in
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
+# See deploy/README.md.
+name: kingu
+
+x-api-env: &api-env
+  DATABASE_URL: postgres://kingu_app:${KINGU_APP_PASSWORD:?}@db:5432/kingu?sslmode=disable
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      KINGU_OWNER_PASSWORD: ${KINGU_OWNER_PASSWORD:?}
+      KINGU_APP_PASSWORD: ${KINGU_APP_PASSWORD:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d kingu"]
+      interval: 5s
+      retries: 20
+    networks: [internal]
+
+  # One-shot: migrations as the owner role, then grants for the serving role.
+  migrate:
+    build: ../apps/server
+    image: kingu-api
+    command: ["-migrate-only"]
+    environment:
+      <<: *api-env
+      KINGU_MIGRATE_DATABASE_URL: postgres://kingu_owner:${KINGU_OWNER_PASSWORD:?}@db:5432/kingu?sslmode=disable
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+    networks: [internal]
+
+  api:
+    image: kingu-api
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      # Every replica draws from the same rate-limit budget.
+      KINGU_RATE_LIMIT_STORE: postgres
+      # X-Forwarded-For is trusted only from Caddy and the dashboard (which
+      # forwards the browser's address on sign-in), by their fixed addresses.
+      KINGU_TRUSTED_PROXIES: 172.30.0.10,172.30.0.11
+      KINGU_OIDC_ISSUER: ${KINGU_OIDC_ISSUER:-}
+      KINGU_OIDC_CLIENT_ID: ${KINGU_OIDC_CLIENT_ID:-}
+      KINGU_OIDC_ORG: ${KINGU_OIDC_ORG:-}
+      KINGU_OIDC_AUTO_JOIN_ROLE: ${KINGU_OIDC_AUTO_JOIN_ROLE:-}
+      KINGU_OIDC_AUTO_JOIN_DOMAINS: ${KINGU_OIDC_AUTO_JOIN_DOMAINS:-}
+      KINGU_OIDC_PROVIDERS: ${KINGU_OIDC_PROVIDERS:-}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    networks: [internal]
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    image: kingu-web
+    restart: unless-stopped
+    environment:
+      KINGU_API_URL: http://api:8787
+      # adapter-node: take the public protocol, host and client IP from Caddy.
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
+      ADDRESS_HEADER: x-forwarded-for
+      XFF_DEPTH: "1"
+      KINGU_OIDC_ISSUER: ${KINGU_OIDC_ISSUER:-}
+      KINGU_OIDC_CLIENT_ID: ${KINGU_OIDC_CLIENT_ID:-}
+      KINGU_OIDC_CLIENT_SECRET: ${KINGU_OIDC_CLIENT_SECRET:-}
+      KINGU_OIDC_PROVIDERS: ${KINGU_WEB_OIDC_PROVIDERS:-}
+    depends_on: [api]
+    networks:
+      internal: { ipv4_address: 172.30.0.11 }
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      KINGU_WEB_HOST: ${KINGU_WEB_HOST:?}
+      KINGU_API_HOST: ${KINGU_API_HOST:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [web, api]
+    networks:
+      internal: { ipv4_address: 172.30.0.10 }
+
+networks:
+  internal:
+    ipam:
+      config: [{ subnet: 172.30.0.0/24 }]
+
+volumes:
+  pgdata:
+  caddy_data:

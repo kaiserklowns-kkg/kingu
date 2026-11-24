@@ -9,6 +9,7 @@ import { taskTitleFromPrompt } from './composerText';
 import { applyEvent, initialRun, type AgentEvent, type RunState, type RunStatus } from './events';
 import { CLAUDE_RUNTIME } from './runtimes';
 import type { Effort } from './effort';
+import type { UsageLimitCut } from './chatLimits';
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
 export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
@@ -46,6 +47,10 @@ export type ChatMeta = {
 	side_of?: string | null;
 	/** Tools turned off in Configure Tools (chatTools.ts); Rust runs the chat without them. */
 	disabled_tools?: string[];
+	/** The last turn stopped on the agent's usage limit (chatLimits.ts); cleared by the next message. */
+	usage_limit?: UsageLimitCut | null;
+	/** Kingu quit (or crashed) mid-turn and the chat was not continued yet (chatResume.ts). */
+	interrupted?: { at: number; crash: boolean } | null;
 };
 
 /** Rust's limits (chats.rs). */

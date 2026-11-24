@@ -1,77 +1,239 @@
-// Orca's "drag a tab to a pane edge to split it" (docs model/tabs-panes-splits.mdx), in Kingu's
-// Agents layout: a worktree's center splits into regions, nested any way (a tree like the
-// terminal's pane tree), each showing one tab — the agent, a terminal, a browser or a file. The
-// active tab is one region; clicking a region makes its tab active, and picking another tab in
-// the strip shows it in the active region. Views move by style only, never remounted. Also the tab layout kept across restarts
-// (Orca restores every tab, not only terminals). Pure.
+// Orca's tab groups (docs model/tabs-panes-splits.mdx; renderer store/slices/tabs/tabs-drop-actions.ts,
+// tabs-close-actions.ts, components/tab-group/*), in Kingu's Agents layout: a worktree's center
+// splits into regions, nested any way (a tree like the terminal's pane tree), and every region is a
+// tab group with its own tab strip. Each tab belongs to one group; each group shows one of its tabs.
+// Dropping a tab on any edge of a region (left, right, top, bottom: Orca's tab-drop-zone.ts) moves it
+// into a new group there, dropping it on another group's strip or middle moves it into that group,
+// and a group whose last tab leaves or closes goes away. Closing a region closes its tabs. The worktree's active tab is in the active group. Tab order inside a group is
+// the worktree's strip order (adeLayout `order`) filtered to the group. Views move by style only,
+// never remounted. Also the tab layout kept across restarts (Orca restores every tab). Pure.
 
-import type { BrowserTab, FileTab } from './adeTabs';
+import { cleanProfile, type BrowserTab, type FileTab } from './adeTabs';
+import { activeAfterClose } from './adeTabs';
 import { hasLeaf, leaf, leaves, parsePaneNode, removePane, splitPane, type PaneNode, type Rect } from '#lib/terminal/paneLayout.ts';
 
-export type SplitDir = 'right' | 'down';
-/** A worktree's regions: a binary tree whose leaves are tab ids (Orca's tab groups), or none. */
+/** A side of a region (Orca's GroupSide: left, right, up, down). */
+export type SplitDir = 'left' | 'right' | 'up' | 'down';
+/** Where a dragged tab lands on a region: a new group on one of its edges, or into its group. */
+export type DropDir = SplitDir | 'center';
+/** A binary tree of regions (leaves: group ids, or in `shownTree` the tab each group shows). */
 export type TabTree = PaneNode;
+/**
+ * A split worktree's tab groups: the region tree (leaves `g<n>`), each tab's group (tabs not listed
+ * belong to the first group) and the tab each group shows.
+ */
+export type TabGroups = { tree: TabTree; of: Record<string, string>; shown: Record<string, string> };
 
-/** A tab id that can be a region: the agent tab, terminals, browsers and file/diff tabs. */
+/** A tab id that can be in a group: the agent tab, terminals, browsers and file/diff tabs. */
 export const splittable = (id: string) => id === 'main' || /^[tb]\d+$/.test(id) || (id.startsWith('f:') && id.length > 2);
+const isGroupId = (id: string) => /^g\d+$/.test(id);
 
-/** Orca's drop on a region's edge: `id` gets the right or bottom part of region `target`. */
-export function splitTab(tree: TabTree | null, target: string, id: string, dir: SplitDir): TabTree | null {
-	if (!splittable(id) || id === target) return tree;
-	const base = tree && hasLeaf(tree, target) ? tree : leaf(target);
-	const without = hasLeaf(base, id) ? removePane(base, id) : base;
-	if (!without || !hasLeaf(without, target)) return tree;
-	return splitPane(without, target, id, dir === 'right' ? 'vertical' : 'horizontal');
+const one = (): TabGroups => ({ tree: leaf('g1'), of: {}, shown: {} });
+/** Null for one group (no split). */
+const split = (g: TabGroups | null): TabGroups | null => (g && g.tree.type === 'split' ? g : null);
+const membersOf = (of: Record<string, string>, ids: readonly string[], gid: string) => ids.filter((id) => of[id] === gid);
+
+/**
+ * Every tab of `ids` in a group (unlisted ones in the first), closed tabs and empty groups gone, and
+ * a shown tab per group (the kept one, else its most recent tab, else its first). Null when none is left.
+ */
+function normalize(g: TabGroups, ids: readonly string[], recent: readonly string[] = []): TabGroups | null {
+	const groups = leaves(g.tree);
+	const of: Record<string, string> = {};
+	for (const id of ids) of[id] = groups.includes(g.of[id]) ? g.of[id] : groups[0];
+	let tree: TabTree | null = g.tree;
+	for (const gid of groups) if (tree && !membersOf(of, ids, gid).length) tree = removePane(tree, gid);
+	if (!tree) return null;
+	const shown: Record<string, string> = {};
+	for (const gid of leaves(tree)) {
+		const members = membersOf(of, ids, gid);
+		const kept = g.shown[gid];
+		shown[gid] = kept && members.includes(kept) ? kept : (recent.find((id) => members.includes(id)) ?? members[0]);
+	}
+	return { tree, of, shown };
 }
 
-/** Showing tab `next` in the region that showed `prev` (a tab already in a region just takes focus). */
-export function showIn(tree: TabTree | null, prev: string, next: string): TabTree | null {
-	if (!tree || hasLeaf(tree, next) || !hasLeaf(tree, prev)) return tree;
-	if (!splittable(next)) return null;
-	const swap = (n: TabTree): TabTree => (n.type === 'leaf' ? (n.id === prev ? leaf(next) : n) : { ...n, first: swap(n.first), second: swap(n.second) });
-	return swap(tree);
+/** The groups as they stand: closed tabs gone, `active` shown in its group; null when fewer than two groups remain. */
+export function liveGroups(g: TabGroups | null | undefined, ids: readonly string[], active: string, recent: readonly string[] = []): TabGroups | null {
+	const live = g ? split(normalize(g, ids, recent)) : null;
+	if (!live || !(active in live.of)) return live;
+	return { ...live, shown: { ...live.shown, [live.of[active]]: active } };
 }
 
-/** Closes region `id` (its tab stays open); one region left is no split. */
-export function closeRegion(tree: TabTree | null, id: string): TabTree | null {
-	const rest = tree ? removePane(tree, id) : null;
-	return rest && rest.type === 'split' ? rest : null;
+/** The tabs of group `gid`, in `ids` order. */
+export const groupTabs = (g: TabGroups, ids: readonly string[], gid: string): string[] => membersOf(g.of, ids, gid);
+
+/** The region tree with each group replaced by the tab it shows (where views are placed). */
+export function shownTree(g: TabGroups): TabTree {
+	const swap = (n: TabTree): TabTree => (n.type === 'leaf' ? leaf(g.shown[n.id] ?? n.id) : { ...n, first: swap(n.first), second: swap(n.second) });
+	return swap(g.tree);
 }
 
-/** The tree with closed tabs' regions gone; null when fewer than two remain or `active` is not shown. */
-export function liveTree(tree: TabTree | null, open: ReadonlySet<string>, active: string): TabTree | null {
-	let t: TabTree | null = tree;
-	for (const id of tree ? leaves(tree) : []) if (t && !open.has(id)) t = removePane(t, id);
-	return t && t.type === 'split' && hasLeaf(t, active) ? t : null;
+/** The group of tab `tab` (the group that holds a tab; unlisted tabs in the first). */
+export const groupOf = (g: TabGroups, tab: string): string => g.of[tab] ?? leaves(g.tree)[0];
+
+/** A new tab joins the group of `active` (Orca opens tabs in the active group); a tab already in one stays. */
+export function placeTab(g: TabGroups, id: string, active: string): TabGroups {
+	if (g.of[id]) return g;
+	return { ...g, of: { ...g.of, [id]: groupOf(g, active) } };
 }
 
-/** A region's CSS (fractions of the center), 2px apart from its neighbours. */
-export function rectStyle(r: Rect): string {
+/** Group of `tab` shows it. */
+export function withShown(g: TabGroups, tab: string): TabGroups {
+	const gid = g.of[tab];
+	return gid && g.shown[gid] !== tab ? { ...g, shown: { ...g.shown, [gid]: tab } } : g;
+}
+
+function nextGroupId(tree: TabTree): string {
+	return `g${leaves(tree).reduce((m, id) => Math.max(m, Number(id.slice(1)) || 0), 0) + 1}`;
+}
+
+/** The group right next to `gid` on side `dir`, when it is a single group (Orca's findLayoutSiblingOnSplitSide). */
+function siblingOnSide(tree: TabTree, gid: string, dir: SplitDir): string | null {
+	if (tree.type === 'leaf') return null;
+	const across = tree.direction === 'vertical';
+	const { first, second } = tree;
+	if (first.type === 'leaf' && first.id === gid && second.type === 'leaf' && dir === (across ? 'right' : 'down')) return second.id;
+	if (second.type === 'leaf' && second.id === gid && first.type === 'leaf' && dir === (across ? 'left' : 'up')) return first.id;
+	return siblingOnSide(first, gid, dir) ?? siblingOnSide(second, gid, dir);
+}
+
+/**
+ * Orca's drop on a region's edge: tab `id` moves into a new group on that side of group `target`
+ * (null `g`: the one group). Its old group goes when it empties. The same `g` back is a no-op
+ * (Orca's isPaneColumnSplitDropNoOp: a group's only tab dropped on its own edge, or on the edge of
+ * the group beside it that faces it, which would rebuild the same layout); null: one group.
+ */
+export function splitGroup(g: TabGroups | null, ids: readonly string[], target: string, id: string, dir: SplitDir, recent: readonly string[] = []): TabGroups | null {
+	if (!splittable(id) || !ids.includes(id)) return g;
+	const base = normalize(g ?? one(), ids, recent);
+	if (!base || !hasLeaf(base.tree, target)) return g;
+	const source = base.of[id];
+	const alone = membersOf(base.of, ids, source).length < 2;
+	if (alone && (source === target || siblingOnSide(base.tree, target, dir) === source)) return g;
+	const gid = nextGroupId(base.tree);
+	const tree = splitPane(base.tree, target, gid, dir === 'left' || dir === 'right' ? 'vertical' : 'horizontal', dir === 'left' || dir === 'up');
+	return split(normalize({ tree, of: { ...base.of, [id]: gid }, shown: { ...base.shown, [gid]: id } }, ids, recent));
+}
+
+/** Orca's drop on another group (its strip or middle): tab `id` moves into group `target` and shows there. */
+export function moveToGroup(g: TabGroups | null, ids: readonly string[], id: string, target: string, recent: readonly string[] = []): TabGroups | null {
+	const base = g && normalize(g, ids, recent);
+	if (!base || !ids.includes(id) || !hasLeaf(base.tree, target) || base.of[id] === target) return g;
+	return split(normalize({ ...base, of: { ...base.of, [id]: target }, shown: { ...base.shown, [target]: id } }, ids, recent));
+}
+
+/** The group next to `gid` (the first group of its sibling). */
+function neighbour(tree: TabTree, gid: string): string | null {
+	if (tree.type === 'leaf') return null;
+	if (tree.first.type === 'leaf' && tree.first.id === gid) return leaves(tree.second)[0];
+	if (tree.second.type === 'leaf' && tree.second.id === gid) return leaves(tree.first)[0];
+	return neighbour(hasLeaf(tree.first, gid) ? tree.first : tree.second, gid);
+}
+
+/** A tab that closes with its region: all but the agent tab (it is the worktree itself and never closes). */
+export const closesWithRegion = (id: string) => id !== 'main';
+
+/**
+ * The tabs Close Region closes, in strip order (Orca's closeGroup closes every tab of the group,
+ * each through its own close, so running terminals and unsaved files still ask).
+ */
+export function regionCloses(g: TabGroups, ids: readonly string[], gid: string): string[] {
+	return membersOf(g.of, ids, gid).filter(closesWithRegion);
+}
+
+/**
+ * After Close Region closed its tabs (`ids`: the tabs still open): the region collapses (Orca's
+ * closeEmptyGroup). Tabs that never close (the agent tab) move to the group next to it; a tab whose
+ * close was cancelled keeps the region open, as in Orca. Null: one group left.
+ */
+export function closeGroup(g: TabGroups | null, ids: readonly string[], gid: string, recent: readonly string[] = []): TabGroups | null {
+	const base = g && normalize(g, ids, recent);
+	if (!base || !hasLeaf(g.tree, gid)) return g;
+	// Every tab closed: the emptied region is already gone.
+	if (!hasLeaf(base.tree, gid)) return split(base);
+	if (membersOf(base.of, ids, gid).some(closesWithRegion)) return g;
+	const to = neighbour(base.tree, gid);
+	const tree = removePane(base.tree, gid);
+	if (!to || !tree) return null;
+	const of = Object.fromEntries(Object.entries(base.of).map(([id, x]) => [id, x === gid ? to : x]));
+	return split(normalize({ tree, of, shown: base.shown }, ids, recent));
+}
+
+/**
+ * The active tab after `closing` closes: its neighbour in its group's strip, or when it was the
+ * group's last tab, the tab the next group shows (Orca collapses the emptied group).
+ */
+export function activeAfterGroupClose(g: TabGroups | null, ids: readonly string[], closing: string, active: string): string {
+	if (!g) return activeAfterClose([...ids], closing, active);
+	if (closing !== active) return active;
+	const gid = groupOf(g, closing);
+	const peers = membersOf(g.of, ids, gid);
+	if (peers.length > 1) return activeAfterClose(peers, closing, active);
+	const to = neighbour(g.tree, gid);
+	return (to && g.shown[to]) || activeAfterClose([...ids], closing, active);
+}
+
+/** A tab renamed (a file moved): it keeps its group and place. */
+export function renameTab(g: TabGroups, from: string, to: string): TabGroups {
+	if (!(from in g.of) && !Object.values(g.shown).includes(from)) return g;
+	const of = Object.fromEntries(Object.entries(g.of).map(([id, x]) => [id === from ? to : id, x]));
+	const shown = Object.fromEntries(Object.entries(g.shown).map(([x, id]) => [x, id === from ? to : id]));
+	return { tree: g.tree, of, shown };
+}
+
+/** A region's CSS (fractions of the center), 2px apart from its neighbours; `top` px are left above it (its tab strip). */
+export function rectStyle(r: Rect, top = 0): string {
 	const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
 	const gapL = r.x > 0 ? 2 : 0;
 	const gapR = r.x + r.w < 0.9999 ? 2 : 0;
 	const gapT = r.y > 0 ? 2 : 0;
 	const gapB = r.y + r.h < 0.9999 ? 2 : 0;
-	return `left:calc(${pct(r.x)} + ${gapL}px);top:calc(${pct(r.y)} + ${gapT}px);width:calc(${pct(r.w)} - ${gapL + gapR}px);height:calc(${pct(r.h)} - ${gapT + gapB}px)`;
+	return `left:calc(${pct(r.x)} + ${gapL}px);top:calc(${pct(r.y)} + ${gapT + top}px);width:calc(${pct(r.w)} - ${gapL + gapR}px);height:calc(${pct(r.h)} - ${gapT + gapB + top}px)`;
 }
 
-/** The region under a point (fractions) and the edge of it a drop there means (its outer 30%, right or bottom). */
-export function dropTarget(rects: ReadonlyMap<string, Rect>, x: number, y: number): { id: string; dir: SplitDir } | null {
+/** A region's tab strip: the top `height` px of it. */
+export function stripStyle(r: Rect, height: number): string {
+	const pct = (v: number) => `${(v * 100).toFixed(3)}%`;
+	const gapL = r.x > 0 ? 2 : 0;
+	const gapR = r.x + r.w < 0.9999 ? 2 : 0;
+	const gapT = r.y > 0 ? 2 : 0;
+	return `left:calc(${pct(r.x)} + ${gapL}px);top:calc(${pct(r.y)} + ${gapT}px);width:calc(${pct(r.w)} - ${gapL + gapR}px);height:${height}px`;
+}
+
+/**
+ * The region under a point (fractions of the center) and what a drop there means (Orca's
+ * resolvePaneColumnEdgeZone): an edge band splits it; with `center`, the rest of its body moves the
+ * tab into its group. `top` (a fraction of the center's height) is the region's tab strip, which
+ * takes its own drops (reorder), so it gives null.
+ */
+export function dropTarget(rects: ReadonlyMap<string, Rect>, x: number, y: number, center = false, top = 0): { id: string; dir: DropDir } | null {
 	for (const [id, r] of rects) {
 		if (x < r.x || x > r.x + r.w || y < r.y || y > r.y + r.h) continue;
-		const dir = dropEdge(x - r.x, y - r.y, r.w, r.h);
-		return dir ? { id, dir } : null;
+		const dir = dropEdge(x - r.x, y - r.y, r.w, r.h, top);
+		return dir ? { id, dir } : center && y >= r.y + top ? { id, dir: 'center' } : null;
 	}
 	return null;
 }
 
-/** Which split edge a drop at (x, y) inside a box of (w, h) means: the outer 30% on the right or bottom. */
-export function dropEdge(x: number, y: number, w: number, h: number): SplitDir | null {
+/** Orca's edge band: 20% of a region's width on the left and right, 20% of its body's height above and below. */
+const EDGE = 0.2;
+
+/**
+ * Which split edge a drop at (x, y) inside a region of (w, h) means (Orca's resolvePaneColumnEdgeZone):
+ * the outer 20% of its width on the left or right (the whole height, strip included), else the outer
+ * 20% of its body's height (below the `top` tab strip) at the top or bottom.
+ */
+export function dropEdge(x: number, y: number, w: number, h: number, top = 0): SplitDir | null {
 	if (w <= 0 || h <= 0) return null;
-	const right = x / w > 0.7;
-	const down = y / h > 0.7;
-	if (right && down) return x / w - 0.7 >= y / h - 0.7 ? 'right' : 'down';
-	return right ? 'right' : down ? 'down' : null;
+	if (x < w * EDGE) return 'left';
+	if (x > w * (1 - EDGE)) return 'right';
+	const body = h - top;
+	const by = y - top;
+	if (by < 0 || body <= 0) return null;
+	if (by < body * EDGE) return 'up';
+	if (by > body * (1 - EDGE)) return 'down';
+	return null;
 }
 
 /** What is saved per folder besides terminals (adeLayout `kingu.adeTabs`). */
@@ -81,7 +243,7 @@ export type SavedTabs = {
 	order: Record<string, string[]>;
 	pinned: Record<string, string[]>;
 	colors: Record<string, string>;
-	layouts: Record<string, TabTree>;
+	layouts: Record<string, TabGroups>;
 };
 
 const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -98,7 +260,7 @@ export function parseSavedTabs(raw: unknown): SavedTabs {
 	if (!obj(raw)) return out;
 	for (const [k, list] of Object.entries(obj(raw.browsers) ? raw.browsers : {})) {
 		const tabs = (Array.isArray(list) ? list : []).filter((b): b is BrowserTab => obj(b) && typeof b.id === 'string' && /^b\d+$/.test(b.id) && safeUrl(b.url) && typeof b.title === 'string');
-		if (tabs.length) out.browsers[k] = tabs.map((b) => ({ id: b.id, url: b.url, title: b.title.slice(0, 300) }));
+		if (tabs.length) out.browsers[k] = tabs.map((b) => ({ id: b.id, url: b.url, title: b.title.slice(0, 300), ...(typeof b.profile === 'string' && cleanProfile(b.profile) ? { profile: cleanProfile(b.profile)! } : {}) }));
 	}
 	for (const [k, list] of Object.entries(obj(raw.files) ? raw.files : {})) {
 		const tabs = (Array.isArray(list) ? list : []).filter((f): f is FileTab => obj(f) && typeof f.key === 'string' && !!f.key && !f.key.startsWith('untitled:') && f.preview !== true);
@@ -108,8 +270,40 @@ export function parseSavedTabs(raw: unknown): SavedTabs {
 	for (const [k, v] of Object.entries(obj(raw.pinned) ? raw.pinned : {})) if (strings(v).length) out.pinned[k] = strings(v);
 	for (const [k, v] of Object.entries(obj(raw.colors) ? raw.colors : {})) if (typeof v === 'string' && /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) out.colors[k] = v;
 	for (const [k, v] of Object.entries(obj(raw.layouts) ? raw.layouts : {})) {
-		const tree = parsePaneNode(v, splittable);
-		if (tree && tree.type === 'split') out.layouts[k] = tree;
+		const groups = parseTabGroups(v);
+		if (groups) out.layouts[k] = groups;
 	}
 	return out;
+}
+
+/** A saved split, checked: group ids `g<n>`, tab ids that can be in a group, groups that exist. Older Kingu saved a tree of tabs (migrated). */
+export function parseTabGroups(v: unknown): TabGroups | null {
+	if (!obj(v)) return null;
+	if (!('tree' in v)) {
+		const old = parsePaneNode(v, splittable);
+		return old && old.type === 'split' ? migrateRegions(old) : null;
+	}
+	const tree = parsePaneNode(v.tree, isGroupId);
+	if (!tree || tree.type !== 'split') return null;
+	const groups = new Set(leaves(tree));
+	const of: Record<string, string> = {};
+	for (const [id, gid] of Object.entries(obj(v.of) ? v.of : {}).slice(0, 2000)) if (splittable(id) && typeof gid === 'string' && groups.has(gid)) of[id] = gid;
+	const shown: Record<string, string> = {};
+	for (const [gid, id] of Object.entries(obj(v.shown) ? v.shown : {})) if (groups.has(gid) && typeof id === 'string' && splittable(id)) shown[gid] = id;
+	return { tree, of, shown };
+}
+
+/** Kingu's earlier regions (a tree whose leaves were the tab each region showed): one group per region, holding that tab. */
+export function migrateRegions(old: TabTree): TabGroups {
+	const of: Record<string, string> = {};
+	const shown: Record<string, string> = {};
+	let n = 0;
+	const swap = (node: TabTree): TabTree => {
+		if (node.type === 'split') return { ...node, first: swap(node.first), second: swap(node.second) };
+		const gid = `g${++n}`;
+		of[node.id] = gid;
+		shown[gid] = node.id;
+		return leaf(gid);
+	};
+	return { tree: swap(old), of, shown };
 }

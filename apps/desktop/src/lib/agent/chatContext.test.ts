@@ -12,13 +12,23 @@ describe('mentions', () => {
 		expect(mentionQuery('issue#1', 7)).toBeNull();
 	});
 
+	test('the list follows punctuation and Backspace (VS Code 51ec2db5fb2, b3efde0409c)', () => {
+		// `-` and `.` stay in the query, so the files are asked for again on every keystroke.
+		expect(mentionQuery('@my-', 4)).toEqual({ start: 0, trigger: '@', query: 'my-' });
+		expect(mentionQuery('see @my-file.ts', 15)).toEqual({ start: 4, trigger: '@', query: 'my-file.ts' });
+		// Deleting a typo, or back to a bare `@`, gives the shorter query again: the list reopens
+		// once something matches.
+		expect(mentionQuery('@my-filx', 7)).toEqual({ start: 0, trigger: '@', query: 'my-fil' });
+		expect(mentionQuery('@', 1)).toEqual({ start: 0, trigger: '@', query: '' });
+	});
+
 	test('picking takes the word out', () => {
 		expect(removeMention('fix #pro more', 4, 8)).toEqual({ text: 'fix  more', caret: 4 });
 	});
 
 	test('sources match their label or id', () => {
 		const label = (s: string) => ({ problems: 'Problems', scm: 'Source Control' })[s] ?? s;
-		expect(matchSources('', label)).toHaveLength(9);
+		expect(matchSources('', label)).toHaveLength(10);
 		expect(matchSources('sour', label)).toEqual(['scm', 'mcpResources']);
 		expect(matchSources('PROB', label)).toEqual(['problems']);
 	});

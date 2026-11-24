@@ -26,7 +26,7 @@
 	let expanded = $state<string | null>(null);
 
 	/** Claude Code's own transcripts for this folder and its worktrees (read locally). */
-	type CliSession = { id: string; title: string; preview: string | null; cwd: string | null; branch: string | null; model: string | null; messages: number; created: number; updated: number; path: string; agent: 'claude' | 'codex' | 'gemini' };
+	type CliSession = { id: string; title: string; preview: string | null; cwd: string | null; branch: string | null; model: string | null; messages: number; created: number; updated: number; path: string; agent: 'claude' | 'codex' | 'gemini' | 'opencode' | 'copilot' | 'cursor' | 'qoder' | 'codebuddy' | 'droid' | 'kiro' | 'cline' | 'kimi' | 'devin' | 'grok' | 'hermes' | 'jcode' | 'openclaw' | 'pi' | 'zcode' | 'muse' | 'omp' | 'rovo' | 'antigravity' | 'opencode2' };
 	let cli = $state<CliSession[]>([]);
 	let loading = $state(false);
 	let loadError = $state('');
@@ -37,7 +37,7 @@
 		reading = root;
 		loading = true;
 		try {
-			// Claude's transcripts, plus Codex's rollouts and Gemini's chats (Orca's history covers many CLIs).
+			// Claude's transcripts, plus Codex's rollouts, Gemini's chats and OpenCode's SQLite sessions (Orca's history covers many CLIs).
 			const [claude, others] = await Promise.all([invoke<CliSession[]>('claude_sessions', { limit: 250 }), invoke<CliSession[]>('agent_cli_sessions', { limit: 250 }).catch(() => [] as CliSession[])]);
 			const next = [...claude, ...others];
 			if (reading !== root) return;
@@ -108,7 +108,8 @@
 				worktree: keyOfCwd(c.cwd),
 				sessionId: c.id,
 				prompt: null,
-				logPath: c.path,
+				// OpenCode's sessions live in its database (`<db>#<id>`), not in a file of their own.
+				logPath: c.agent === 'opencode' || c.agent === 'opencode2' || c.agent === 'zcode' ? null : c.path,
 				task: false
 			}));
 		const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -146,7 +147,7 @@
 			adeLayout.show(x.worktree);
 			if (x.task) return adeLayout.select(x.worktree, 'main');
 			// A CLI's own session opens in a new terminal of its worktree with that CLI's resume command.
-			const argv = resumeArgv(x.agent, x.sessionId ?? '');
+			const argv = resumeArgv(x.agent, x.sessionId ?? '', x.logPath);
 			adeLayout.newTerminal(x.worktree, { title: x.agent, run: argv });
 			return status.flash(`${x.agent} session queued`, 2000);
 		}
@@ -170,7 +171,7 @@
 			if (slug) adeLayout.show(slug);
 			return;
 		}
-		const text = id === 'copyResume' ? resumeArgv(x.agent, x.sessionId ?? '').join(' ') : id === 'copyId' ? (x.sessionId ?? '') : id === 'copyLog' ? (x.logPath ?? '') : (x.prompt ?? '');
+		const text = id === 'copyResume' ? resumeArgv(x.agent, x.sessionId ?? '', x.logPath).join(' ') : id === 'copyId' ? (x.sessionId ?? '') : id === 'copyLog' ? (x.logPath ?? '') : (x.prompt ?? '');
 		await navigator.clipboard.writeText(text);
 		status.flash({ copyResume: 'Resume command copied', copyId: 'Session ID copied', copyLog: 'Log path copied', copyPrompt: 'Prompt copied' }[id] ?? 'Copied', 2000);
 	}

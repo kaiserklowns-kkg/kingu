@@ -49,16 +49,31 @@ url = "2.5.8"
 # Snaps (src/snap.rs): snap.toml manifests, trust keyed by the manifest's SHA-256.
 toml = "1.1.8"
 sha2 = "0.10.9"
+# Grok CLI session folders (sessions.rs): long working-folder names end in a BLAKE3 hash.
+blake3 = { version = "=1.8.7", default-features = false }
 # ZCode v2 keeps its Coding Plan key AES-256-GCM sealed (accounts/providers/zcode.rs).
 aes-gcm = "=0.10.3"
+# Browser cookie import (floating_browser/cookies.rs): Chromium's AES-128-CBC cookie values and
+# PBKDF2-HMAC-SHA1 key. aes and hmac are already in the tree; sha1 is new.
+aes = "=0.9.3"
+hmac = "=0.13.0"
+sha1 = "=0.11.0"
 encoding_rs = "=0.8.42"
 chardetng = "=1.0.0"
 # The repository config file kingu.yaml (src/agent/kingu_yaml.rs): the event parser only, no encoding_rs.
 yaml-rust2 = { version = "=0.13.0", default-features = false }
 # Skills hub (src/skill_hub): .skill / .zip archives in and out, deflate through flate2 only.
 zip = { version = "=4.6.1", default-features = false, features = ["deflate-flate2"] }
+# zip's deflate-flate2 picks no zlib backend. On macOS another dependency happened to enable
+# flate2's default (pure-Rust miniz_oxide) backend; on Windows nothing does, so name it here.
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+# Managed agent CLI installs (src/agent/managed_cli): Grok's npm package ships its binary
+# brotli-compressed. Already in the tree through tauri.
+brotli = "=9.0.0"
 # Mobile pairing QR code (src/mobile.rs): SVG output only, no image crates.
 qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
+# Workspace Cleanup reads Codex's packed rollouts (`.jsonl.zst`, src/workspace_cleanup_chats/codex.rs): pure-Rust zstd.
+ruzstd = "=0.9.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -70,7 +85,9 @@ mac-notification-sys = "=0.6.15"
 block2 = "0.6"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSAlert", "NSApplication", "NSButton", "NSControl", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSLocale", "NSArray"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSLocale", "NSArray", "NSDate", "NSDictionary", "NSGeometry", "NSHTTPCookie", "NSProcessInfo", "NSUUID", "objc2-core-foundation"] }
+# Browser cookie import writes into a profile's WKWebsiteDataStore (the version wry already uses).
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "WKWebsiteDataStore", "WKHTTPCookieStore"] }
 
 [dev-dependencies]
 tempfile = "3"

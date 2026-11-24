@@ -25,7 +25,8 @@ export const PANES: Readonly<Record<string, Pane>> = {
 	'ADE Terminal': { icon: 'terminal', description: 'settings.pane.adeTerminal' },
 	'Source Control AI': { icon: 'sparkle', description: 'settings.pane.sourceControlAi' },
 	'Pull Requests': { icon: 'pullRequest', description: 'settings.pane.pullRequests' },
-	'Workspace Cleanup': { icon: 'trash', description: 'settings.pane.workspaceCleanup' }
+	'Workspace Cleanup': { icon: 'trash', description: 'settings.pane.workspaceCleanup' },
+	Browser: { icon: 'globe', description: 'settings.pane.browser' }
 };
 
 export const isPane = (group: string | null): group is string => group !== null && Object.hasOwn(PANES, group);
@@ -59,7 +60,7 @@ export const ORCA_NAV: readonly {
 		items: [{ group: 'Agent' }, { page: 'arkai' }, { page: 'accounts' }, { group: 'Orchestration' }, { page: 'voice' }, { page: 'mcp' }, { page: 'skills' }, { page: 'memories' }, { group: 'Local AI' }]
 	},
 	{ id: 'setup', label: 'settings.nav.setup', items: [{ page: 'setup' }, { page: 'account' }, { pane: 'general' }] },
-	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }, { page: 'workspaceCleanup' }] },
+	{ id: 'workflows', label: 'settings.nav.workflows', items: [{ pane: 'automations' }, { pane: 'git' }, { pane: 'terminal' }, { pane: 'floating' }, { group: 'Browser' }, { page: 'workspaceCleanup' }] },
 	{
 		id: 'interface',
 		label: 'settings.nav.interface',

@@ -179,6 +179,10 @@ pub enum AgentEvent {
     /// `chat.tools.*.autoApprove` rule an "Always allow" button writes to the user's settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     auto_approve: Option<RuleSuggestion>,
+    /// A sandboxed command the sandbox stopped (the host's sandbox/retry.ts): what "Allow"
+    /// adds to the sandbox before it runs again. Passed through to the webview as sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sandbox_grant: Option<Value>,
   },
   /// Added by Rust in place of a `PermissionRequest` that `chat.tools.*.autoApprove` rules
   /// approve (`tool_rules`); Rust answers it `allow`. `rules`: the keys that approved it.
@@ -232,6 +236,19 @@ pub enum AgentEvent {
     #[serde(default)]
     paths: Vec<String>,
   },
+  /// Assisted permissions reviewed a tool call (the host's assisted.ts): `approved` runs it
+  /// without a prompt (`request_id` none); otherwise the `PermissionRequest` with `request_id`
+  /// follows and `reason` says why it was not approved.
+  AssistedReview {
+    #[serde(default)]
+    request_id: Option<String>,
+    tool: String,
+    #[serde(default)]
+    tool_use_id: Option<String>,
+    verdict: String,
+    #[serde(default)]
+    reason: String,
+  },
   /// The agent published an artifact (the host's `artifact_publish` tool, through artifacts/):
   /// version `version` of artifact `id` in project `root`. The chat shows a card that opens it.
   Artifact { id: String, title: String, version: u32, format: String, root: String },
@@ -258,6 +275,33 @@ pub enum AgentEvent {
   },
   /// An `McpRequest` was answered or cancelled (`accept`, `decline`, `cancel`).
   McpRequestResolved { request_id: String, action: String },
+  /// MCP Apps (agent-host arkai/mcpApps.ts, `mcp_app.rs`): tool call `tool_use_id` of `server`'s
+  /// `tool` has a UI resource (`resource_uri`, `ui://`) the chat renders. Sent when the call is
+  /// allowed (`done` false) and when it returns, with the server's `CallToolResult` (`result`,
+  /// none when too large).
+  McpApp {
+    tool_use_id: String,
+    server: String,
+    tool: String,
+    resource_uri: String,
+    #[serde(default)]
+    input: Value,
+    #[serde(default)]
+    done: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
+  },
+  /// The model called a tool an MCP App in the chat registered: the chat asks the app (`app_id`)
+  /// and answers with `agent_mcp_app_tool_result`. Live only, like its cancel.
+  McpAppToolCall {
+    request_id: String,
+    app_id: String,
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+  },
+  /// An `McpAppToolCall` is no longer wanted (the turn stopped, or it timed out).
+  McpAppToolCancel { request_id: String },
   /// Added by the webview (`chat_feedback`): the user's thumbs up (`up`) or down (`down`) on the
   /// answer to chat request `request`, or none (`vote` null: taken back). Kept in the transcript.
   Feedback {
@@ -332,6 +376,23 @@ pub enum AgentEvent {
   /// Output the host did not understand, passed through untouched.
   Raw { line: String },
   Stderr { line: String },
+  /// The agent needs a sign-in before its session opens (agent-host acpSignIn.ts); not kept in the
+  /// transcript. `via`: `browser` (the agent runs Google's sign-in itself on Sign in, `url` the
+  /// link it would open) or `terminal` (`login` is the command to sign in with).
+  SignIn {
+    state: String,
+    via: String,
+    agent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    login: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// `browser`: the ACP auth method Sign in sends (`oauth-personal`, `gemini-api-key`, `agent-platform`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+  },
   /// The run is over (stopped, failed, or its host exited). Always the last event of a run.
   Exit { code: Option<i32>, signal: Option<i32>, stopped: bool },
 }
@@ -382,6 +443,10 @@ mod tests {
       json!({"kind": "mcp_request", "request_id": "r2", "type": "sampling", "server": "web", "message": "", "mode": null, "schema": null, "url": null,
         "sampling": {"messages": [{"role": "user", "text": "hi"}], "system_prompt": null, "max_tokens": 50}, "timeout_ms": 600000}),
       json!({"kind": "mcp_request_resolved", "request_id": "r1", "action": "accept"}),
+      json!({"kind": "mcp_app", "tool_use_id": "c1", "server": "charts", "tool": "show", "resource_uri": "ui://charts/a.html", "input": {"title": "x"}, "done": false}),
+      json!({"kind": "mcp_app", "tool_use_id": "c1", "server": "charts", "tool": "show", "resource_uri": "ui://charts/a.html", "input": {}, "done": true, "result": {"content": []}}),
+      json!({"kind": "mcp_app_tool_call", "request_id": "r3", "app_id": "a1", "name": "zoom", "arguments": {"level": 2}}),
+      json!({"kind": "mcp_app_tool_cancel", "request_id": "r3"}),
     ] {
       assert_eq!(serde_json::to_value(AgentEvent::from_host(v.clone())).unwrap(), v);
     }
@@ -399,6 +464,8 @@ mod tests {
   fn guard_asks_and_feedback_round_trip() {
     for v in [
       json!({"kind": "guard_asked", "request_id": "r1", "tool": "Bash", "tool_use_id": "tu1", "check": "delete", "paths": ["a.txt"]}),
+      json!({"kind": "assisted_review", "request_id": null, "tool": "Bash", "tool_use_id": "tu1", "verdict": "approved", "reason": "Runs the tests."}),
+      json!({"kind": "assisted_review", "request_id": "r2", "tool": "Bash", "tool_use_id": "tu2", "verdict": "needs_you", "reason": "Pushes."}),
       json!({"kind": "feedback", "request": 2, "vote": "up"}),
       json!({"kind": "feedback", "request": 2, "vote": null}),
     ] {

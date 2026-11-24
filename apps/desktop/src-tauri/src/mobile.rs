@@ -63,6 +63,12 @@ pub const LIVE_TTL_MS: u64 = 30_000;
 /// Kingu: most live rows one window may push, and the longest line kept per row.
 const MAX_LIVE_TASKS: usize = 500;
 const MAX_LIVE_MESSAGE: usize = 300;
+/// Kingu: what is kept of a permission prompt's request (permissionAsk.ts has the same limits).
+const MAX_REQUEST_TOOL: usize = 200;
+const MAX_REQUEST_DETAIL: usize = 2000;
+const MAX_REQUEST_GRANTS: usize = 20;
+const MAX_REQUEST_GRANT: usize = 520;
+const MAX_DENY_REASON: usize = 500;
 
 pub const CHANGED_EVENT: &str = "mobile:changed";
 pub const AUTH_FAILURES_EVENT: &str = "mobile:auth-failures";
@@ -185,6 +191,56 @@ pub struct LiveTask {
   /// Unix ms of the agent's latest event.
   #[serde(default)]
   pub at: u64,
+  /// What the open permission prompt asks, while `phase` is `permission`.
+  #[serde(default)]
+  pub request: Option<LiveRequest>,
+}
+
+/// An open permission prompt for the phone's card (the window's hook state, permissionAsk.ts): the
+/// tool and its command or path (Orca's approval summary, which its phone shows too), and what an
+/// answer wider than once would grant.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct LiveRequest {
+  #[serde(default)]
+  pub tool: Option<String>,
+  #[serde(default)]
+  pub detail: Option<String>,
+  /// The command asks to run outside the agent's sandbox.
+  #[serde(default)]
+  pub unsandboxed: bool,
+  /// What "allow for this session" would grant, each `kind:value` (`rule:Bash(npm test:*)`,
+  /// `dir:/path`, `mode:acceptEdits`); empty: only once or deny can be answered.
+  #[serde(default)]
+  pub grants: Vec<String>,
+  /// What "always allow" (in this project / everywhere) would have Claude save: the allow rules
+  /// among `grants` (agent/permission_rules.rs `scoped_grants`); empty: not offered.
+  #[serde(default)]
+  pub rules: Vec<String>,
+  /// Git would track the settings file of that scope (the card warns).
+  #[serde(default)]
+  pub project_tracked: bool,
+  #[serde(default)]
+  pub user_tracked: bool,
+  /// The agent's waiting hook takes the answer: a session answer or a deny reason can reach it.
+  #[serde(default)]
+  pub held: bool,
+}
+
+impl LiveRequest {
+  /// Bounded for the phone; grants are all or nothing (a cut list would show less than is granted).
+  fn bounded(mut self) -> Self {
+    self.tool = self.tool.map(|t| clip(&t, MAX_REQUEST_TOOL));
+    self.detail = self.detail.map(|d| clip(&d, MAX_REQUEST_DETAIL));
+    if !self.held || self.unsandboxed || self.grants.len() > MAX_REQUEST_GRANTS || self.grants.iter().any(|g| g.chars().count() > MAX_REQUEST_GRANT) {
+      self.grants.clear();
+    }
+    // Rules are the allow rules among the grants, in their order, or none.
+    let rules: Vec<String> = self.grants.iter().filter(|g| g.starts_with("rule:")).cloned().collect();
+    if self.rules != rules {
+      self.rules.clear();
+    }
+    self
+  }
 }
 
 /// Live rows of each project root, as last pushed: (when, rows by slug).
@@ -440,7 +496,7 @@ fn task_json(t: &TaskMeta, live: Option<&LiveTask>) -> Value {
     "slug": t.slug,
     "title": t.title,
     "status": live_status(&t.status, live),
-    "live": live.map(|l| json!({ "phase": l.phase, "message": l.message, "ask": l.ask })),
+    "live": live.map(|l| json!({ "phase": l.phase, "message": l.message, "ask": l.ask, "request": l.request })),
     "agent": agent_label(&t.agent),
     "prompt": clip(&t.prompt, MAX_PROMPT_SHOWN),
     "createdAt": t.created_at,
@@ -476,7 +532,7 @@ pub fn projects_json(projects: Vec<ProjectTasks>, live: &HashMap<String, HashMap
 fn page(nonce: &str) -> HttpResponse {
   use MobileWebMsg as W;
   let locale = crate::i18n::current();
-  let words: [(&str, W); 31] = [
+  let words: [(&str, W); 44] = [
     ("pairTitle", W::PairTitle),
     ("pairHint", W::PairHint),
     ("pair", W::Pair),
@@ -502,7 +558,20 @@ fn page(nonce: &str) -> HttpResponse {
     ("statusFailed", W::StatusFailed),
     ("permissionTitle", W::PermissionTitle),
     ("permissionHint", W::PermissionHint),
+    ("permissionHintHeld", W::PermissionHintHeld),
     ("allow", W::Allow),
+    ("allowSession", W::AllowSession),
+    ("allowProject", W::AllowProject),
+    ("allowUser", W::AllowUser),
+    ("alwaysRules", W::AlwaysRules),
+    ("trackedProject", W::TrackedProject),
+    ("trackedUser", W::TrackedUser),
+    ("sessionGrants", W::SessionGrants),
+    ("grantRule", W::GrantRule),
+    ("grantDir", W::GrantDir),
+    ("grantMode", W::GrantMode),
+    ("unsandboxed", W::Unsandboxed),
+    ("denyReason", W::DenyReason),
     ("deny", W::Deny),
     ("questionTitle", W::QuestionTitle),
     ("otherAnswer", W::OtherAnswer),
@@ -539,10 +608,16 @@ struct SendBody {
 struct AnswerBody {
   root: String,
   slug: String,
-  /// `allow` / `deny` a permission prompt, or `question` with `selections`.
+  /// `allow` (once) / `allow_session` (with the `grants` the card showed) / `allow_project` /
+  /// `allow_user` (with the `rules` it showed, in `grants`) / `deny` (with an
+  /// optional `message` for the agent) a permission prompt, or `question` with `selections`.
   answer: String,
   #[serde(default)]
   selections: Option<Value>,
+  #[serde(default)]
+  grants: Option<Vec<String>>,
+  #[serde(default)]
+  message: Option<String>,
 }
 
 impl Mobile {
@@ -849,6 +924,7 @@ impl Mobile {
       .take(MAX_LIVE_TASKS)
       .map(|mut t| {
         t.message = t.message.map(|m| clip(&m, MAX_LIVE_MESSAGE));
+        t.request = t.request.take().filter(|_| t.phase == "permission").map(LiveRequest::bounded);
         (t.slug.clone(), t)
       })
       .collect();
@@ -867,7 +943,7 @@ impl Mobile {
   fn answer(&self, backend: &dyn Backend, body: &[u8], now: u64) -> HttpResponse {
     let Ok(b) = serde_json::from_slice::<AnswerBody>(body) else { return error(400, tr!(MobileMsg::BadRequest)) };
     let want = match b.answer.as_str() {
-      "allow" | "deny" => "permission",
+      "allow" | "allow_session" | "allow_project" | "allow_user" | "deny" => "permission",
       "question" => "question",
       _ => return error(400, tr!(MobileMsg::BadRequest)),
     };
@@ -884,11 +960,29 @@ impl Mobile {
     if !p.open {
       return error(409, tr!(MobileMsg::NoWindow));
     }
-    let open = self.live(now).get(&b.root).and_then(|r| r.get(&b.slug)).is_some_and(|t| t.phase == want);
-    if !open {
-      return error(409, tr!(MobileMsg::NothingToAnswer));
+    let row = self.live(now).get(&b.root).and_then(|r| r.get(&b.slug)).filter(|t| t.phase == want).cloned();
+    let Some(row) = row else { return error(409, tr!(MobileMsg::NothingToAnswer)) };
+    // A session answer grants exactly what this prompt's card showed, an "always allow" exactly
+    // the rules it showed, or nothing is answered.
+    let grants = match b.answer.as_str() {
+      "allow_session" => match (row.request.as_ref().filter(|r| r.held && !r.unsandboxed && !r.grants.is_empty()), &b.grants) {
+        (Some(r), Some(shown)) if *shown == r.grants => Some(shown.clone()),
+        _ => return error(409, tr!(MobileMsg::NothingToAnswer)),
+      },
+      "allow_project" | "allow_user" => match (row.request.as_ref().filter(|r| r.held && !r.unsandboxed && !r.rules.is_empty()), &b.grants) {
+        (Some(r), Some(shown)) if *shown == r.rules => Some(shown.clone()),
+        _ => return error(409, tr!(MobileMsg::NothingToAnswer)),
+      },
+      _ => None,
+    };
+    let message = b.message.as_deref().filter(|_| b.answer == "deny").map(|m| clip(m.trim(), MAX_DENY_REASON)).filter(|m| !m.is_empty());
+    let mut answer = json!({ "kind": b.answer, "selections": selections });
+    if let Some(grants) = grants {
+      answer["grants"] = json!(grants);
     }
-    let answer = json!({ "kind": b.answer, "selections": selections });
+    if let Some(message) = message {
+      answer["message"] = json!(message);
+    }
     match backend.answer(&b.root, &b.slug, &answer) {
       Ok(()) => json_response(200, json!({ "ok": true })),
       Err(e) => error(502, e),
@@ -1066,11 +1160,10 @@ impl Backend for AppBackend {
 pub fn install(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
   let mobile = Arc::new(Mobile::load(app.path().app_data_dir()?.join("mobile.json")));
   app.manage(mobile.clone());
-  if mobile.lock().stored.enabled {
-    if let Err(e) = mobile.start(Arc::new(AppBackend(app.handle().clone())), Ipv4Addr::UNSPECIFIED) {
+  if mobile.lock().stored.enabled
+    && let Err(e) = mobile.start(Arc::new(AppBackend(app.handle().clone())), Ipv4Addr::UNSPECIFIED) {
       log::warn!("mobile: {e}");
     }
-  }
   Ok(())
 }
 
@@ -1284,7 +1377,7 @@ mod tests {
   }
 
   fn live(slug: &str, phase: &str, at: u64) -> LiveTask {
-    LiveTask { slug: slug.into(), phase: phase.into(), message: Some("m".repeat(400)), ask: None, at }
+    LiveTask { slug: slug.into(), phase: phase.into(), message: Some("m".repeat(400)), ask: None, at, request: None }
   }
 
   #[test]
@@ -1311,6 +1404,92 @@ mod tests {
     assert_eq!(live_status("running", Some(&live("x", "working", 0))), "running");
     assert_eq!(live_status("review", Some(&live("x", "working", 0))), "running");
     assert_eq!(live_status("done", Some(&live("x", "idle", 0))), "done");
+  }
+
+  #[test]
+  fn a_session_answer_grants_only_what_the_prompt_showed() {
+    let (_d, m) = mobile();
+    fake_running(&m);
+    let b = Fake { open: true, ..Default::default() };
+    let token = pair(&m, &b, 1);
+    let ans = |body: Value, now: u64| m.handle(&b, &req("POST", "/api/answer", Some(&token), body), now).status;
+    let ask = |grants: &[&str], held: bool, unsandboxed: bool| LiveRequest { tool: Some("Bash".into()), detail: Some("d".repeat(3000)), unsandboxed, grants: grants.iter().map(|g| g.to_string()).collect(), held, ..Default::default() };
+    let with = |r: LiveRequest| LiveTask { request: Some(r), ..live("a", "permission", 1) };
+    let session = |grants: Value| json!({ "root": "/p", "slug": "a", "answer": "allow_session", "grants": grants });
+    // No request, no waiting hook, a command leaving the sandbox: nothing wider than once.
+    m.set_live("/p", vec![live("a", "permission", 1)], 2);
+    assert_eq!(ans(session(json!(["rule:Bash"])), 3), 409);
+    m.set_live("/p", vec![with(ask(&["rule:Bash"], false, false))], 2);
+    assert_eq!(ans(session(json!(["rule:Bash"])), 3), 409);
+    m.set_live("/p", vec![with(ask(&["rule:Bash"], true, true))], 2);
+    assert_eq!(ans(session(json!(["rule:Bash"])), 3), 409);
+    // The row is bounded, and a working row carries no request.
+    m.set_live("/p", vec![with(ask(&["rule:Bash(npm test:*)", "mode:acceptEdits"], true, false)), LiveTask { request: Some(ask(&["rule:Bash"], true, false)), ..live("c", "working", 1) }], 2);
+    let j = body(&m.handle(&b, &req("GET", "/api/tasks", Some(&token), Value::Null), 3));
+    let tasks = j["projects"][0]["tasks"].as_array().unwrap();
+    let a = tasks.iter().find(|t| t["slug"] == "a").unwrap();
+    assert_eq!(a["live"]["request"]["grants"], json!(["rule:Bash(npm test:*)", "mode:acceptEdits"]));
+    assert_eq!(a["live"]["request"]["detail"].as_str().unwrap().chars().count(), MAX_REQUEST_DETAIL + 1);
+    assert!(tasks.iter().find(|t| t["slug"] == "c").unwrap()["live"]["request"].is_null());
+    // Other grants than shown, fewer, or none: refused.
+    assert_eq!(ans(session(json!(["rule:Bash(npm test:*)"])), 3), 409);
+    assert_eq!(ans(session(json!(["rule:Bash(npm test:*)", "mode:bypassPermissions"])), 3), 409);
+    assert_eq!(ans(json!({ "root": "/p", "slug": "a", "answer": "allow_session" }), 3), 409);
+    assert!(b.sent.lock().unwrap().is_empty());
+    assert_eq!(ans(session(json!(["rule:Bash(npm test:*)", "mode:acceptEdits"])), 3), 200);
+    // A plain allow carries no grants even when some are sent; a deny carries its bounded reason.
+    assert_eq!(ans(json!({ "root": "/p", "slug": "a", "answer": "allow", "grants": ["rule:Bash"], "message": "x" }), 3), 200);
+    assert_eq!(ans(json!({ "root": "/p", "slug": "a", "answer": "deny", "message": format!("  {}  ", "r".repeat(900)) }), 3), 200);
+    let sent: Vec<Value> = b.sent.lock().unwrap().iter().map(|s| serde_json::from_str(&s.2).unwrap()).collect();
+    assert_eq!(sent[0]["kind"], "allow_session");
+    assert_eq!(sent[0]["grants"], json!(["rule:Bash(npm test:*)", "mode:acceptEdits"]));
+    assert_eq!(sent[1], json!({ "kind": "allow", "selections": null }));
+    assert!(sent[2].get("grants").is_none());
+    assert_eq!(sent[2]["message"].as_str().unwrap().chars().count(), MAX_DENY_REASON + 1);
+  }
+
+  #[test]
+  fn an_always_allow_answer_saves_only_the_rules_the_prompt_showed() {
+    let (_d, m) = mobile();
+    fake_running(&m);
+    let b = Fake { open: true, ..Default::default() };
+    let token = pair(&m, &b, 1);
+    let ans = |body: Value| m.handle(&b, &req("POST", "/api/answer", Some(&token), body), 3).status;
+    let row = |grants: &[&str], rules: &[&str], held: bool, unsandboxed: bool| LiveTask {
+      request: Some(LiveRequest { tool: Some("Bash".into()), grants: grants.iter().map(|g| g.to_string()).collect(), rules: rules.iter().map(|g| g.to_string()).collect(), held, unsandboxed, project_tracked: true, ..Default::default() }),
+      ..live("a", "permission", 1)
+    };
+    let always = |kind: &str, rules: Value| json!({ "root": "/p", "slug": "a", "answer": kind, "grants": rules });
+    let both = ["rule:Bash(npm test:*)", "mode:acceptEdits"];
+    let rule = ["rule:Bash(npm test:*)"];
+    for kind in ["allow_project", "allow_user"] {
+      // No request, no waiting hook, a command leaving the sandbox, or no rule suggested: refused.
+      m.set_live("/p", vec![live("a", "permission", 1)], 2);
+      assert_eq!(ans(always(kind, json!(rule))), 409, "{kind}");
+      m.set_live("/p", vec![row(&both, &rule, false, false)], 2);
+      assert_eq!(ans(always(kind, json!(rule))), 409, "{kind}");
+      m.set_live("/p", vec![row(&both, &rule, true, true)], 2);
+      assert_eq!(ans(always(kind, json!(rule))), 409, "{kind}");
+      m.set_live("/p", vec![row(&["mode:acceptEdits"], &[], true, false)], 2);
+      assert_eq!(ans(always(kind, json!(["mode:acceptEdits"]))), 409, "{kind}");
+      // A row whose rules are not the allow rules of its grants carries none.
+      m.set_live("/p", vec![row(&both, &["rule:Bash", "mode:acceptEdits"], true, false)], 2);
+      assert_eq!(ans(always(kind, json!(["rule:Bash", "mode:acceptEdits"]))), 409, "{kind}");
+      m.set_live("/p", vec![row(&both, &rule, true, false)], 2);
+      // The session's grants, other rules, none: refused.
+      assert_eq!(ans(always(kind, json!(both))), 409, "{kind}");
+      assert_eq!(ans(always(kind, json!(["rule:Bash"]))), 409, "{kind}");
+      assert_eq!(ans(json!({ "root": "/p", "slug": "a", "answer": kind })), 409, "{kind}");
+      assert!(b.sent.lock().unwrap().is_empty());
+    }
+    let j = body(&m.handle(&b, &req("GET", "/api/tasks", Some(&token), Value::Null), 3));
+    let a = &j["projects"][0]["tasks"][0]["live"]["request"];
+    assert_eq!((a["rules"].clone(), a["project_tracked"].clone()), (json!(rule), json!(true)));
+    assert_eq!(ans(always("allow_project", json!(rule))), 200);
+    assert_eq!(ans(always("allow_user", json!(rule))), 200);
+    let sent: Vec<Value> = b.sent.lock().unwrap().iter().map(|s| serde_json::from_str(&s.2).unwrap()).collect();
+    assert_eq!(sent[0], json!({ "kind": "allow_project", "selections": null, "grants": rule }));
+    assert_eq!(sent[1]["kind"], "allow_user");
   }
 
   #[test]

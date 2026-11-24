@@ -296,7 +296,32 @@ function simple(spec: Spec): AgentProfile {
  * this session with `--resume`) and `--settings` hooks that report its state. Both before the prompt.
  */
 export function claudeStart(argv: string[], prompt: string, sessionId: string, settings: string | null): string[] {
-	return [...argv, '--session-id', sessionId, ...(settings ? ['--settings', settings] : []), prompt];
+	return [...argv, '--session-id', sessionId, ...(settings ? ['--settings', settings] : []), ...claudePrompt(argv, prompt)];
+}
+
+/**
+ * claude's prompt after `--` (Orca 907b43c04 argv-prompt-separator.ts): a base that ends in a
+ * variadic flag (`--disallowedTools Agent`, `--debug`) would otherwise take the prompt as its
+ * value and the session would start empty. No second `--` when the base already ends its options
+ * (once options have ended, a `--` is the prompt).
+ */
+export function claudePrompt(base: readonly string[], prompt: string): string[] {
+	let i = 0;
+	if (base[0] && programName(base[0]) === 'env') {
+		i = 1;
+		while (i < base.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(base[i])) i++;
+	}
+	return base.slice(i + 1).includes('--') ? [prompt] : ['--', prompt];
+}
+
+/**
+ * A claude launch whose program word a non-claude wrapper replaced (`kingu.agent.cmdOverrides`,
+ * e.g. Happy): the wrapper appends its own flags after the forwarded args, which a `--` would turn
+ * into the prompt, so the separator is dropped (Orca 907b43c04 agentOptionTokens).
+ */
+export function withoutClaudePromptSeparator(argv: readonly string[]): string[] {
+	const sep = argv.length - 2;
+	return sep >= 0 && argv[sep] === '--' ? [...argv.slice(0, sep), ...argv.slice(sep + 1)] : [...argv];
 }
 
 /** Continue the task's own session when its id is known, else the latest one in the worktree. */
@@ -305,8 +330,8 @@ export function claudeResume(argv: string[], sessionId: string | null, settings:
 }
 
 /**
- * claude: a session id we choose and `--settings` hooks before the prompt; skill plugins and the
- * variadic `--mcp-config` after it (see cliWithMcp).
+ * claude: a session id we choose, `--settings` hooks, skill plugins and the variadic
+ * `--mcp-config` (see cliWithMcp), then `--` and the prompt (claudePrompt).
  */
 const claude: AgentProfile = {
 	id: 'claude',
@@ -320,10 +345,13 @@ const claude: AgentProfile = {
 	skills: true,
 	launch(base, how, ctx) {
 		const settings = ctx.hookSettings ?? null;
+		if ('prompt' in how) {
+			// Plugins and the variadic --mcp-config before the `--` that ends the options.
+			const opts = ctx.sessionId ? [...base, '--session-id', ctx.sessionId, ...(settings ? ['--settings', settings] : [])] : [...base];
+			return { argv: [...cliWithMcp(opts, ctx.servers, ctx.plugins), ...claudePrompt(base, how.prompt)] };
+		}
 		let argv: string[];
 		if ('resume' in how) argv = claudeResume(base, how.resume, settings);
-		else if ('prompt' in how && ctx.sessionId) argv = claudeStart(base, how.prompt, ctx.sessionId, settings);
-		else if ('prompt' in how) argv = [...base, how.prompt];
 		else argv = [...base, ...(ctx.sessionId ? ['--session-id', ctx.sessionId] : []), ...(settings ? ['--settings', settings] : [])];
 		return { argv: cliWithMcp(argv, ctx.servers, ctx.plugins) };
 	}
@@ -386,7 +414,7 @@ const ORCA_AGENTS: readonly Spec[] = [
 	{ id: 'kilo', title: 'Kilocode', bins: ['kilo'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'crush', title: 'Charm', bins: ['crush'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'aug', title: 'Auggie', bins: ['auggie'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
-	{ id: 'cline', title: 'Cline', bins: ['cline'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
+	{ id: 'cline', title: 'Cline', bins: ['cline'], status: O, ...plain, prompt: { kind: 'type' }, resume: byId('--id') },
 	{ id: 'codebuff', title: 'Codebuff', bins: ['codebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	{ id: 'freebuff', title: 'Freebuff', bins: ['freebuff'], status: O, ...plain, prompt: { kind: 'type' }, resume: null },
 	// The binary is `cn` (`continue` is a shell keyword).
@@ -546,6 +574,145 @@ export function cliResume(argv: string[]): string[] | null {
 
 /** Every program name the picker looks for on PATH (with the ones a profile also requires). */
 export const KNOWN_BINS: readonly string[] = [...new Set(PROFILES.flatMap((p) => [...p.bins, ...(p.requires ?? [])]))];
+
+/**
+ * Process names that differ from the program Kingu starts (Orca's `expectedProcess`): dsh-tui
+ * runs as `dsh`, ZCode sets its title to `zcode-cli`.
+ */
+const PROCESS_ALIASES: Readonly<Record<string, string>> = { dsh: 'dsh-tui', 'zcode-cli': 'zcode' };
+/** Platform and versioned binaries a launcher execs (Orca agentForNormalizedProcess). */
+const PROCESS_PATTERNS: readonly (readonly [RegExp, string])[] = [
+	[/^codex-/, 'codex'],
+	[/^(?:qoderclicn|qodercn)-\d/, 'qoderclicn'],
+	[/^qodercli-\d/, 'qodercli'],
+	[/^grok-/, 'grok'],
+	[/^jcode-(?:linux|macos|freebsd|windows)-(?:x86_64|aarch64)(?:\.bin)?$/, 'jcode'],
+	[/^muse-bin-/, 'muse']
+];
+const PROCESS_BINS: ReadonlySet<string> = new Set(PROFILES.flatMap((p) => p.bins));
+
+/**
+ * The agent program a process name stands for, or null: any profile's program, by the name its
+ * process runs under (Orca's shared/agent-status/process/agent-process-recognition.ts
+ * `recognizeAgentProcess`: every catalog agent, not a short list). A CLI that runs as `node` or
+ * `python` is known by its command line instead (`agentOfCommandLine`).
+ */
+export function agentOfProcess(processName: string | null | undefined): string | null {
+	const base = (processName ?? '').trim().replace(/^["']|["']$/g, '').split(/[\\/]/).pop() ?? '';
+	const name = base.toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/, '');
+	if (!name) return null;
+	if (PROCESS_BINS.has(name)) return name;
+	return PROCESS_ALIASES[name] ?? PROCESS_PATTERNS.find(([re]) => re.test(name))?.[1] ?? null;
+}
+
+// ---- an agent that runs as `node` or `python` (Orca's recognizeAgentProcessFromCommandLine) -----
+
+const PYTHON = /^python(?:\d+(?:\.\d+)*)?$/;
+const processBase = (word: string) => (word.trim().replace(/^["']|["']$/g, '').split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.(?:exe|cmd|bat|ps1)$/, '');
+/** Node CLIs whose shim runs a generic script (`cli.js`, a versioned `index.js`): only the install path names them (Orca EXACT_NODE_ENTRYPOINT_IDENTITIES). */
+const NODE_ENTRYPOINTS: readonly (readonly [RegExp, string])[] = [
+	[/(?:^|\/)cursor-agent\/versions\/[^/]+\/index\.js$/, 'cursor-agent'],
+	[/(?:^|\/)node_modules\/@anthropic-ai\/claude-code\/cli\.js$/, 'claude'],
+	[/(?:^|\/)node_modules\/@(?:earendil-works|mariozechner)\/pi-coding-agent\/dist\/(?:bundle\/)?cli\.js$/, 'pi'],
+	[/(?:^|\/)node_modules\/prime-agent\/dist\/bundle\/cli\.js$/, 'prime-agent'],
+	[/(?:^|\/)node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js$/, 'dsh-tui'],
+	[/(?:^|\/)(?:node_modules\/@qwen-code\/qwen-code\/(?:cli-entry|cli|scripts\/cli-entry|dist\/cli)|qwen-code\/lib\/cli(?:-entry)?)\.js$/, 'qwen'],
+	[/(?:^|\/)node_modules\/@moonshot-ai\/kimi-code\/dist\/main\.mjs$/, 'kimi'],
+	[/(?:^|\/)node_modules\/command-code\/dist\/index\.mjs$/, 'command-code']
+];
+/** A script named after an agent counts only inside that agent's package (Orca NODE_PACKAGE_SCRIPT_ENTRYPOINTS). */
+const NODE_PACKAGES: Readonly<Record<string, string>> = {
+	codex: 'node_modules/@openai/codex/',
+	codebuddy: 'node_modules/@tencent-ai/codebuddy-code/',
+	gemini: 'node_modules/@google/gemini-cli/',
+	zcode: 'node_modules/@zcode/cli/',
+	'dsh-tui': 'node_modules/@deepseek-harness-tui/dsh-tui/'
+};
+const NODE_VALUE_OPTIONS = new Set(['-r', '--require', '--import', '--loader', '--experimental-loader']);
+const INLINE_SOURCE_OPTIONS = new Set(['-e', '--eval', '-p', '--print', '--check']);
+
+/** A path lowercased, with `/` separators and `.` / `..` resolved (npm's `.bin` shims run `<dir>/../<script>`). */
+function comparablePath(token: string): string {
+	const path = token.trim().replace(/^["']|["']$/g, '').replace(/\\/g, '/').toLowerCase();
+	const prefix = /^\/*/.exec(path)?.[0] ?? '';
+	const out: string[] = [];
+	for (const seg of path.slice(prefix.length).split('/')) {
+		if (seg === '' || seg === '.') continue;
+		if (seg === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
+		else out.push(seg);
+	}
+	return prefix + out.join('/');
+}
+
+/** The script (or `-m` module) an interpreter runs: the first argument that is a path, past its options; null for inline source. */
+function interpreterEntrypoint(args: readonly string[], python: boolean): string | null {
+	for (let i = 1; i < args.length; i++) {
+		const a = args[i];
+		if (a === '--') continue;
+		if (python && a === '-m') return args[i + 1] ?? null;
+		if (a.startsWith('-')) {
+			const name = a.split('=', 1)[0];
+			if (INLINE_SOURCE_OPTIONS.has(name)) return null;
+			if (NODE_VALUE_OPTIONS.has(name) && name === a) i++;
+			continue;
+		}
+		// Only a path: prompt text that mentions another agent is not what runs.
+		if (a.includes('/') || a.includes('\\') || /\.(?:exe|cmd|bat|ps1)$/i.test(a)) return a;
+	}
+	return null;
+}
+
+/** Hermes' installed launcher execs `python -I -c '<bootstrap>'`, so its argv names no hermes script. */
+function isHermesBootstrap(args: readonly string[]): boolean {
+	let i = 1;
+	while (i < args.length && args[i] !== '-c') {
+		if (args[i] === '-X' || args[i] === '-W') i += 2;
+		else if (/^-[bBdEiIOqRsSuvx]+$/.test(args[i])) i += 1;
+		else return false;
+	}
+	return /\bimport hermes_bootstrap\b/.test(args.slice(i + 1).join(' '));
+}
+
+/**
+ * The agent program a command line runs, or null (Orca's shared/agent-status/process/
+ * agent-process-recognition.ts `recognizeAgentProcessFromCommandLine`): its first word by name,
+ * else for `node` / `python` the script it runs — a launcher named after an agent
+ * (`/opt/homebrew/bin/gemini`), a script inside the agent's own package, `python -m <module>`, a
+ * `.py` in a `bin` / `scripts` / `site-packages` folder, or Hermes' inline bootstrap. Kingu reads
+ * the command line only of a job whose process is an interpreter (kingu-ptyd procinfo.rs). Not
+ * ported: Orca's exclusion of headless one-shot commands (`claude -p`), which needs the full argv
+ * of every job.
+ */
+export function agentOfCommandLine(args: readonly string[]): string | null {
+	const first = processBase(args[0] ?? '');
+	if (!first) return null;
+	// Qoder's public dispatcher routes subcommands to the IDE, not the agent CLI.
+	if (first === 'qoder' && args[1] && !args[1].startsWith('-')) return null;
+	const direct = agentOfProcess(first);
+	if (direct) return direct;
+	const python = PYTHON.test(first);
+	if (!python && first !== 'node') return null;
+	if (python && isHermesBootstrap(args)) return agentOfProcess('hermes');
+	const entry = interpreterEntrypoint(args, python);
+	if (!entry) return null;
+	if (python && args.indexOf('-m') > 0) return entry.startsWith('-') ? null : agentOfProcess(entry.split('.', 1)[0]);
+	const named = agentOfProcess(entry);
+	if (named) return named;
+	const path = comparablePath(entry);
+	if (python) {
+		if (!/\.pyw?$/.test(path) || !['/bin/', '/scripts/', '/site-packages/'].some((dir) => path.includes(dir))) return null;
+		return agentOfProcess((path.split('/').pop() ?? '').replace(/\.pyw?$/, ''));
+	}
+	const exact = NODE_ENTRYPOINTS.find(([re]) => re.test(path));
+	if (exact) return exact[1];
+	const script = processBase(entry).replace(/\.(?:js|mjs|cjs)$/, '');
+	return NODE_PACKAGES[script] && path.includes(NODE_PACKAGES[script]) ? agentOfProcess(script) : null;
+}
+
+/** What a pane's foreground job is called: the agent its command line runs (an interpreter's script), else the process name. */
+export function foregroundProgram(job: { name: string; args?: readonly string[] | null }): string {
+	return (job.args?.length ? agentOfCommandLine(job.args) : null) ?? job.name;
+}
 
 /** The profile's program found on PATH (`found`), with every program it also requires; else undefined. */
 export function foundBin(p: AgentProfile, found: readonly string[]): string | undefined {

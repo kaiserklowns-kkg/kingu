@@ -29,8 +29,9 @@
 	import { emitOutput, markTaskSpawned, registerTerminal, taskSpawned, touchTerminal } from './registry.ts';
 	import type { TaskSpawn } from './registry.ts';
 	import { bindAdeTerminal, copiedSelection, type AdeBinding } from './adeTerminal.svelte.ts';
+	import { isPassiveInput, parseProgramStatus, PROGRAM_STATUS_OSC, type ProgramEvent } from '#lib/ade/programStatus.ts';
 	import { INSERT_EVENT } from '#lib/voice/target.ts';
-	import { quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
+	import { QUICK_INSERT_ID, quickAppendsEnter, quickCommandInput, quickCommands } from './adeTerminalOptions.ts';
 	import { isBuiltin, terminalMenu, type MenuState, type TerminalFlavor } from './terminalMenu.ts';
 	import { ago, failed, ShellIntegration, type Command } from './shellIntegrationAddon.ts';
 	import { decorationPlaces } from './shellIntegration.ts';
@@ -44,6 +45,7 @@
 	 * replayed, so the shell outlives a webview reload, a folder switch and (with the kingu-ptyd
 	 * daemon) an app restart; unmounting never kills it, closing the tab does (the terminal stores). `slug`: start in that task's worktree instead of the folder root.
 	 * `run`: a command typed into a new shell (an agent CLI, a Snap task); Rust quotes every argument.
+	 * `type`: a shell line typed as is into a new shell (a quick command), not on a re-attach.
 	 * `cwdFrom`: a split pane starts in that terminal's current directory. `folder`: the root folder
 	 * of a multi-root window it starts in (Rust checks it is one). `flavor`: the IDE panel
 	 * (VS Code behaviour) or an ADE terminal (Orca behaviour) for find and the context menu.
@@ -56,6 +58,8 @@
 		key,
 		slug,
 		run,
+		type,
+		typeEnter = true,
 		task,
 		cwdFrom,
 		folder,
@@ -67,15 +71,20 @@
 		keyLabels = {},
 		onoutput,
 		ontitle,
+		onprogram,
 		onbell,
 		onaction,
 		onopenfile,
 		onopenurl,
-		onfocus
+		onfocus,
+		onconnect
 	}: {
 		key: string;
 		slug?: string;
 		run?: string[];
+		type?: string;
+		/** `type` is left on the prompt without Enter (a quick command in Insert mode). */
+		typeEnter?: boolean;
 		task?: TaskSpawn;
 		cwdFrom?: string;
 		folder?: string;
@@ -89,6 +98,8 @@
 		onoutput?: () => void;
 		/** The program set the terminal's title (OSC 0/2): agent status evidence (agentTitle.ts). */
 		ontitle?: (title: string) => void;
+		/** The program reported its own status or progress (OSC 7501), ended, or the user typed (programStatus.ts). */
+		onprogram?: (event: ProgramEvent) => void;
 		/** The program rang the bell (BEL), whatever terminal.integrated.enableVisualBell says. */
 		onbell?: () => void;
 		/** A context menu item the terminal does not run itself (split, rename, kill…). */
@@ -99,6 +110,9 @@
 		 *  `system`: Shift was held too (Orca: ⇧⌘-click goes to the system browser). */
 		onopenurl?: (url: string, system: boolean) => boolean;
 		onfocus?: () => void;
+		/** How the terminal came up: a new shell started (`run` was typed into it), a live session was
+		 *  re-attached, or no shell could be started (a sleeping pane's owner follows this: ade/paneSleep.svelte.ts). */
+		onconnect?: (how: 'spawned' | 'attached' | 'failed') => void;
 	} = $props();
 	/** Follows a web link: the owner's handler first, else the system's opener. */
 	function followUrl(url: string, system = false) {
@@ -278,7 +292,7 @@
 	function runQuick(index: number) {
 		const q = quickCommands(settings.get<Record<string, unknown>>('kingu.terminal.quickCommands'))[index];
 		if (!q) return;
-		invoke('pty_write', { key, data: quickCommandInput(q.command) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
+		invoke('pty_write', { key, data: quickCommandInput(q.command, quickAppendsEnter(settings.get<Record<string, unknown>>(QUICK_INSERT_ID), q.label)) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 		term?.focus();
 	}
 
@@ -394,6 +408,8 @@
 		function connected(a: Attached) {
 			if (disposed) return;
 			if (a.epoch) epoch = a.epoch;
+			// The shell reads typed-ahead input once it is ready, like keys pressed while it starts.
+			if (a.spawned && type?.trim()) invoke('pty_write', { key, data: quickCommandInput(type, typeEnter) }).catch((e) => status.flash(tr('legacySettings.terminal.runFailed', { error: String(e) })));
 			if (a.replay) {
 				// Replayed output must not re-run an old OSC 52 clipboard write.
 				if (ade) ade.replaying = true;
@@ -416,8 +432,10 @@
 		invoke<Attached | null>('pty_attach', { key, cols: shown ? t.cols : null, rows: shown ? t.rows : null, onData: channel() })
 			.then((a) => {
 				attachChecked = true;
-				if (a) connected(a);
-				else start();
+				if (a) {
+					connected(a);
+					onconnect?.('attached');
+				} else start();
 			})
 			.catch(failed);
 
@@ -443,7 +461,18 @@
 			const cwd = terminal.cwd?.includes('${') ? import('./newTerminal.ts').then((m) => m.terminalCwdSetting(folder)) : Promise.resolve(terminal.cwd);
 			cwd
 				.then((resolved) => invoke<Attached>('pty_spawn', { key, cols: t.cols, rows: t.rows, onData: channel(), slug: slug ?? null, run: run ?? null, terminal: { ...terminal, cwd: resolved }, cwdFrom: cwdFrom ?? null, folder: folder ?? null, floatingCwd: floatingCwd ?? null, task: launch ?? null, reportedCwd: reportedCwd ?? null }))
-				.then((a) => (connected(a), void system.refresh()))
+				.then(
+					(a) => {
+						// After `connected`: it reads `type`, which the owner may change once it hears of the new shell.
+						connected(a);
+						onconnect?.(a.spawned ? 'spawned' : 'attached');
+						void system.refresh();
+					},
+					(e) => {
+						onconnect?.('failed');
+						failed(e);
+					}
+				)
 				.catch(failed);
 		}
 
@@ -475,6 +504,8 @@
 		}).catch(() => () => {});
 		const input = t.onData((data) => {
 			if (live) invoke('pty_write', { key, data }).catch(() => {});
+			// Typing dismisses a finished program's result on the tab.
+			if (live && onprogram && !isPassiveInput(data)) onprogram({ type: 'input' });
 		});
 		let dimensionsTimer: ReturnType<typeof setTimeout> | undefined;
 		const resized = t.onResize(({ cols, rows }) => {
@@ -497,6 +528,22 @@
 			bellTimer = setTimeout(() => (bell = false), setting<number>('terminal.integrated.bellDuration'));
 		});
 		const titled = t.onTitleChange((title) => ontitle?.(title));
+		// OSC 7501 (Orca's program status): a program reports its state and progress for the tab's ring.
+		// Not while replaying old output after a reload: those reports are about a past moment.
+		// A `?` query gets no reply: answering makes agent CLIs stop marking their state in the title,
+		// which is what the launched agent's status still reads.
+		const program = (event: ProgramEvent) => live && !replaying && onprogram?.(event);
+		const programStatus = [
+			t.parser.registerOscHandler(PROGRAM_STATUS_OSC, (data) => {
+				const m = parseProgramStatus(data);
+				if (m?.type === 'report') program(m);
+				return true;
+			}),
+			// A new shell prompt (OSC 133;A, VS Code's 633;A) ends the program; the shell integration still sees the mark.
+			...[133, 633].map((code) => t.parser.registerOscHandler(code, (data) => ((data === 'A' || data.startsWith('A;')) && program({ type: 'end' }), false))),
+			// RIS (`ESC c`): every record goes.
+			t.parser.registerEscHandler({ final: 'c' }, () => (program({ type: 'reset' }), false))
+		];
 		// terminal.integrated.enableNotifications: OSC 99 desktop notifications from programs in the terminal.
 		const osc99 = new Osc99();
 		const notifier = t.parser.registerOscHandler(99, (data) => {
@@ -655,6 +702,13 @@
 				}
 				return out;
 			},
+			tail: (scrollback) => {
+				const buf = t.buffer.active;
+				const rows: string[] = [];
+				const end = Math.min(buf.length, buf.baseY + t.rows);
+				for (let i = Math.max(0, buf.baseY - scrollback); i < end; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+				return { rows, screenRows: t.rows };
+			},
 			write: (data) => void invoke('pty_write', { key, data }).catch((e) => status.flash(tr('legacySettings.terminal.writeFailed', { error: String(e) }))),
 			integration: si,
 			shell: shellName,
@@ -675,6 +729,7 @@
 			clearTimeout(bellTimer);
 			rang.dispose();
 			titled.dispose();
+			for (const d of programStatus) d.dispose();
 			notifier.dispose();
 			host.removeEventListener('auxclick', onAuxClick);
 			host.removeEventListener('wheel', onWheel, { capture: true });

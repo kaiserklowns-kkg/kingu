@@ -91,7 +91,7 @@ class Projects {
 	async load() {
 		try {
 			this.list = await invoke<Project[]>('projects_list');
-			this.groups = await invoke<ProjectGroup[]>('project_groups_list');
+			this.groups = (await invoke<ProjectGroup[]>('project_groups_list')) ?? [];
 		} catch (e) {
 			clientLog('error', `projects_list: ${e}`);
 		}
@@ -100,7 +100,7 @@ class Projects {
 
 	async #reload() {
 		this.list = await invoke<Project[]>('projects_list');
-		this.groups = await invoke<ProjectGroup[]>('project_groups_list');
+		this.groups = (await invoke<ProjectGroup[]>('project_groups_list')) ?? [];
 	}
 
 	/** New Project Group…: asks for a name; `move`: a project to put in it straight away. */

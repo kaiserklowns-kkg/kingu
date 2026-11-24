@@ -35,6 +35,8 @@ var (
 	appPool    *pgxpool.Pool // non-superuser role: RLS enforced
 	adminPool  *pgxpool.Pool // superuser: used only to seed orgs
 	ts         *httptest.Server
+	// pgDSN builds a DSN for the throwaway cluster (user "postgres" is superuser).
+	pgDSN func(user, dbname string) string
 )
 
 func TestMain(m *testing.M) {
@@ -141,6 +143,7 @@ func setup() (cleanup func(), err error) {
 		return fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable", dir, port, user, dbname)
 	}
 
+	pgDSN = dsn
 	bootstrap, err := pgxpool.New(ctx, dsn("postgres", "postgres"))
 	if err != nil {
 		return cleanup, err
@@ -503,7 +506,7 @@ func TestValidation(t *testing.T) {
 		{"patch bad status", "PATCH", "/v1/tasks/" + taskID, map[string]any{"status": "finished"}, 400, "invalid_status"},
 		{"patch empty", "PATCH", "/v1/tasks/" + taskID, map[string]any{}, 400, "invalid_input"},
 		{"patch bad branch", "PATCH", "/v1/tasks/" + taskID, map[string]any{"branch": "feat..x"}, 400, "invalid_input"},
-		{"patch unknown field", "PATCH", "/v1/tasks/" + taskID, map[string]any{"title": "x"}, 400, "unknown_field"},
+		{"patch unknown field", "PATCH", "/v1/tasks/" + taskID, map[string]any{"source": "github"}, 400, "unknown_field"},
 		{"run negative tokens", "POST", "/v1/tasks/" + taskID + "/runs", map[string]any{"adapter": "a", "input_tokens": -1}, 400, "invalid_input"},
 		{"run ended before start", "POST", "/v1/tasks/" + taskID + "/runs",
 			map[string]any{"adapter": "a", "started_at": "2026-10-17T10:00:00Z", "ended_at": "2026-10-17T09:00:00Z"}, 400, "invalid_input"},

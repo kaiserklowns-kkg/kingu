@@ -240,6 +240,7 @@ export const forge = {
 	'forge.checks.statusLine': 'Status: {status}',
 	'forge.checks.noDetails': 'No inline details are available for this check.',
 	'forge.checks.loadingDetails': 'Loading check details…',
+	'forge.checks.loadingReview': 'Loading review details…',
 	'forge.checks.logExcerpt': 'Log excerpt',
 	'forge.checks.noChecks': 'No checks configured',
 	'forge.checks.comments': 'Comments',

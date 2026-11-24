@@ -1360,6 +1360,18 @@ class Debug {
 		await this.repl(expr);
 	}
 
+	/** Debug Console: Focus Find (⌥⌘F) asks the console view to open its find box. */
+	consoleFindRequested = $state(false);
+
+	/** Focus Next / Previous Debug Console (debugCommands.ts `changeDebugConsoleFocus`): each shown
+	 * session has its own console; wraps, and starts at the first without a focused session. */
+	focusConsole(next: boolean) {
+		const list = this.sessions;
+		if (!list.length) return;
+		const at = list.findIndex((s) => s.key === this.focusedKey);
+		this.focusSession(list[at < 0 ? 0 : (at + (next ? 1 : list.length - 1)) % list.length].key);
+	}
+
 	clearConsole() {
 		if (this.model) this.model = { ...this.model, output: [] };
 		const a = this.#focused();
@@ -1665,6 +1677,38 @@ export function installDebug(): () => void {
 			mac: 'cmd+k',
 			keyWhen: debugConsoleFocus,
 			run: () => debug.clearConsole()
+		}),
+		// repl.ts `repl.action.find`: the console's find box (⌘F stays the filter, as VS Code).
+		commands.register({
+			id: 'repl.action.find',
+			title: 'Debug Console: Focus Find',
+			key: 'cmd+alt+f',
+			keyWhen: debugConsoleFocus,
+			run: () => (layout.showPanel('debugConsole'), (debug.consoleFindRequested = true))
+		}),
+		// debugCommands.ts NEXT_ / PREV_DEBUG_CONSOLE_ID: ⇧⌘] / ⇧⌘[ on macOS, Ctrl+PageDown / PageUp
+		// elsewhere, with focus in the console (a higher weight than the editor's keys, like VS Code).
+		commands.register({
+			id: 'workbench.action.debug.nextConsole',
+			title: 'Focus Next Debug Console',
+			category: 'Debug',
+			key: 'ctrl+pagedown',
+			mac: 'cmd+shift+]',
+			weight: 1,
+			when: () => debug.sessions.length > 0,
+			keyWhen: debugConsoleFocus,
+			run: () => (debug.focusConsole(true), layout.showPanel('debugConsole'), focusConsoleInput())
+		}),
+		commands.register({
+			id: 'workbench.action.debug.prevConsole',
+			title: 'Focus Previous Debug Console',
+			category: 'Debug',
+			key: 'ctrl+pageup',
+			mac: 'cmd+shift+[',
+			weight: 1,
+			when: () => debug.sessions.length > 0,
+			keyWhen: debugConsoleFocus,
+			run: () => (debug.focusConsole(false), layout.showPanel('debugConsole'), focusConsoleInput())
 		})
 	];
 	return () => {

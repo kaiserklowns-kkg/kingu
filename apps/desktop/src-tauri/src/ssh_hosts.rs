@@ -29,6 +29,14 @@ pub const MAX_CONFIG_FILES: usize = 32;
 /// Connection test: `ConnectTimeout` given to ssh, and the whole test's limit (Kingu's choice).
 pub const TEST_CONNECT_TIMEOUT_S: u64 = 10;
 pub const TEST_TIMEOUT_MS: u64 = 15000;
+/// Orca `CONNECT_TIMEOUT_MS = 30_000` (`src/main/ssh/connection/ssh-connection-timing.ts`): what a
+/// dial of the shared connection gets to connect; the whole dial has a little longer, so ssh's own
+/// "timed out" line is what a slow host reports.
+pub const DIAL_CONNECT_TIMEOUT_S: u64 = 30;
+pub const DIAL_TIMEOUT_MS: u64 = 35_000;
+/// The keepalive's question to a host that was connected (Orca's `keepaliveInterval`, 15 s): no
+/// answer within one interval is a drop.
+pub const KEEPALIVE_PROBE_TIMEOUT_MS: u64 = 15_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
@@ -173,7 +181,7 @@ fn include_files(spec: &str, base: &Path) -> Vec<PathBuf> {
   out
 }
 
-fn dirs_home() -> PathBuf {
+pub(crate) fn dirs_home() -> PathBuf {
   std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
@@ -474,7 +482,7 @@ pub fn test(t: &Target) -> TestResult {
   match result {
     Ok((true, _, _)) => TestResult { success: true, error: None, millis },
     Ok((false, _, err)) => {
-      let msg = err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string();
+      let msg = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string();
       TestResult { success: false, error: Some(msg), millis }
     }
     Err(e) => TestResult { success: false, error: Some(e), millis },
@@ -516,7 +524,10 @@ pub fn forward_args(t: &Target, local: u16, remote_host: &str, remote_port: u16)
   if rh.is_empty() || rh.starts_with('-') || rh.chars().any(|c| c.is_whitespace() || c == ':' && !rh.starts_with('[')) {
     return Err("Enter the remote host (for example localhost).".into());
   }
-  let mut a = vec!["-N".into(), "-o".into(), "ExitOnForwardFailure=yes".into(), "-o".into(), "BatchMode=yes".into(), "-L".into(), format!("127.0.0.1:{local}:{rh}:{remote_port}")];
+  // Keepalives as on the shared connection: a forward whose host is gone ends (within 45 s)
+  // instead of holding its local port on a dead connection.
+  let mut a: Vec<String> = ["-N", "-o", "ExitOnForwardFailure=yes", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-L"].map(String::from).to_vec();
+  a.push(format!("127.0.0.1:{local}:{rh}:{remote_port}"));
   a.extend(destination_args(t));
   Ok(a)
 }
@@ -538,14 +549,24 @@ pub fn sh_quote(s: &str) -> String {
 /// and passwords are asked in the app (ssh_askpass.rs), else (a declined host, no helper)
 /// `BatchMode=yes` never prompts. `mux`: share one connection per host (below).
 pub(crate) fn background(t: &Target, mux: bool) -> Command {
+  background_asking(t, mux, true)
+}
+
+/// [`background`]; `ask: false` never prompts at all (a redial nobody is waiting on).
+fn background_asking(t: &Target, mux: bool, ask: bool) -> Command {
+  background_within(t, mux, ask, TEST_CONNECT_TIMEOUT_S)
+}
+
+/// [`background_asking`] with its own `ConnectTimeout` (seconds).
+fn background_within(t: &Target, mux: bool, ask: bool, connect_s: u64) -> Command {
   let mut cmd = crate::shell_env::command(Path::new("ssh"));
   // `KINGU_SSH_CONFIG`: an ssh config file used instead of `~/.ssh/config` (tests against a
   // temporary sshd use it, so the user's own config, agent and keychain stay out of it).
   if let Some(cfg) = std::env::var_os("KINGU_SSH_CONFIG").filter(|c| !c.is_empty()) {
     cmd.arg("-F").arg(cfg);
   }
-  let asks = crate::ssh_askpass::apply(&mut cmd, &t.id);
-  cmd.args(["-o", if asks { "BatchMode=no" } else { "BatchMode=yes" }, "-o", &format!("ConnectTimeout={TEST_CONNECT_TIMEOUT_S}"), "-T"]);
+  let asks = ask && crate::ssh_askpass::apply(&mut cmd, &t.id);
+  cmd.args(["-o", if asks { "BatchMode=no" } else { "BatchMode=yes" }, "-o", &format!("ConnectTimeout={connect_s}"), "-T"]);
   if mux {
     cmd.args(mux_args(&dirs_home()));
   }
@@ -557,9 +578,13 @@ pub(crate) fn background(t: &Target, mux: bool) -> Command {
 /// `ControlMaster=auto`, socket `~/.ssh/kingu-%C`), so polling and saving stay cheap and a
 /// passphrase is asked once (Kingu's choice, **estimated**; Orca keeps one ssh2 connection per
 /// host). Only when `~/.ssh` exists (ssh won't make it) and on Unix (Windows' ssh has no sockets).
+/// The shared connection sends keepalives as Orca's does
+/// (`src/main/ssh/system-transport/system-ssh-args.ts`: `ServerAliveInterval=15`,
+/// `ServerAliveCountMax=3` whenever a control path is used), so a dead peer ends it within 45 s
+/// instead of holding every later command.
 pub fn mux_args(home: &Path) -> Vec<String> {
   if cfg!(unix) && home.join(".ssh").is_dir() {
-    ["-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/kingu-%C", "-o", "ControlPersist=120"].map(String::from).to_vec()
+    ["-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/kingu-%C", "-o", "ControlPersist=120", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"].map(String::from).to_vec()
   } else {
     Vec::new()
   }
@@ -582,8 +607,94 @@ pub(crate) fn remote_input(t: &Target, script: &str, input: Option<Vec<u8>>, lim
   cmd.arg(format!("sh -c {}", sh_quote(script)));
   match run_with_input(cmd, limit, input)? {
     (true, out, _) => Ok(out),
-    (false, _, err) => Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string()),
+    (false, _, err) => Err(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string()),
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Connecting (Orca's `ssh:connect` / `ssh:disconnect` on its system-ssh transport)
+
+/// Orca `src/main/ssh/connection/ssh-system-ssh-probe.ts`: the host is reached when the probe
+/// command exits 0 and its output carries the mark (Orca echoes `ORCA-SYSTEM-SSH-OK`).
+pub const PROBE_MARK: &str = "KINGU-SSH-OK";
+
+pub fn probe_ok(success: bool, stdout: &str) -> bool {
+  success && stdout.contains(PROBE_MARK)
+}
+
+/// What a failed probe reports: ssh's last line (`Permission denied (publickey).`,
+/// `ssh: connect to host … port 22: Connection refused`), which the window classifies
+/// (sshConnection.ts, Orca's ssh-reconnect-error-classification.ts).
+pub fn probe_error(stdout: &str, stderr: &str) -> String {
+  let last = stderr.lines().rfind(|l| !l.trim().is_empty()).map(str::trim);
+  match last {
+    Some(l) => l.to_string(),
+    None if stdout.trim().is_empty() => "ssh failed".into(),
+    None => "The SSH host did not answer the connection probe.".into(),
+  }
+}
+
+/// One dial of the shared connection (the one every background command of the host then uses):
+/// `echo KINGU-SSH-OK` through it. `interactive`: the user asked, so a passphrase or host key may
+/// be asked in the window and a declined host may ask again (Orca `clearSshCredentialDeclined`);
+/// otherwise (a redial after a drop, the keepalive) it never prompts.
+pub fn connect(t: &Target, interactive: bool) -> Result<(), String> {
+  if interactive {
+    crate::ssh_askpass::clear_declined(&t.id);
+  }
+  let mut cmd = background_within(t, true, interactive, DIAL_CONNECT_TIMEOUT_S);
+  cmd.arg(format!("echo {PROBE_MARK}"));
+  let (ok, out, err) = run_with_timeout(cmd, Duration::from_millis(DIAL_TIMEOUT_MS))?;
+  if probe_ok(ok, &out) { Ok(()) } else { Err(probe_error(&out, &err)) }
+}
+
+/// The keepalive: the same probe over the shared connection, never prompting, with one keepalive
+/// interval to answer (a dial has 30 s; a host that was just connected answers at once or is gone).
+pub fn keepalive(t: &Target) -> Result<(), String> {
+  let mut cmd = background_asking(t, true, false);
+  cmd.arg(format!("echo {PROBE_MARK}"));
+  let (ok, out, err) = run_with_timeout(cmd, Duration::from_millis(KEEPALIVE_PROBE_TIMEOUT_MS))?;
+  if probe_ok(ok, &out) { Ok(()) } else { Err(probe_error(&out, &err)) }
+}
+
+/// `ssh -O exit` for the shared connection of `t` (Orca's Disconnect closes its transport): the
+/// arguments, or `None` where connections aren't shared ([`mux_args`]).
+pub fn disconnect_args(t: &Target, home: &Path) -> Option<Vec<String>> {
+  let mux = mux_args(home);
+  if mux.is_empty() {
+    return None;
+  }
+  let mut a = vec!["-O".to_string(), "exit".to_string()];
+  a.extend(mux);
+  a.extend(destination_args(t));
+  Some(a)
+}
+
+#[tauri::command]
+pub async fn ssh_connect(targets: State<'_, Targets>, id: String, interactive: bool) -> Result<(), String> {
+  let t = targets.get(&id)?;
+  blocking(move || connect(&t, interactive)).await?
+}
+
+/// The keepalive probe of a connected host ([`keepalive`]).
+#[tauri::command]
+pub async fn ssh_keepalive(targets: State<'_, Targets>, id: String) -> Result<(), String> {
+  let t = targets.get(&id)?;
+  blocking(move || keepalive(&t)).await?
+}
+
+/// Closes the host's shared connection. Terminals and port forwards are their own ssh and stay.
+#[tauri::command]
+pub async fn ssh_disconnect(targets: State<'_, Targets>, id: String) -> Result<(), String> {
+  let t = targets.get(&id)?;
+  blocking(move || {
+    let Some(args) = disconnect_args(&t, &dirs_home()) else { return };
+    let mut cmd = crate::shell_env::command(Path::new("ssh"));
+    cmd.args(args);
+    // No shared connection to close is not an error.
+    let _ = run_with_timeout(cmd, Duration::from_millis(RESOLVE_TIMEOUT_MS));
+  })
+  .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -622,8 +733,8 @@ pub fn browse_script(path: &str) -> String {
 /// lists the drives (`C:/` …).
 pub fn powershell_browse(path: &str) -> String {
   let p = path.trim();
-  if p.is_empty() || p.chars().all(|c| c == '/' || c == '\\') && !p.is_empty() && p != "~" {
-    if !p.is_empty() {
+  if (p.is_empty() || p.chars().all(|c| c == '/' || c == '\\') && !p.is_empty() && p != "~")
+    && !p.is_empty() {
       return [
         "$ErrorActionPreference = 'Stop'",
         "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
@@ -632,7 +743,6 @@ pub fn powershell_browse(path: &str) -> String {
       ]
       .join("; ");
     }
-  }
   let ps_quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
   // Orca `jAt` + `MAt`: `~` → $HOME, `/C:` → `C:/`.
   let dir = if p.is_empty() || p == "~" {
@@ -685,8 +795,9 @@ pub fn parse_listing(out: &str) -> Option<RemoteDir> {
 }
 
 /// Listening TCP ports on the target (Orca learns them from its remote server; Kingu asks the
-/// machine): `ss -ltnH`, else `netstat -ltn`, else `lsof` (macOS hosts).
-pub const PORTS_SCRIPT: &str = "ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null || lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null";
+/// machine): `ss -ltnH`, else `netstat -ltn` when it lists listening sockets, else `lsof` (macOS
+/// hosts: their `netstat -ltn` succeeds but `-l` is not "listening" there, so it lists none).
+pub const PORTS_SCRIPT: &str = "ss -ltnH 2>/dev/null || { o=$(netstat -ltn 2>/dev/null) && printf '%s\\n' \"$o\" | grep -q LISTEN && printf '%s\\n' \"$o\"; } || lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null";
 
 /// Ports from any of those outputs: the port of each listening local address, without ssh's own
 /// 22, sorted and once each.
@@ -849,7 +960,7 @@ fn remote_raw(t: &Target, command: &str) -> Result<String, String> {
   cmd.arg(command);
   match run_with_timeout(cmd, Duration::from_millis(REMOTE_TIMEOUT_MS))? {
     (true, out, _) => Ok(out),
-    (false, _, err) => Err(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh failed").trim().to_string()),
+    (false, _, err) => Err(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh failed").trim().to_string()),
   }
 }
 
@@ -1002,7 +1113,17 @@ pub async fn ssh_forward_add(
   label: Option<String>,
 ) -> Result<Forward, String> {
   let t = targets.get(&target_id)?;
-  let args = forward_args(&t, local_port, &remote_host, remote_port)?;
+  let f = start_forward(&t, &forwards, target_id, local_port, remote_host, remote_port, label).await?;
+  // Kept for Restore after a restart (Orca's saved port forwards).
+  if let Err(e) = saved.remember(SavedForward { target_id: f.target_id.clone(), local_port, remote_host: f.remote_host.clone(), remote_port, label: f.label.clone() }) {
+    log::warn!("ssh forwards: {e}");
+  }
+  Ok(f)
+}
+
+/// Starts `ssh -L` and keeps it in `forwards` (it ends with Kingu).
+async fn start_forward(t: &Target, forwards: &Forwards, target_id: String, local_port: u16, remote_host: String, remote_port: u16, label: Option<String>) -> Result<Forward, String> {
+  let args = forward_args(t, local_port, &remote_host, remote_port)?;
   if forwards.0.lock().unwrap_or_else(|e| e.into_inner()).iter().any(|(f, _)| f.local_port == local_port) {
     return Err(format!("Local port {local_port} is already forwarded."));
   }
@@ -1015,7 +1136,7 @@ pub async fn ssh_forward_add(
         if let Some(mut e) = child.stderr.take() {
           let _ = e.read_to_string(&mut err);
         }
-        return (child, Some(err.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("ssh exited").trim().to_string()));
+        return (child, Some(err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("ssh exited").trim().to_string()));
       }
       std::thread::sleep(Duration::from_millis(50));
     }
@@ -1026,13 +1147,93 @@ pub async fn ssh_forward_add(
     return Err(e);
   }
   let f = Forward { id: format!("fw-{target_id}-{local_port}"), target_id, local_port, remote_host: remote_host.trim().to_string(), remote_port, label, running: true };
-  // Kept for Restore after a restart (Orca's saved port forwards).
-  if let Err(e) = saved.remember(SavedForward { target_id: f.target_id.clone(), local_port, remote_host: f.remote_host.clone(), remote_port, label: f.label.clone() }) {
-    log::warn!("ssh forwards: {e}");
-  }
   forwards.0.lock().unwrap_or_else(|e| e.into_inner()).retain(|(x, _)| x.local_port != local_port);
   forwards.0.lock().unwrap_or_else(|e| e.into_inner()).push((f.clone(), child));
   Ok(f)
+}
+
+/// What [`ssh_forwards_restart`] did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Restarted {
+  pub restarted: Vec<Forward>,
+  /// Forwards that couldn't be started again (`<local port>: <ssh's last line>`); their saved
+  /// record stays, so Restore still offers them.
+  pub failed: Vec<String>,
+}
+
+/// The forwards of `target_id`, taken out of `list` to be started again: each one's ssh is ended
+/// first (it rode the connection that dropped, alive or not).
+pub fn take_forwards(list: &mut Vec<(Forward, Child)>, target_id: &str) -> Vec<Forward> {
+  let mut out = Vec::new();
+  let mut i = 0;
+  while i < list.len() {
+    if list[i].0.target_id == target_id {
+      let (f, mut c) = list.remove(i);
+      let _ = c.kill();
+      let _ = c.wait();
+      out.push(f);
+    } else {
+      i += 1;
+    }
+  }
+  out
+}
+
+/// After a host reconnected (Orca `restoreManagedHostPortForwards` on every transition to
+/// `connected`, `src/main/ipc/ssh/ssh-connection-state-callbacks.ts`: stale forwards are closed
+/// and the saved ones added again): every forward of the host is started again on its old ports.
+#[tauri::command]
+pub async fn ssh_forwards_restart(targets: State<'_, Targets>, forwards: State<'_, Forwards>, target_id: String) -> Result<Restarted, String> {
+  let t = targets.get(&target_id)?;
+  let old = take_forwards(&mut forwards.0.lock().unwrap_or_else(|e| e.into_inner()), &target_id);
+  let mut done = Restarted { restarted: Vec::new(), failed: Vec::new() };
+  for f in old {
+    match start_forward(&t, &forwards, f.target_id.clone(), f.local_port, f.remote_host.clone(), f.remote_port, f.label.clone()).await {
+      Ok(started) => done.restarted.push(started),
+      Err(e) => {
+        log::warn!("ssh forward {} of {target_id} not restarted: {e}", f.local_port);
+        done.failed.push(format!("{}: {e}", f.local_port));
+      }
+    }
+  }
+  Ok(done)
+}
+
+/// The host's own `localhost` / `127.0.0.1` / `::1`, as a forward's remote host.
+pub fn is_loopback_name(h: &str) -> bool {
+  matches!(h.trim().trim_matches(['[', ']']), "localhost" | "127.0.0.1" | "::1")
+}
+
+/// A free local port for a browser forward: `want` when nothing on this computer listens on it
+/// (the page keeps its port), else one the system picks.
+pub fn free_local_port(want: u16, taken: &[u16]) -> Result<u16, String> {
+  let bindable = |p: u16| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok();
+  if want != 0 && !taken.contains(&want) && bindable(want) {
+    return Ok(want);
+  }
+  let l = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| format!("no free local port: {e}"))?;
+  l.local_addr().map(|a| a.port()).map_err(|e| e.to_string())
+}
+
+/// The local port that reaches `remote_port` on the host's loopback (VS Code 1.145's "browse over
+/// remote agent host connections", Orca's "Browse through SSH workspace hosts", for the pages a dev
+/// server on the host serves): a running forward is reused, else one is started on the same port
+/// when it is free here, or on a free one. Not remembered for Restore: the browser asks again.
+#[tauri::command]
+pub async fn ssh_forward_for_browser(targets: State<'_, Targets>, forwards: State<'_, Forwards>, target_id: String, remote_port: u16) -> Result<u16, String> {
+  let t = targets.get(&target_id)?;
+  let (reuse, taken) = {
+    let mut g = forwards.0.lock().unwrap_or_else(|e| e.into_inner());
+    // Only a live ssh still forwards (one that ended, the host gone, is left for the Ports list to show).
+    let reuse = g.iter_mut().find_map(|(f, c)| (f.target_id == target_id && f.remote_port == remote_port && is_loopback_name(&f.remote_host) && matches!(c.try_wait(), Ok(None))).then_some(f.local_port));
+    (reuse, g.iter().map(|(f, _)| f.local_port).collect::<Vec<_>>())
+  };
+  if let Some(p) = reuse {
+    return Ok(p);
+  }
+  let local = free_local_port(remote_port, &taken)?;
+  let f = start_forward(&t, &forwards, target_id, local, "localhost".into(), remote_port, Some("Browser".into())).await?;
+  Ok(f.local_port)
 }
 
 /// Stops a forward; the user stopping it also forgets it (no Restore offered for it later).
@@ -1050,6 +1251,67 @@ pub fn ssh_forward_remove(forwards: State<'_, Forwards>, saved: State<'_, SavedF
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  #[cfg(unix)]
+  fn a_reconnect_takes_only_that_hosts_forwards_and_ends_their_ssh() {
+    let fw = |target: &str, port: u16| {
+      let f = super::Forward { id: format!("fw-{target}-{port}"), target_id: target.into(), local_port: port, remote_host: "localhost".into(), remote_port: port, label: None, running: true };
+      (f, std::process::Command::new("sleep").arg("30").spawn().unwrap())
+    };
+    let mut list = vec![fw("a", 3000), fw("b", 4000), fw("a", 5000)];
+    let taken = super::take_forwards(&mut list, "a");
+    assert_eq!(taken.iter().map(|f| f.local_port).collect::<Vec<_>>(), [3000, 5000]);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].0.target_id, "b");
+    assert!(matches!(list[0].1.try_wait(), Ok(None)), "another host's forward keeps running");
+    let _ = list[0].1.kill();
+    let _ = list[0].1.wait();
+    let args = super::forward_args(&super::Target { id: "h".into(), label: "h".into(), config_host: Some("box".into()), host: "box".into(), port: 22, username: String::new(), identity_file: None, jump_host: None, proxy_command: None }, 3000, "localhost", 3000).unwrap();
+    assert!(args.join(" ").contains("-o ServerAliveInterval=15 -o ServerAliveCountMax=3"), "a forward to a dead host ends");
+  }
+
+  #[test]
+  fn a_connection_probe_needs_exit_0_and_its_mark_and_reports_sshs_last_line() {
+    assert!(probe_ok(true, "motd\nKINGU-SSH-OK\n"));
+    assert!(!probe_ok(false, "KINGU-SSH-OK\n"));
+    assert!(!probe_ok(true, "This account is currently not available.\n"));
+    assert_eq!(probe_error("", "Warning: Permanently added 'h' (ED25519)\nme@h: Permission denied (publickey).\n\n"), "me@h: Permission denied (publickey).");
+    assert_eq!(probe_error("", ""), "ssh failed");
+    assert_eq!(probe_error("nologin\n", ""), "The SSH host did not answer the connection probe.");
+  }
+
+  #[test]
+  fn the_shared_connection_keeps_alive_and_disconnect_closes_that_same_socket() {
+    let home = tempfile::tempdir().unwrap();
+    assert!(mux_args(home.path()).is_empty(), "no ~/.ssh: connections aren't shared");
+    assert_eq!(disconnect_args(&target(), home.path()), None);
+    std::fs::create_dir(home.path().join(".ssh")).unwrap();
+    let mux = mux_args(home.path());
+    if cfg!(unix) {
+      let joined = mux.join(" ");
+      assert!(joined.contains("ControlPath=~/.ssh/kingu-%C"));
+      assert!(joined.contains("-o ServerAliveInterval=15 -o ServerAliveCountMax=3"));
+      let d = disconnect_args(&target(), home.path()).unwrap();
+      assert_eq!(&d[..2], ["-O", "exit"]);
+      assert_eq!(&d[2..2 + mux.len()], &mux[..]);
+      assert_eq!(&d[2 + mux.len()..], &destination_args(&target())[..]);
+    }
+  }
+
+  #[test]
+  fn browser_forwards_keep_a_free_port_and_know_loopback_names() {
+    assert!(super::is_loopback_name("localhost") && super::is_loopback_name("[::1]") && super::is_loopback_name("127.0.0.1"));
+    assert!(!super::is_loopback_name("db.internal"));
+    let busy = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let port = busy.local_addr().unwrap().port();
+    let other = super::free_local_port(port, &[]).unwrap();
+    assert_ne!(other, port, "a port in use here is not reused");
+    drop(busy);
+    let free = super::free_local_port(0, &[]).unwrap();
+    assert_ne!(free, 0);
+    assert_ne!(super::free_local_port(free, &[free]).unwrap(), free, "a port Kingu already forwards is skipped");
+  }
+
   use super::*;
 
   fn target() -> Target {
@@ -1166,6 +1428,27 @@ mod tests {
     assert_eq!(parse_ports(netstat), vec![8080, 9229]);
     let lsof = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 123 me 20u IPv4 0x1 0t0 TCP *:4200 (LISTEN)\nnode 123 me 21u IPv6 0x2 0t0 TCP [::1]:4200 (LISTEN)\n";
     assert_eq!(parse_ports(lsof), vec![4200]);
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn the_ports_script_falls_back_to_lsof_when_netstat_lists_no_listeners() {
+    use std::os::unix::fs::PermissionsExt;
+    let run = |netstat: &str| {
+      let d = tempfile::tempdir().unwrap();
+      for (name, body) in [("netstat", netstat), ("lsof", "echo 'node 1 me 20u IPv4 0x1 0t0 TCP *:4200 (LISTEN)'")] {
+        let p = d.path().join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+      }
+      let path = format!("{}:/bin:/usr/bin", d.path().display());
+      let out = std::process::Command::new("/bin/sh").args(["-c", PORTS_SCRIPT]).env("PATH", path).output().unwrap();
+      parse_ports(&String::from_utf8_lossy(&out.stdout))
+    };
+    // macOS: `netstat -ltn` succeeds with established connections only.
+    assert_eq!(run("echo 'tcp4 0 0 127.0.0.1.22223 127.0.0.1.52264 ESTABLISHED'"), vec![4200]);
+    // Linux net-tools: its listeners are used.
+    assert_eq!(run("echo 'tcp 0 0 0.0.0.0:8080 0.0.0.0:* LISTEN'"), vec![8080]);
   }
 
   #[test]

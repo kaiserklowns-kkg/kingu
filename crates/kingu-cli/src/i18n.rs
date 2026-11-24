@@ -69,6 +69,22 @@ pub enum Msg {
   CleanupReplayed,
   CleanupRequestId,
   CleanupFailedRow,
+  CleanupReportRules,
+  CleanupRulesOff,
+  CleanupRulesOffProject,
+  CleanupReportAuto,
+  CleanupOn,
+  CleanupOff,
+  CleanupReportLastRun,
+  CleanupNever,
+  CleanupReportNextCheck,
+  CleanupNextWhenOpen,
+  CleanupReportActivity,
+  CleanupNoActivity,
+  CleanupActivityRow,
+  CleanupSourceAuto,
+  CleanupSourceCli,
+  CleanupSourceDialog,
   OpenNeedsPath,
   OpenOnePath,
   NotifyNeedsMessage,
@@ -148,6 +164,22 @@ impl Msg {
     Msg::CleanupReplayed,
     Msg::CleanupRequestId,
     Msg::CleanupFailedRow,
+    Msg::CleanupReportRules,
+    Msg::CleanupRulesOff,
+    Msg::CleanupRulesOffProject,
+    Msg::CleanupReportAuto,
+    Msg::CleanupOn,
+    Msg::CleanupOff,
+    Msg::CleanupReportLastRun,
+    Msg::CleanupNever,
+    Msg::CleanupReportNextCheck,
+    Msg::CleanupNextWhenOpen,
+    Msg::CleanupReportActivity,
+    Msg::CleanupNoActivity,
+    Msg::CleanupActivityRow,
+    Msg::CleanupSourceAuto,
+    Msg::CleanupSourceCli,
+    Msg::CleanupSourceDialog,
     Msg::OpenNeedsPath,
     Msg::OpenOnePath,
     Msg::NotifyNeedsMessage,
@@ -218,16 +250,32 @@ impl Msg {
       Msg::TaskOpenOneSlug => ("`kingu task open` takes one slug", "`kingu task open` รับ slug ได้ทีละหนึ่ง"),
       Msg::TaskSetNeedsComment => ("`kingu task set` needs --comment <text> (\"\" clears it)", "`kingu task set` ต้องมี --comment <ข้อความ> (\"\" คือลบออก)"),
       Msg::UnknownTaskCommand => ("unknown task command `{command}` (list, create, open, set)", "ไม่รู้จักคำสั่ง task `{command}` (มี list, create, open, set)"),
-      Msg::CleanupNeedsSubcommand => ("`kingu cleanup` needs preview, run or receipt", "`kingu cleanup` ต้องตามด้วย preview, run หรือ receipt"),
-      Msg::UnknownCleanupCommand => ("unknown cleanup command `{command}` (preview, run, receipt)", "ไม่รู้จักคำสั่ง cleanup `{command}` (มี preview, run, receipt)"),
+      Msg::CleanupNeedsSubcommand => ("`kingu cleanup` needs preview, run, report or receipt", "`kingu cleanup` ต้องตามด้วย preview, run, report หรือ receipt"),
+      Msg::UnknownCleanupCommand => ("unknown cleanup command `{command}` (preview, run, report, receipt)", "ไม่รู้จักคำสั่ง cleanup `{command}` (มี preview, run, report, receipt)"),
       Msg::CleanupBadRequestId => ("request id `{id}` must be 1-64 letters, digits, - or _", "request id `{id}` ต้องยาว 1-64 ตัว เป็นตัวอักษร ตัวเลข - หรือ _"),
       Msg::CleanupReceiptNeedsId => ("`kingu cleanup receipt` needs one request id", "`kingu cleanup receipt` ต้องมี request id หนึ่งค่า"),
       Msg::CleanupNothing => ("no tasks to clean up", "ไม่มีงานให้ล้าง"),
-      Msg::CleanupPreviewHead => ("{ready} to remove, {kept} kept (rules: {rules})", "จะลบ {ready} เก็บไว้ {kept} (กฎ: {rules})"),
-      Msg::CleanupRunDone => ("removed {removed}, failed {failed}, kept {kept}", "ลบแล้ว {removed} ล้มเหลว {failed} เก็บไว้ {kept}"),
-      Msg::CleanupReplayed => ("(replayed: this request id already ran, nothing was removed again)", "(ตอบซ้ำ: request id นี้เคยรันแล้ว ไม่ได้ลบซ้ำ)"),
+      Msg::CleanupPreviewHead => ("{ready} to clean up, {kept} kept (rules: {rules})", "จะล้าง {ready} เก็บไว้ {kept} (กฎ: {rules})"),
+      Msg::CleanupRunDone => ("removed {removed}, archived {archived}, failed {failed}, kept {kept}", "ลบแล้ว {removed} เก็บถาวร {archived} ล้มเหลว {failed} เก็บไว้ {kept}"),
+      Msg::CleanupReplayed => ("(replayed: this request id already ran, nothing was done again)", "(ตอบซ้ำ: request id นี้เคยรันแล้ว ไม่ได้ทำซ้ำ)"),
       Msg::CleanupRequestId => ("request id: {id} (to retry safely: kingu cleanup run --request-id {id})", "request id: {id} (ลองใหม่อย่างปลอดภัย: kingu cleanup run --request-id {id})"),
       Msg::CleanupFailedRow => ("failed {slug}: {error}", "ล้มเหลว {slug}: {error}"),
+      Msg::CleanupReportRules => ("rules: {rules}", "กฎ: {rules}"),
+      Msg::CleanupRulesOff => ("off", "ปิด"),
+      Msg::CleanupRulesOffProject => ("off (this project)", "ปิด (โปรเจกต์นี้)"),
+      Msg::CleanupReportAuto => ("automatic cleanup: {state}", "ล้างอัตโนมัติ: {state}"),
+      Msg::CleanupOn => ("on", "เปิด"),
+      Msg::CleanupOff => ("off", "ปิด"),
+      Msg::CleanupReportLastRun => ("last run: {time}", "รันล่าสุด: {time}"),
+      Msg::CleanupNever => ("never", "ยังไม่เคย"),
+      Msg::CleanupReportNextCheck => ("next check: {time}", "ตรวจครั้งถัดไป: {time}"),
+      Msg::CleanupNextWhenOpen => ("as soon as a folder is open", "ทันทีที่มีโฟลเดอร์เปิดอยู่"),
+      Msg::CleanupReportActivity => ("runs since this window opened (newest first):", "การรันตั้งแต่เปิดหน้าต่างนี้ (ล่าสุดก่อน):"),
+      Msg::CleanupNoActivity => ("no cleanup has run since this window opened", "ยังไม่มีการล้างตั้งแต่เปิดหน้าต่างนี้"),
+      Msg::CleanupActivityRow => ("{time}  {source}  removed {removed}, archived {archived}, failed {failed}, kept {kept}", "{time}  {source}  ลบแล้ว {removed} เก็บถาวร {archived} ล้มเหลว {failed} เก็บไว้ {kept}"),
+      Msg::CleanupSourceAuto => ("automatic", "อัตโนมัติ"),
+      Msg::CleanupSourceCli => ("command line", "บรรทัดคำสั่ง"),
+      Msg::CleanupSourceDialog => ("review dialog", "หน้าต่างตรวจทาน"),
       Msg::OpenNeedsPath => ("`kingu open` needs a path", "`kingu open` ต้องมี path"),
       Msg::OpenOnePath => ("`kingu open` takes one path", "`kingu open` รับ path ได้ทีละหนึ่ง"),
       Msg::NotifyNeedsMessage => ("`kingu notify` needs a message", "`kingu notify` ต้องมีข้อความ"),
@@ -319,13 +367,16 @@ Usage:
   kingu status                       Kingu's version, open folder and task count
   kingu task list                    tasks of the open folder (slug, status, title)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
-                                     start a task in a new worktree; prints its slug
+                      [--request-id <id>]  start a task in a new worktree; prints its slug
+                                     the same id again returns the first task (safe retry)
   kingu task open <slug>             show a task in Kingu
   kingu task set [<slug>] --comment <text>
                                      the note on a task's card (no slug: this worktree's task)
-  kingu cleanup preview              what the cleanup rules would remove (Settings › Workspace Cleanup)
+  kingu cleanup preview              what the cleanup rules would do (Settings › Workspace Cleanup)
   kingu cleanup run [--request-id <id>]
-                                     remove it; the same id again replays the first receipt
+                                     do it; the same id again replays the first receipt
+  kingu cleanup report               the rules, automatic cleanup, last run and next check, and
+                                     the runs since the app window opened (not kept across restarts)
   kingu cleanup receipt <id>         the receipt of an earlier run
   kingu open <path>[:line[:column]]  open a file (in the open folder) or a folder in Kingu
                                      (starts Kingu with it when it is not running)
@@ -375,13 +426,16 @@ const USAGE_TH: &str = "kingu: เปิดไฟล์และโฟลเด�
   kingu status                       เวอร์ชันของ Kingu โฟลเดอร์ที่เปิด และจำนวนงาน
   kingu task list                    งานของโฟลเดอร์ที่เปิด (slug, สถานะ, ชื่อ)
   kingu task create <title> [--prompt <text>|-] [--base <branch>] [--mode terminal|timeline] [--background]
-                                     เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
+                      [--request-id <id>]  เริ่มงานใน worktree ใหม่ แล้วพิมพ์ slug ของงาน
+                                     id เดิมเรียกซ้ำได้งานเดิม (retry ปลอดภัย)
   kingu task open <slug>             แสดงงานใน Kingu
   kingu task set [<slug>] --comment <text>
                                      หมายเหตุบนการ์ดงาน (ไม่ใส่ slug คืองานของ worktree นี้)
-  kingu cleanup preview              ดูว่ากฎล้างจะลบอะไร (Settings › Workspace Cleanup)
+  kingu cleanup preview              ดูว่ากฎล้างจะทำอะไร (Settings › Workspace Cleanup)
   kingu cleanup run [--request-id <id>]
-                                     ลบตามกฎ ใช้ id เดิมซ้ำจะได้ใบเสร็จครั้งแรกกลับมา ไม่ลบซ้ำ
+                                     ทำตามกฎ ใช้ id เดิมซ้ำจะได้ใบเสร็จครั้งแรกกลับมา ไม่ทำซ้ำ
+  kingu cleanup report               กฎ การล้างอัตโนมัติ รันล่าสุดและครั้งถัดไป และการรัน
+                                     ตั้งแต่เปิดหน้าต่างแอป (ไม่เก็บข้ามการเปิดใหม่)
   kingu cleanup receipt <id>         ใบเสร็จของการรันก่อนหน้า
   kingu open <path>[:line[:column]]  เปิดไฟล์ (ในโฟลเดอร์ที่เปิด) หรือโฟลเดอร์ใน Kingu
                                      (เปิด Kingu พร้อม path นั้นถ้ายังไม่ได้เปิดอยู่)
@@ -449,7 +503,7 @@ mod tests {
   fn usage_lists_the_same_commands_in_both_languages() {
     let commands = |s: &str| s.lines().filter(|l| l.trim_start().starts_with("kingu ")).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(commands(USAGE_EN), commands(USAGE_TH));
-    assert_eq!(commands(USAGE_EN).len(), 17);
+    assert_eq!(commands(USAGE_EN).len(), 18);
     let flags = |s: &str| s.lines().filter(|l| l.trim_start().starts_with('-')).map(|l| l.trim().split("  ").next().unwrap_or_default().to_owned()).collect::<Vec<_>>();
     assert_eq!(flags(USAGE_EN), flags(USAGE_TH));
     assert!(flags(USAGE_EN).len() > 12);

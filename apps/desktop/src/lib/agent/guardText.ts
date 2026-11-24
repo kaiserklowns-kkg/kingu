@@ -3,7 +3,7 @@
 // goose's own English description. Pure, so `bun test` covers it.
 
 import { t } from '#lib/i18n/index.ts';
-import type { AgentEvent, GuardAsked } from './events';
+import type { AgentEvent, AssistedReview, GuardAsked } from './events';
 
 export type GuardBlocked = Extract<AgentEvent, { kind: 'guard_blocked' }>;
 
@@ -35,6 +35,8 @@ const ASK_REASON = {
 	delete: 'chatExtras.ask.delete',
 	protected: 'chatExtras.ask.protected',
 	mcp: 'chatExtras.ask.mcp',
+	unsandboxed: 'chatExtras.ask.unsandboxed',
+	sandbox_retry: 'chatToolRules.ask.sandboxRetry',
 	edit_rule: 'chatToolRules.ask.editRule'
 } as const;
 
@@ -49,3 +51,11 @@ export function guardAskedText(ev: Pick<GuardAsked, 'check' | 'paths'>): string 
 	const paths = named.slice(0, 3).join(', ') + (named.length > 3 ? ', …' : '');
 	return t('chatExtras.ask.withPaths', { reason, paths });
 }
+
+/** Why Assisted permissions left a call to you (an `assisted_review` before its prompt). */
+export function assistedText(ev: Pick<AssistedReview, 'verdict' | 'reason'>): string {
+	return t(ev.verdict === 'unavailable' ? 'chatToolRules.assistedUnavailable' : 'chatToolRules.assistedAsked', { reason: ev.reason });
+}
+
+/** The tool row's note for a call Assisted permissions let through. */
+export const assistedApprovedText = (reason: string | undefined) => (reason === undefined ? '' : t('chatToolRules.assistedApproved', { reason }));

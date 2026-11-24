@@ -14,7 +14,8 @@ import { floatingKey, ownSessions } from '#lib/terminal/sessions.ts';
 
 /** Floating tabs are not restored, so each launch's shells get their own keys. */
 const LAUNCH = Date.now().toString(36);
-import { anchorButton, anchorRect, buttonPos, DEFAULT_BOUNDS, DEFAULT_BUTTON, maximizedRect, rectFromAnchor, type Anchor, type AnchoredBounds, type Rect } from './floating';
+import { anchorButton, anchorRect, buttonPos, DEFAULT_BOUNDS, defaultButton, keepButtonClear, maximizedRect, rectFromAnchor, usableButtonViewport, type Anchor, type AnchoredBounds, type Rect } from './floating';
+import { keepClear } from './floatingKeepClear.svelte';
 import { t } from '#lib/i18n/index.ts';
 
 const VIEW_KEY = 'kingu.floating.view';
@@ -37,7 +38,8 @@ function write(key: string, v: unknown) {
 }
 
 /** `run`: typed into a terminal's shell when it starts (an `ssh -t …` of an SSH project). */
-export type FloatingTab = { id: string; kind: 'terminal' | 'note' | 'browser'; title: string; path?: string; url?: string; run?: string[] };
+/** `agent`: the webview label of a page an agent opened (Rust floating_browser/agent.rs), shown in this tab. */
+export type FloatingTab = { id: string; kind: 'terminal' | 'note' | 'browser'; title: string; path?: string; url?: string; run?: string[]; agent?: string };
 
 /** Who follows a terminal tab: its title (OSC 0/2), its output, and its closing (SSH agent status). */
 export type FloatingWatch = { title?: (title: string) => void; output?: () => void; closed?: () => void };
@@ -49,7 +51,8 @@ class Floating {
 	open = $state(read<{ open: boolean }>(VIEW_KEY)?.open ?? false);
 	maximized = $state(read<{ maximized: boolean }>(VIEW_KEY)?.maximized ?? false);
 	bounds = $state<AnchoredBounds>(read<AnchoredBounds>(BOUNDS_KEY) ?? DEFAULT_BOUNDS);
-	button = $state<Anchor>(read<Anchor>(BUTTON_KEY) ?? DEFAULT_BUTTON);
+	/** Where the user dropped the toggle; null keeps Orca's default spot, which follows the window's width. */
+	button = $state<Anchor | null>(read<Anchor>(BUTTON_KEY));
 	/** The window size, so anchored positions follow resizes. */
 	vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
 	vh = $state(typeof window === 'undefined' ? 900 : window.innerHeight);
@@ -63,7 +66,10 @@ class Floating {
 	mounted = $derived(this.enabled && (this.open || this.tabs.length > 0));
 
 	rect = $derived<Rect>(this.maximized ? maximizedRect(this.vw, this.vh) : rectFromAnchor(this.bounds, this.vw, this.vh));
-	buttonAt = $derived(buttonPos(this.button, this.vw, this.vh));
+	/** The toggle's spot before it moves off a page part it must not cover (the chat composer…). */
+	buttonSpot = $derived(buttonPos(this.button ?? defaultButton(this.vw), this.vw, this.vh));
+	/** Where the toggle shows: its spot, or just below or above a page part it would cover (Orca's keep-clear). */
+	buttonAt = $derived(keepButtonClear(this.buttonSpot, keepClear.rects, this.vw, this.vh));
 
 	#seq = 0;
 	/** Focus to give back when the panel hides. */
@@ -106,8 +112,11 @@ class Floating {
 		this.bounds = anchorRect(r, this.vw, this.vh);
 		write(BOUNDS_KEY, this.bounds);
 	}
+	/** A dropped toggle, saved where it shows: clear of the page parts it must not cover. */
 	commitButton(p: { left: number; top: number }) {
-		this.button = anchorButton(p, this.vw, this.vh);
+		// Orca waits for a usable window before saving a spot it would have to clamp.
+		if (!usableButtonViewport(this.vw, this.vh)) return;
+		this.button = anchorButton(keepButtonClear(p, keepClear.rects, this.vw, this.vh), this.vw, this.vh);
 		write(BUTTON_KEY, this.button);
 	}
 	resized() {
@@ -152,6 +161,12 @@ class Floating {
 	}
 	newBrowser(url = '') {
 		return this.#add({ kind: 'browser', title: 'New Tab', url });
+	}
+	/** A page an agent opened (VS Code opens it in an editor; here a browser tab of this panel, shown). */
+	newAgentBrowser(label: string, url: string) {
+		const open = this.tabs.find((t) => t.agent === label);
+		if (open) return (this.select(open.id), this.show(), open.id);
+		return this.#add({ kind: 'browser', title: url, url, agent: label });
 	}
 	newTerminal(opts: { title?: string; run?: string[]; watch?: FloatingWatch } = {}) {
 		const n = this.tabs.filter((t) => t.kind === 'terminal').length + 1;

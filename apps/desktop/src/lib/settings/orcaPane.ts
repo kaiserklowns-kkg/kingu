@@ -38,7 +38,7 @@ export type PaneRow =
  * `rest`: Kingu settings groups whose other settings follow as rows, so a setting Orca has no
  * row for stays on the pane it belongs to.
  */
-export type PaneSection = { title?: PlainKey; hint?: PlainKey; icon?: IconName; rows?: readonly PaneRow[]; component?: 'cli' | 'support' | 'themes'; rest?: readonly string[] };
+export type PaneSection = { title?: PlainKey; hint?: PlainKey; icon?: IconName; rows?: readonly PaneRow[]; component?: 'cli' | 'support' | 'themes' | 'githubAccount'; rest?: readonly string[] };
 /** `cards`: each sub-section is its own collapsible card with an icon tile (Orca's Appearance). */
 export type OrcaPaneSpec = { id: string; icon: IconName; title: PlainKey; description: PlainKey; layout?: 'cards'; sections: readonly PaneSection[] };
 
@@ -229,6 +229,7 @@ export const TERMINAL: OrcaPaneSpec = {
 				{ kind: 'list', id: 'terminal.integrated.shellArgs.osx', label: 'panes.terminal.shellArgs', hint: 'panes.terminal.shellArgsHint' }
 			]
 		},
+		{ title: 'panes.quickCommands.title', hint: 'panes.quickCommands.hint', rows: [{ kind: 'list', id: 'kingu.terminal.quickCommands', label: 'panes.quickCommands.title' }] },
 		{
 			title: 'panes.terminal.rendering',
 			hint: 'panes.terminal.renderingHint',
@@ -343,7 +344,9 @@ export const CHAT: OrcaPaneSpec = {
 						{ value: 'plan', label: 'panes.chat.plan' }
 					]
 				},
-				sw('kingu.chat.resumeWorkOnRestart', 'panes.chat.resume', 'panes.chat.resumeHint')
+				sw('kingu.chat.resumeWorkOnRestart', 'panes.chat.resume', 'panes.chat.resumeHint'),
+				sw('kingu.chat.autoContinueAfterUsageLimit', 'panes.chat.autoContinue', 'panes.chat.autoContinueHint'),
+				sw('kingu.chat.confirmDelete', 'panes.chat.confirmDelete', 'panes.chat.confirmDeleteHint')
 			]
 		},
 		{ title: 'panes.chat.names', rows: [sw('kingu.chat.aiTitles', 'panes.chat.names', 'panes.chat.namesHint')] },
@@ -623,7 +626,10 @@ export const PROJECT: OrcaPaneSpec = {
 				}
 			]
 		},
+		// Orca's per-repository GitHub account (RepositoryGitHubAccountSection): kingu.repo.ghAccount.
+		{ title: 'agentAccounts.gh.title', component: 'githubAccount' },
 		{ title: 'panes.project.shared', hint: 'panes.project.sharedHint', rows: [{ kind: 'list', id: 'kingu.repo.symlinkPaths', label: 'panes.project.shared' }] },
+		{ title: 'panes.quickCommands.title', hint: 'panes.quickCommands.projectHint', rows: [{ kind: 'list', id: 'kingu.terminal.quickCommands', label: 'panes.quickCommands.title' }] },
 		{
 			title: 'panes.project.ai',
 			hint: 'panes.project.aiHint',

@@ -162,15 +162,16 @@ impl AutoApprover {
         self.guarded.insert(request_id.clone());
         (ev, None)
       }
-      AgentEvent::PermissionRequest { request_id, tool, tool_use_id, title, input_summary, detail, diff, input, can_always, rules: always_rules, auto_approve: _ } => {
+      AgentEvent::PermissionRequest { request_id, tool, tool_use_id, title, input_summary, detail, diff, input, can_always, rules: always_rules, auto_approve: _, sandbox_grant } => {
         // Only Rust says which setting a button writes: whatever the sidecar sent is dropped.
-        let decision = if !self.guarded.contains(&request_id) && can_always && (tool == SHELL_TOOL || tool == FETCH_TOOL) { rules().decide(&tool, &input) } else { Decision::Ask(None) };
+        // A sandbox retry prompt widens the sandbox: never a rule's to answer.
+        let decision = if !self.guarded.contains(&request_id) && can_always && sandbox_grant.is_none() && (tool == SHELL_TOOL || tool == FETCH_TOOL) { rules().decide(&tool, &input) } else { Decision::Ask(None) };
         match decision {
           Decision::Approve(by) => {
             let id = request_id.clone();
             (AgentEvent::ToolAutoApproved { request_id, tool, tool_use_id, rules: by }, Some(id))
           }
-          Decision::Ask(auto_approve) => (AgentEvent::PermissionRequest { request_id, tool, tool_use_id, title, input_summary, detail, diff, input, can_always, rules: always_rules, auto_approve }, None),
+          Decision::Ask(auto_approve) => (AgentEvent::PermissionRequest { request_id, tool, tool_use_id, title, input_summary, detail, diff, input, can_always, rules: always_rules, auto_approve, sandbox_grant }, None),
         }
       }
       // Only Rust says a call was auto-approved.
@@ -202,6 +203,7 @@ mod tests {
       can_always: true,
       rules: vec![],
       auto_approve: None,
+      sandbox_grant: None,
     }
   }
 
@@ -297,5 +299,17 @@ mod tests {
     assert!(pos("**/*").unwrap() > pos("**/*.lock").unwrap(), "a user pattern moves to the end");
     assert_eq!(rules[pos("**/*").unwrap()], ("**/*".to_owned(), false));
     assert!(pos("src/**").unwrap() > pos("**/*").unwrap());
+  }
+
+  #[test]
+  fn a_sandbox_retry_prompt_is_never_auto_approved() {
+    let mut a = AutoApprover::default();
+    let mut q = request("9", "Bash", serde_json::json!({ "command": "git status" }));
+    if let AgentEvent::PermissionRequest { sandbox_grant, .. } = &mut q {
+      *sandbox_grant = Some(serde_json::json!({ "kind": "domain", "domains": ["github.com"], "blocked": [] }));
+    }
+    let (ev, allow) = a.on_event(q, default_rules);
+    assert_eq!(allow, None);
+    assert!(matches!(ev, AgentEvent::PermissionRequest { sandbox_grant: Some(_), .. }));
   }
 }

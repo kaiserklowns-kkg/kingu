@@ -24,9 +24,9 @@ pub const MERGE_TIMEOUT: Duration = Duration::from_secs(180);
 /// large stdout (job logs). Returns stdout.
 pub fn gh_run(gh: &Path, dir: &Path, args: &[String], timeout: Duration, tail: Option<usize>) -> Result<String, String> {
   let what = args.iter().take(2).cloned().collect::<Vec<_>>().join(" ");
-  let mut cmd = crate::shell_env::command(gh);
+  // The project's GitHub account, when it has one (gh_account.rs).
+  let mut cmd = super::gh_account::command(gh, dir, args.first().map(String::as_str))?;
   cmd
-    .current_dir(dir)
     .args(args)
     .env("GH_PROMPT_DISABLED", "1")
     .env("GIT_TERMINAL_PROMPT", "0")

@@ -1,0 +1,78 @@
+import { describe, expect, test } from 'bun:test';
+import { cssVariables, popoutLanes, PREVIEW_SCROLLBACK_ROWS, keyInput, previewLines, stripControls, type PopoutEntry } from './boardPopout.ts';
+import { effectiveStatus, newTask, type TaskMeta } from './model.ts';
+
+const COLS = [
+	{ id: 'attention' as const, label: 'Needs you', hint: '' },
+	{ id: 'active' as const, label: 'Working', hint: '' },
+	{ id: 'done' as const, label: 'Done', hint: '' }
+];
+const IDLE = { label: 'Idle', hint: '' };
+
+const entry = (root: string, slug: string, extra: Partial<TaskMeta> = {}): PopoutEntry => {
+	const meta = { ...newTask({ slug, title: `Task ${slug}`, prompt: 'first line\nmore', base: 'main' }, 1000), ...extra };
+	return { root, view: { meta, status: effectiveStatus(meta, undefined) } };
+};
+
+test('the pop-out lays out every project in the agent columns, done split into Done and Idle', () => {
+	const entries = [entry('/a', 'one', { status: 'done' }), entry('/b', 'one', { status: 'done' }), entry('/b', 'two', { status: 'done' })];
+	const unread = new Set(['/b\u0000one']);
+	const lanes = popoutLanes(entries, unread, true, COLS, IDLE);
+	expect(lanes.map((l) => l.id)).toEqual(['attention', 'active', 'done', 'idle']);
+	expect(lanes[2].cards.map((c) => c.key)).toEqual(['/b\u0000one']);
+	expect(lanes[3].cards.map((c) => c.key).sort()).toEqual(['/a\u0000one', '/b\u0000two']);
+	const card = lanes[2].cards[0];
+	expect(card).toMatchObject({ root: '/b', slug: 'one', title: 'Task one', summary: 'first line', project: 'b', depth: 0 });
+	// Without kingu.board.showIdle there is no Idle column.
+	expect(popoutLanes(entries, unread, false, COLS, IDLE).map((l) => l.id)).toEqual(['attention', 'active', 'done']);
+});
+
+test('a stacked task nests under its parent only within its own project', () => {
+	const entries = [entry('/a', 'base', { status: 'done' }), entry('/a', 'next', { status: 'done', parent: 'base' }), entry('/b', 'next', { status: 'done', parent: 'base' })];
+	const done = popoutLanes(entries, new Set(entries.map((e) => `${e.root}\u0000${e.view.meta.slug}`)), false, COLS, IDLE)[2].cards;
+	expect(Object.fromEntries(done.map((c) => [c.key, c.depth]))).toEqual({ '/a\u0000base': 0, '/a\u0000next': 1, '/b\u0000next': 0 });
+});
+
+test('only custom properties are copied from the theme', () => {
+	const style = Object.assign(['--vscode-foreground', 'color', '--kg-x'], { getPropertyValue: (n: string) => `v${n}` });
+	expect(cssVariables(style)).toEqual({ '--vscode-foreground': 'v--vscode-foreground', '--kg-x': 'v--kg-x' });
+});
+
+describe('previewLines', () => {
+	test('keeps the screen and 24 rows of scrollback, ending at the last row with text', () => {
+		const rows = [...Array.from({ length: 40 }, (_, i) => `row ${i}`), '', '   ', ''];
+		const out = previewLines(rows, 10);
+		expect(out).toHaveLength(10 + PREVIEW_SCROLLBACK_ROWS);
+		expect(out.at(-1)).toBe('row 39');
+		expect(out[0]).toBe('row 6');
+	});
+
+	test('keeps blank rows between text, trims row ends and clamps the screen size', () => {
+		expect(previewLines(['a  ', '', 'b'], 24)).toEqual(['a', '', 'b']);
+		expect(previewLines([], 24)).toEqual([]);
+		expect(previewLines(['', ' '], 24)).toEqual([]);
+		const many = Array.from({ length: 500 }, (_, i) => String(i));
+		expect(previewLines(many, 9999)).toHaveLength(200 + PREVIEW_SCROLLBACK_ROWS);
+		expect(previewLines(many, 0)).toHaveLength(2 + PREVIEW_SCROLLBACK_ROWS);
+		expect(previewLines(['x'.repeat(900)], 24)[0]).toHaveLength(500);
+	});
+
+	test('drops escape sequences and control characters but keeps tabs', () => {
+		expect(stripControls('\u001b[31mred\u001b[0m\tok\u0007\r')).toBe('red\tok');
+		expect(stripControls('\u001b]0;title\u0007after')).toBe('after');
+		expect(previewLines(['\u001b[1mbold\u001b[22m'], 24)).toEqual(['bold']);
+	});
+});
+
+describe('keyInput', () => {
+	const k = (key: string, mods: Partial<Record<'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey' | 'isComposing', boolean>> = {}) =>
+		keyInput({ key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, isComposing: false, ...mods });
+	test('maps keys like xterm', () => {
+		expect([k('a'), k('A', { shiftKey: true }), k('ก'), k('Enter'), k('Backspace'), k('Tab'), k('Tab', { shiftKey: true }), k('Escape')]).toEqual(['a', 'A', 'ก', '\r', '\x7f', '\t', '\x1b[Z', '\x1b']);
+		expect([k('ArrowUp'), k('ArrowLeft', { shiftKey: true }), k('Delete'), k('PageDown')]).toEqual(['\x1b[A', '\x1b[1;2D', '\x1b[3~', '\x1b[6~']);
+		expect([k('c', { ctrlKey: true }), k('d', { ctrlKey: true }), k('b', { altKey: true }), k('[', { ctrlKey: true })]).toEqual(['\x03', '\x04', '\x1bb', '\x1b']);
+	});
+	test('leaves shortcuts, modifiers and composition to the window', () => {
+		expect([k('c', { metaKey: true }), k('Shift'), k('F5'), k('a', { isComposing: true }), k('1', { ctrlKey: true })]).toEqual([null, null, null, null, null]);
+	});
+});

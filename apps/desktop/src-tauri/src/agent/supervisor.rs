@@ -120,6 +120,7 @@ impl Inner {
 }
 
 impl Supervisor {
+  #[allow(dead_code)] // used by tests only so far
   pub fn epoch(&self) -> u64 {
     self.epoch
   }
@@ -257,6 +258,7 @@ impl Supervisor {
     self.inner.lock().unwrap().subscribers.retain(|(id, _)| *id != subscription);
   }
 
+  #[allow(dead_code)] // used by tests only so far
   pub fn snapshot(&self) -> (u64, Vec<SessionState>) {
     let g = self.inner.lock().unwrap();
     (g.seq, g.sessions.values().cloned().collect())
@@ -609,9 +611,7 @@ mod tests {
     let turn = sup.prompt("chat:/r:c1", "hello\nworld").unwrap();
     sup.set_run("chat:/r:c1", 4);
     assert_eq!(sup.session_of_run(4).as_deref(), Some("chat:/r:c1"));
-    for ev in [json!({"kind": "permission_request", "request_id": "r1", "tool": "Bash", "input_summary": "ls"})] {
-      sup.on_agent_event("chat:/r:c1", &AgentEvent::from_host(ev));
-    }
+    sup.on_agent_event("chat:/r:c1", &AgentEvent::from_host(json!({"kind": "permission_request", "request_id": "r1", "tool": "Bash", "input_summary": "ls"})));
     let s = sup.get("chat:/r:c1").unwrap();
     assert_eq!((s.phase, s.turn.as_deref(), s.binding.run_id), (proto::Phase::Waiting, Some(turn.as_str()), Some(4)));
     let frames = live.lock().unwrap().clone();

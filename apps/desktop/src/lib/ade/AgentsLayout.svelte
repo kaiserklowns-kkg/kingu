@@ -7,7 +7,7 @@
 	// mounted while hidden so their shells keep running; a file tab's editor mounts when shown.
 	import Icon from '#lib/workbench/Icon.svelte';
 	import AgentPick from './AgentPick.svelte';
-	import { dropTarget, rectStyle, splittable, type SplitDir } from './adeSplit';
+	import { dropTarget, groupOf, rectStyle, splittable, stripStyle, type DropDir } from './adeSplit';
 	import { dividers, leaves, paneRects, type Divider, type Rect } from '#lib/terminal/paneLayout.ts';
 	import Sash from '#lib/workbench/Sash.svelte';
 	import DiffHost from '#lib/workbench/DiffHost.svelte';
@@ -30,6 +30,10 @@
 	import { ADE_SHORTCUTS } from './adeShortcuts.ts';
 	import RecentTabSwitcher from './RecentTabSwitcher.svelte';
 	import Composer from '#lib/agent/Composer.svelte';
+	import TaskNameField from './TaskNameField.svelte';
+	import type { LinkedIssue } from './issueUrlLookup';
+	import { suggestCreatureName } from './taskNaming';
+	import { uniqueSlug } from './model';
 	import { taskTitleFromPrompt } from '#lib/agent/composerText.ts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { status } from '#lib/workbench/status.svelte.ts';
@@ -40,6 +44,7 @@
 	import Board from './Board.svelte';
 	import NowPage from './NowPage.svelte';
 	import AutomationsPage from './AutomationsPage.svelte';
+	import InboxPage from './InboxPage.svelte';
 	import IssuesPage from './IssuesPage.svelte';
 	import TaskPage from './TaskPage.svelte';
 	import CliQuestion from './CliQuestion.svelte';
@@ -57,7 +62,10 @@
 	import { cliName, cliOf } from './agentCli';
 	import { profileOf } from '#lib/ade/agentProfiles.ts';
 	import { cliSessions } from './cliSessions.svelte';
+	import { attempts } from './attempts.svelte';
 	import { paneAgents } from './paneAgents.svelte';
+	import { paneSleep } from './paneSleep.svelte';
+	import { paneProgram } from './paneProgram.svelte';
 	import { terminalBells } from './terminalBell.svelte';
 	import { BUTTON, BUTTON_SECONDARY, statusDot } from './ui';
 	import { statusLabel, timeAgo } from './model';
@@ -94,30 +102,60 @@
 		return true;
 	}
 
-	// Orca's tab groups: the center splits into regions (adeSplit.ts), each showing one tab; the
-	// active tab is one of them. Views move by style only, so nothing is remounted.
+	// Orca's tab groups: the center splits into regions (adeSplit.ts), each a group with its own tab
+	// strip (AdeTabBar with `group`) showing one of its tabs; the active tab is in one of them. Views
+	// move by style only, so nothing is remounted.
+	const groups = $derived(adeLayout.board ? null : adeLayout.groupsOf(key));
 	const tree = $derived(adeLayout.board ? null : adeLayout.treeOf(key));
 	const rects = $derived(tree ? paneRects(tree) : null);
+	/** Height of a region's tab strip (AdeTabBar's row). */
+	const STRIP = 35;
+	/** Each region's group, the tab it shows and its place; the top right one has the quick commands. */
+	const strips = $derived.by(() => {
+		if (!groups || !rects) return [];
+		const list = leaves(groups.tree).flatMap((g) => {
+			const r = rects.get(groups.shown[g]);
+			return r ? [{ group: g, rect: r }] : [];
+		});
+		const topRight = list.filter((x) => x.rect.y < 0.001).toSorted((a, b) => b.rect.x - a.rect.x)[0]?.group;
+		return list.map((x) => ({ ...x, extras: x.group === topRight }));
+	});
 	const regionOf = (k: string, id: string): Rect | 'full' | null => (adeLayout.board || k !== key ? null : rects ? (rects.get(id) ?? null) : id === activeTab ? 'full' : null);
-	const place = (r: Rect | 'full' | null) => (r && r !== 'full' ? rectStyle(r) : undefined);
+	/** A view's place: its region below the region's tab strip. */
+	const place = (r: Rect | 'full' | null) => (r && r !== 'full' ? rectStyle(r, STRIP) : undefined);
 	/** File and diff tabs shown in a region other than the active one (the active one uses the editor below). */
 	const sideFiles = $derived(tree ? leaves(tree).filter((id) => id !== activeTab && keyOfTabId(id) !== null) : []);
 	let center: HTMLDivElement | undefined = $state();
-	let dropAt = $state<{ id: string; dir: SplitDir; rect: Rect } | null>(null);
+	let dropAt = $state<{ id: string; dir: DropDir; rect: Rect } | null>(null);
 	function onCenterDragOver(e: DragEvent) {
 		const id = adeLayout.draggingTab;
 		if (!id || !splittable(id) || !center) return;
+		// Over a region's tab strip the strip takes the drop (reorder, or move into its group).
+		if ((e.target as HTMLElement | null)?.closest?.('[data-ade-strip]')) return void (dropAt = null);
 		const r = center.getBoundingClientRect();
 		const all = rects ?? new Map([[activeTab, { x: 0, y: 0, w: 1, h: 1 }]]);
-		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
-		dropAt = hit ? { ...hit, rect: all.get(hit.id)! } : null;
+		// Orca's zones: the left and right 20% of a region, else the top and bottom 20% of its body (below its strip).
+		const hit = dropTarget(all, (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height, !!groups, rects && r.height > 0 ? STRIP / r.height : 0);
+		// The middle of the tab's own region changes nothing.
+		const own = hit?.dir === 'center' && groups && groupOf(groups, hit.id) === groupOf(groups, id);
+		dropAt = hit && !own ? { ...hit, rect: all.get(hit.id)! } : null;
 		if (dropAt) e.preventDefault();
 	}
+	/** The half of the region a drop fills (the whole region for a move into its group). */
+	function dropPreview(dir: DropDir, r: Rect): string {
+		if (dir === 'left') return rectStyle({ ...r, w: r.w / 2 });
+		if (dir === 'right') return rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 });
+		if (dir === 'up') return rectStyle({ ...r, h: r.h / 2 });
+		if (dir === 'down') return rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 });
+		return rectStyle(r);
+	}
+	const DROP_LABEL = { left: 'ade.split.dropLeft', right: 'ade.split.dropRight', up: 'ade.split.dropUp', down: 'ade.split.dropDown', center: 'ade.split.dropHere' } as const;
 	function onCenterDrop(e: DragEvent) {
 		const id = adeLayout.draggingTab;
 		if (id && dropAt) {
 			e.preventDefault();
-			adeLayout.splitTab(key, id, dropAt.dir, dropAt.id);
+			if (dropAt.dir === 'center') adeLayout.moveTabTo(key, id, dropAt.id, null);
+			else adeLayout.splitTab(key, id, dropAt.dir, dropAt.id);
 		}
 		dropAt = null;
 		adeLayout.draggingTab = null;
@@ -201,12 +239,45 @@
 		nudge++; // remounts the composer, which autofocuses
 	}
 
+	// The optional name above the prompt (Orca's NewWorkspaceComposerNameSection): emoji names and
+	// a pasted issue URL work as in the New Task form (TaskNameField.svelte). Empty: the prompt's
+	// first line names the task, or an unused marine creature when it has nothing a branch keeps.
+	let taskTitle = $state('');
+	let taskLinked = $state<LinkedIssue | null>(null);
+	let taskResolving = $state(false);
+	/** Parent task (Orca's Advanced → Parent workspace): nests the new task in the side bar, no git change. */
+	let nestUnder = $state('');
+	const parentChoices = $derived(adeTasks.list.filter((x) => !x.archived_at).toSorted((a, b) => b.updated_at - a.updated_at));
+	const takenSlugs = $derived(new Set([...adeTasks.list.map((t) => t.slug), ...adeTasks.worktrees.map((w) => w.slug ?? '')]));
+	let creature = $state('');
+	$effect(() => {
+		if (!creature || takenSlugs.has(creature)) creature = suggestCreatureName(takenSlugs);
+	});
+	function composerTitle(text: string): { title: string; generated: boolean } {
+		if (taskTitle.trim()) return { title: taskTitle.trim(), generated: false };
+		const line = taskTitleFromPrompt(text);
+		if (/[a-z0-9]/i.test(line.normalize('NFKD'))) return { title: line, generated: false };
+		return { title: creature, generated: true };
+	}
+	const branchPreview = $derived(taskTitle.trim() || draft.trim() ? `kingu/${uniqueSlug(composerTitle(draft).title, takenSlugs)}` : 'kingu/…');
+	/** A taken link fills an empty prompt from the issue, then the prompt takes the focus. */
+	function onIssueLinked(issue: LinkedIssue) {
+		if (!draft.trim()) draft = issue.prompt;
+		nudge++;
+	}
+
 	// Orca: creation runs in the background — the composer clears at once, the side bar shows a
 	// progress row (with Retry on failure), and the new task opens when its worktree exists.
 	function start(text: string, attachments: Attachment[]) {
-		adeTasks.startCreate({ title: taskTitleFromPrompt(text), prompt: text, base, attachments, agent: agentPick || undefined });
+		// A pasted URL still being looked up would name the task after the URL.
+		if (taskResolving) return;
+		const named = composerTitle(text);
+		adeTasks.startCreate({ title: named.title, nameGenerated: named.generated, nameTyped: !!taskTitle.trim() || !!taskLinked, prompt: text, base, attachments, agent: agentPick || undefined, issue: taskLinked?.link, parent: nestUnder && adeTasks.find(nestUnder) ? nestUnder : undefined });
 		draft = '';
 		draftFiles = [];
+		taskTitle = '';
+		taskLinked = null;
+		nestUnder = '';
 		nudge++;
 	}
 	// VS Code's modern layout: each part is a softly rounded pane on the title bar's color, 4px apart.
@@ -265,7 +336,7 @@
 	{/if}
 
 	<main class={[FRAME, 'flex min-w-0 flex-1 flex-col bg-(--vscode-editor-background)']}>
-		<AdeTabBar />
+		{#if !strips.length}<AdeTabBar />{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="relative min-h-0 flex-1" bind:this={center} ondragover={onCenterDragOver} ondragleave={(e) => e.currentTarget === e.target && (dropAt = null)} ondrop={onCenterDrop}>
 		<RecentTabSwitcher />
@@ -273,6 +344,8 @@
 		<div class={rects ? 'absolute' : 'contents'} style={place(regionOf(key, activeTab))}>
 		{#if adeLayout.page === 'now'}
 			<NowPage />
+		{:else if adeLayout.page === 'inbox'}
+			<InboxPage />
 		{:else if adeLayout.page === 'automations'}
 			<AutomationsPage />
 		{:else if adeLayout.page === 'issues'}
@@ -313,12 +386,17 @@
 						<div class="max-w-md space-y-3 text-center">
 							<div class="flex justify-center text-(--vscode-descriptionForeground)"><Icon name="terminal" size={28} /></div>
 							<p>{t('legacyAde.agentsLayout.cliNotRunning', { cli: cliName(cli) })}</p>
-							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">kingu/{slug}</span></p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.runsInWorktree')} <span class="font-mono">{adeTasks.branchOf(slug)}</span></p>
 							{#if hibernatedAt}<p class="text-xs text-(--vscode-descriptionForeground)">{t('adeAttempts.hibernated.text', { ago: timeAgo(hibernatedAt, adeTasks.now) })}</p>{/if}
-							<div class="flex justify-center gap-2">
-								{#if resume}<button class={BUTTON} onclick={() => adeTasks.resumeCli(slug)}>{t('legacyAde.agentsLayout.continueSession')}</button>{/if}
-								<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => adeTasks.resumeCli(slug, true)}>{t('legacyAde.agentsLayout.restartCli', { cli: cli.join(' ') })}</button>
-							</div>
+							{#if attempts.resuming[slug]}
+								<!-- A launch is in flight (the return wake of a hibernated CLI, or a click): no second start. -->
+								<p class="text-xs text-(--vscode-descriptionForeground)" role="status">{t('adeAttempts.hibernated.resuming')}</p>
+							{:else}
+								<div class="flex justify-center gap-2">
+									{#if resume}<button class={BUTTON} onclick={() => attempts.resume(slug)}>{t('legacyAde.agentsLayout.continueSession')}</button>{/if}
+									<button class={resume ? BUTTON_SECONDARY : BUTTON} onclick={() => attempts.resume(slug, true)}>{t('legacyAde.agentsLayout.restartCli', { cli: cli.join(' ') })}</button>
+								</div>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -341,6 +419,18 @@
 								<h1 class="text-lg font-semibold text-(--vscode-foreground)">{t('legacyAde.agentsLayout.composerTitle')}</h1>
 								<p class="text-[13px] text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.composerText')}</p>
 							</div>
+							<div class="space-y-1">
+								<TaskNameField
+									bind:title={taskTitle}
+									bind:linked={taskLinked}
+									bind:resolving={taskResolving}
+									label={t('legacyAde.agentsLayout.taskName')}
+									placeholder={t('legacyAde.agentsLayout.taskNamePlaceholder')}
+									inputClass="h-8 w-full rounded-lg border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) px-3 text-[13px] text-(--vscode-input-foreground) outline-none placeholder:text-(--vscode-input-placeholderForeground) focus:border-(--vscode-focusBorder)"
+									onlink={onIssueLinked}
+									onenter={(e) => (e.preventDefault(), nudge++)}
+								/>
+							</div>
 							{#key `${focusKey}:${nudge}`}
 								<Composer bind:value={draft} attach bind:attachments={draftFiles} size="lg" autofocus placeholder={t('legacyAde.agentsLayout.composerPlaceholder')} onsubmit={start}>
 									{#snippet left()}
@@ -353,6 +443,16 @@
 												{#if !adeTasks.branches.length}<option value="">HEAD</option>{/if}
 											</select>
 										</label>
+										{#if parentChoices.length}
+											<label class="inline-flex shrink-0 items-center gap-1 rounded-sm border border-(--vscode-widget-border) px-1.5 py-0.5 hover:bg-(--vscode-toolbar-hoverBackground)" title={t('adeWorktrees.form.parentHint')}>
+												<Icon name="layout" size={12} />
+												<span class="sr-only">{t('adeWorktrees.form.parent')}</span>
+												<select class="max-w-40 bg-transparent outline-none focus-visible:outline-none" aria-label={t('adeWorktrees.form.parent')} bind:value={nestUnder}>
+													<option value="">{t('adeWorktrees.form.parentNoneShort')}</option>
+													{#each parentChoices as p (p.slug)}<option value={p.slug}>{p.title}</option>{/each}
+												</select>
+											</label>
+										{/if}
 									{/snippet}
 								</Composer>
 							{/key}
@@ -363,7 +463,7 @@
 									</button>
 								{/each}
 							</div>
-							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.newWorktreePrefix')} <span class="font-mono">kingu/…</span> {t('legacyAde.agentsLayout.newWorktreeSuffix', { cli: cliSetting || 'claude' })}</p>
+							<p class="text-xs text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.newWorktreePrefix')} <span class="font-mono">{branchPreview}</span> {t('legacyAde.agentsLayout.newWorktreeSuffix', { cli: cliSetting || 'claude' })}</p>
 							{#if recent.length}
 								<section class="pt-5" aria-label={t('legacyAde.agentsLayout.recentTasks')}>
 									<h2 class="mb-2 text-xs font-medium text-(--vscode-descriptionForeground)">{t('legacyAde.agentsLayout.recentTasks')}</h2>
@@ -375,7 +475,7 @@
 													<span class="min-w-0 flex-1 truncate text-[13px]">{v.meta.title}</span>
 												</span>
 												<span class="mt-1 flex gap-2 pl-4 text-xs text-(--vscode-descriptionForeground)">
-													<span class="min-w-0 flex-1 truncate font-mono">kingu/{v.meta.slug}</span>
+													<span class="min-w-0 flex-1 truncate font-mono">{adeTasks.branchOf(v.meta.slug)}</span>
 													<span class="shrink-0">{timeAgo(v.meta.updated_at, adeTasks.now)}</span>
 												</span>
 											</button>
@@ -405,6 +505,10 @@
 					onoutput={() => cliSessions.output(s)}
 					ontitle={(title) => cliSessions.title(s, title)}
 					onbell={() => terminalBells.ring(s, 'main')}
+					onprogram={(e) => {
+						paneProgram.apply(cliSessions.ptyKey(s, sess.startedAt), e);
+						if (e.type === 'input') cliSessions.input(s);
+					}}
 					onopenfile={(rel, line, column) => openLinkedFile(s, rel, line, column)}
 					onopenurl={(url, system) => openLinkInApp(s, url, system)}
 				/>
@@ -429,21 +533,31 @@
 					<!-- Orca's pane splits: every pane is its own PTY (`t<n>` ids; the first pane's id is the tab's). -->
 					<PaneSplitView tree={t.layout ?? leaf(t.id)} expanded={t.expanded ?? null} active={activePane(t)} onresize={(path, ratio) => adeLayout.resizePane(k, t.id, path, ratio)}>
 						{#snippet pane(p)}
+							{@const pk = adeLayout.ptyKey(k, p)}
+							<!-- A sleeping pane (paneSleep.svelte.ts): its shell stays with the agent's last screen; a new shell (the old one is gone) types the agent's resume instead of the tab's own command. -->
+							{@const wake = paneSleep.typeOf(pk)}
 							<Terminal
-								key={adeLayout.ptyKey(k, p)}
+								key={pk}
 								slug={k || undefined}
-								run={p === t.id ? t.run : undefined}
-								cwdFrom={adeLayout.cwdFrom(k, p)}
+								run={wake || p !== t.id ? undefined : t.run}
+								type={wake ?? (p !== t.id ? undefined : t.type)}
+								typeEnter={!!wake || t.typeEnter !== false}
+								cwdFrom={wake ? undefined : adeLayout.cwdFrom(k, p)}
 								flavor="ade"
 								keyLabels={PANE_KEYS}
 								menuState={() => ({ split: tabPanes(t).length > 1, expanded: !!t.expanded })}
 								onoutput={() => paneAgents.output(adeLayout.ptyKey(k, p))}
 								ontitle={(title) => paneAgents.title(adeLayout.ptyKey(k, p), title)}
+								onprogram={(e) => {
+									paneProgram.apply(pk, e);
+									if (e.type === 'input') paneAgents.input(pk);
+								}}
 								onbell={() => terminalBells.ring(k, t.id)}
 								onfocus={() => adeLayout.focusPaneOf(k, t.id, p)}
 								onaction={(a) => paneAction(k, t.id, p, a)}
 								onopenfile={(rel, line, column) => openLinkedFile(k, rel, line, column)}
 								onopenurl={(url, system) => openLinkInApp(k, url, system)}
+								onconnect={(how) => paneSleep.connected(pk, how)}
 							/>
 						{/snippet}
 					</PaneSplitView>
@@ -479,22 +593,21 @@
 			{/each}
 			{#each [...rects] as [id, r] (id)}
 				{#if id === activeTab}<div class="pointer-events-none absolute z-10 rounded-sm border border-(--vscode-focusBorder)/60" style={rectStyle(r)}></div>{/if}
-				<button
-					class="absolute z-10 grid size-5 place-items-center rounded bg-(--vscode-editor-background)/80 text-(--vscode-icon-foreground) hover:bg-(--vscode-toolbar-hoverBackground)"
-					style={`top:calc(${pct(r.y)} + 4px);left:calc(${pct(r.x + r.w)} - 26px)`}
-					aria-label={t('ade.split.closeRegion')}
-					title={t('ade.split.closeRegion')}
-					onclick={() => adeLayout.closeRegion(key, id)}><Icon name="close" size={12} /></button
-				>
+			{/each}
+			<!-- Each region's own tab strip (Orca's tab group header); keyed by group, so a strip stays as its tabs change. -->
+			{#each strips as s (s.group)}
+				<div class="absolute z-10 overflow-hidden" style={stripStyle(s.rect, STRIP)}>
+					<AdeTabBar group={s.group} extras={s.extras} />
+				</div>
 			{/each}
 		{/if}
 		{#if adeLayout.draggingTab && dropAt}
 			{@const r = dropAt.rect}
 			<div
 				class="pointer-events-none absolute z-20 rounded border-2 border-(--vscode-focusBorder) bg-(--vscode-focusBorder)/15"
-				style={dropAt.dir === 'right' ? rectStyle({ ...r, x: r.x + r.w / 2, w: r.w / 2 }) : rectStyle({ ...r, y: r.y + r.h / 2, h: r.h / 2 })}
+				style={dropPreview(dropAt.dir, r)}
 			>
-				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{dropAt.dir === 'right' ? t('ade.split.dropRight') : t('ade.split.dropDown')}</span>
+				<span class="absolute top-2 left-2 rounded bg-(--vscode-editor-background) px-1.5 py-0.5 text-xs">{t(DROP_LABEL[dropAt.dir])}</span>
 			</div>
 		{/if}
 		</div>

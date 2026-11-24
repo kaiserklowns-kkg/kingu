@@ -45,13 +45,16 @@ import { t } from '#lib/i18n/index.ts';
 import { applyEvent, initialRun, type AgentEvent, type Decision, type McpAction, type RunState } from './events';
 import { buildTurns, lastRequest } from './chatParts.ts';
 import { CLAUDE_RUNTIME, runtimeOf } from './runtimes.ts';
+import { ARKAI_RUNTIME } from './arkai.ts';
 import { withoutImagesLine } from './chatPrompt.ts';
 import { shouldDrain, turnBusy, type RunPermissionMode } from './chatInput.ts';
 import { moveItem } from './composer.ts';
 import type { SendHow } from './requestQueuing.ts';
 import { chatTitlePrompt, parseChatTitle } from './chatTitle.ts';
 import { forkTitle, rewoundMeta, type ForkPoint } from './chatRewind.ts';
-import { chatsToResume, RESUME_PROMPT } from './chatResume.ts';
+import { chatsToResume, interruptedChats, resumePrompt } from './chatResume.ts';
+import { CONTINUE_MESSAGE, cutOf, formatResetClock, nextAutoContinue, rejectedRateLimit, turnUsageLimit, type UsageLimit } from './chatLimits.ts';
+import { saveDraft } from './chatDrafts.ts';
 import { autoApprover } from './toolApproval.ts';
 import type { Effort } from './effort.ts';
 import { resolveLaunchSpec } from './launchSpec.ts';
@@ -115,6 +118,10 @@ class Chats {
 	 * chats.json is in the folder, so a repository could ship one that turns every prompt off.
 	 */
 	allowAll = $state<Record<string, true>>({});
+	/** Chats in "Assisted permissions" until the app quits, by run key; never saved, like `allowAll`. */
+	assisted = $state<Record<string, true>>({});
+	/** The user confirmed "Assisted permissions" once in this app session. */
+	assistedConfirmed = false;
 	/** The user confirmed "Allow all" once in this app session. */
 	allowAllConfirmed = false;
 
@@ -167,6 +174,7 @@ class Chats {
 			notifications.error(t('chat.loadFailed', { error: String(e) }));
 		}
 		this.loaded = true;
+		this.#armLimits();
 		void this.#dropSideChats(root).then(() => this.#resumeCutOff(root));
 	}
 
@@ -174,30 +182,167 @@ class Chats {
 	async #dropSideChats(root: string) {
 		for (const c of this.list.filter((c) => c.side_of && (this.runs[runKey(root, c.id)]?.ended ?? true))) {
 			if (this.root !== root) return;
-			await this.remove(c.id);
+			// After a reload its run may still be live in the agent host, unknown to this page.
+			await this.remove(c.id, { stopLive: true });
 		}
 	}
 
 	/** Folders whose cut-off chats were looked at in this app session (once each). */
 	#resumeChecked = new Set<string>();
 
-	/** Chats Kingu quit in the middle of: continued (kingu.chat.resumeWorkOnRestart), else just no longer marked working. */
+	/**
+	 * Chats Kingu quit or crashed in the middle of (Orca 1.4.272): marked `interrupted` (whether it
+	 * crashed, from the transcript); continued at once with kingu.chat.resumeWorkOnRestart, else
+	 * offered: one notification with Resume, and a row in each chat (ChatResumeNotice).
+	 */
 	async #resumeCutOff(root: string) {
 		if (this.#resumeChecked.has(root)) return;
 		this.#resumeChecked.add(root);
 		const cut = chatsToResume(this.list, (id) => !!this.runs[runKey(root, id)]);
+		// Working, but no session to resume (it died before its first answer): just not working any more.
+		for (const c of this.list.filter((c) => c.working && !c.session_id && !this.runs[runKey(root, c.id)])) this.#patch(root, c.id, { working: false });
 		if (!cut.length) return;
-		for (const c of cut) this.#patch(root, c.id, { working: false });
-		if (settings.get<boolean>('kingu.chat.resumeWorkOnRestart') !== true) return;
+		const now = Date.now();
+		for (const c of cut) {
+			const info = await invoke<{ crash: boolean; partial: string | null }>('chat_cut_off', { id: c.id }).catch(() => ({ crash: false, partial: null }));
+			if (this.root !== root) return;
+			if (info.partial) this.#partials.set(runKey(root, c.id), info.partial);
+			this.#patch(root, c.id, { working: false, interrupted: { at: now, crash: info.crash }, updated_at: c.updated_at });
+		}
+		if (settings.get<boolean>('kingu.chat.resumeWorkOnRestart') === true) {
+			const sent = await this.resumeInterrupted(cut.map((c) => c.id));
+			if (sent) status.flash(t('adeWorkflow.chatsResumed', { count: sent }));
+			return;
+		}
+		const shown = interruptedChats(this.list).filter((c) => cut.some((x) => x.id === c.id));
+		if (!shown.length) return;
+		const crashed = shown.some((c) => c.interrupted?.crash);
+		const message = shown.length === 1 ? t(crashed ? 'chatResume.offerOneCrash' : 'chatResume.offerOne', { title: shown[0].title }) : t(crashed ? 'chatResume.offerCrash' : 'chatResume.offer', { count: shown.length });
+		const handle = notifications.info(message, {
+			sticky: true,
+			actions: [
+				{
+					label: t('chatResume.resume'),
+					run: async () => {
+						handle.close();
+						const sent = await this.resumeInterrupted(shown.map((c) => c.id));
+						if (sent) status.flash(t('adeWorkflow.chatsResumed', { count: sent }));
+					}
+				},
+				{ label: t('chatResume.always'), run: () => (handle.close(), void settings.set('kingu.chat.resumeWorkOnRestart', true, 'user').then(() => this.resumeInterrupted(shown.map((c) => c.id)))) }
+			]
+		});
+	}
+
+	/** The reply a crash cut off (chat_cut_off), by run key: quoted in the resume message. */
+	#partials = new Map<string, string>();
+
+	/** Continue (Resume) on chats Kingu's exit cut off: each gets the resume message once; the count sent. */
+	async resumeInterrupted(ids: string[]): Promise<number> {
+		const root = this.root;
+		if (!root) return 0;
 		let sent = 0;
-		for (const c of cut) if (await this.send(c.id, { text: RESUME_PROMPT, images: [], files: [] })) sent++;
-		if (sent) status.flash(t('adeWorkflow.chatsResumed', { count: sent }));
+		for (const id of ids) {
+			const meta = this.get(id);
+			if (!meta?.interrupted || turnBusy(this.run(id))) continue;
+			// Kept from the launch, else read again (a chat left cut off across another restart).
+			const partial = this.#partials.get(runKey(root, id)) ?? (await invoke<{ partial: string | null }>('chat_cut_off', { id }).then((r) => r.partial, () => null));
+			if (await this.send(id, { text: resumePrompt(partial), images: [], files: [] })) {
+				this.#partials.delete(runKey(root, id));
+				sent++;
+			}
+		}
+		return sent;
+	}
+
+	/** Dismiss on a cut-off chat's row: no Resume offered for it any more. */
+	dismissInterrupted(id: string) {
+		if (this.root && this.get(id)?.interrupted) {
+			this.#partials.delete(runKey(this.root, id));
+			this.#patch(this.root, id, { interrupted: null, updated_at: this.get(id)!.updated_at });
+		}
+	}
+
+	/** Whether Kingu's checkpoint kept a reply the chat's cut-off turn was streaming. */
+	hasPartial(id: string): boolean {
+		return !!this.root && this.#partials.has(runKey(this.root, id));
+	}
+
+	// --- Usage limits (chatLimits.ts) ---------------------------------------------------------
+
+	/** Continue on a usage-limit row: "Continue where you left off." (Orca's message). */
+	continueAfterLimit(id: string): Promise<boolean> {
+		return this.send(id, { text: CONTINUE_MESSAGE, images: [], files: [] });
+	}
+
+	/** Cancel on the row's automatic-continue line: this cut stays manual. */
+	cancelAutoContinue(id: string) {
+		const cut = this.get(id)?.usage_limit;
+		if (this.root && cut) this.#patch(this.root, id, { usage_limit: { ...cut, auto_off: true }, updated_at: this.get(id)!.updated_at });
+	}
+
+	/** Undo of Cancel: Kingu continues the cut at its reset again. */
+	resumeAutoContinue(id: string) {
+		const cut = this.get(id)?.usage_limit;
+		if (this.root && cut) this.#patch(this.root, id, { usage_limit: { ...cut, auto_off: false }, updated_at: this.get(id)!.updated_at });
+	}
+
+	/** Dismiss on a usage-limit row. */
+	dismissLimit(id: string) {
+		if (this.root && this.get(id)?.usage_limit) this.#patch(this.root, id, { usage_limit: null, updated_at: this.get(id)!.updated_at });
+	}
+
+	#limitTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/**
+	 * Arms the automatic continue of the open folder's next usage-limit cut
+	 * (kingu.chat.autoContinueAfterUsageLimit): woken at its reset, and at least every minute so
+	 * a sleep or a clock change is noticed (Orca's use-usage-limit-continue-clock).
+	 */
+	#armLimits() {
+		clearTimeout(this.#limitTimer);
+		this.#limitTimer = undefined;
+		const root = this.root;
+		// Armed whatever the setting says (read when it fires), so turning it on is noticed within a minute.
+		if (!root) return;
+		const next = nextAutoContinue(this.list, Date.now());
+		if (!next) return;
+		const delay = Math.max(0, next.at - Date.now());
+		this.#limitTimer = setTimeout(() => void this.#fireLimits(root), Math.min(delay, 60_000));
+	}
+
+	async #fireLimits(root: string) {
+		this.#limitTimer = undefined;
+		if (root !== this.root) return;
+		const now = Date.now();
+		if (settings.get<boolean>('kingu.chat.autoContinueAfterUsageLimit') !== false) {
+			for (let n = this.list.length; n > 0; n--) {
+				const next = nextAutoContinue(this.list, now);
+				if (!next || next.at > now) break;
+				const meta = this.get(next.id)!;
+				// Busy again (the user went on by hand) or sent: the cut is gone either way.
+				if (turnBusy(this.run(next.id)) || !(await this.continueAfterLimit(next.id))) this.#patch(root, next.id, { usage_limit: { ...meta.usage_limit!, auto_off: true }, updated_at: meta.updated_at });
+				else status.flash(t('chatLimits.continued', { title: meta.title }));
+				if (root !== this.root) return;
+			}
+		}
+		this.#armLimits();
+	}
+
+	/** A turn that stopped on a usage limit: kept on the chat (its row, the automatic continue). */
+	#noteLimit(root: string, id: string, limit: UsageLimit) {
+		const meta = this.get(id);
+		if (root !== this.root || !meta) return;
+		this.#patch(root, id, { usage_limit: cutOf(limit, Date.now()) });
+		const when = limit.resetsAt ? formatResetClock(limit.resetsAt, Date.now()) : null;
+		status.flash(when ? t('chatLimits.flashAt', { title: meta.title, time: when }) : t('chatLimits.flash', { title: meta.title }), 8000);
 	}
 
 	/** Saves the open folder's list (in order: one write at a time). Runs of another folder are not saved here. */
 	#save(next: ChatMeta[], root: string | null) {
 		if (!root || root !== this.root) return;
 		this.list = next;
+		this.#armLimits();
 		const snapshot = $state.snapshot(next);
 		this.#saving = this.#saving.then(() => invoke('chats_save', { chats: snapshot }).catch((e) => notifications.error(t('chat.saveFailed', { error: String(e) }))));
 	}
@@ -230,6 +375,8 @@ class Chats {
 		model: string | null;
 		permissionMode: RunPermissionMode;
 		message: OutgoingMessage;
+		/** A side chat of chat `sideOf` (VS Code's nested session with another harness): kept out of the history like a forked one. */
+		sideOf?: string;
 		runtime?: string;
 		agent?: string | null;
 		effort?: Effort | null;
@@ -238,11 +385,14 @@ class Chats {
 		if (!root || !input.prompt.trim()) return;
 		if (root !== this.root) await this.load();
 		const allowAll = input.permissionMode === 'bypassPermissions';
+		const assisted = input.permissionMode === 'assisted';
 		const meta = newChat(
-			{ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent, effort: input.effort },
+			{ prompt: input.prompt, cwd: input.cwd, model: input.model, permissionMode: allowAll || assisted ? 'default' : (input.permissionMode as PermissionMode), runtime: input.runtime, agent: input.agent, effort: input.effort },
 			Date.now()
 		);
+		if (input.sideOf) meta.side_of = input.sideOf;
 		if (allowAll) this.allowAll[runKey(root, meta.id)] = true;
+		if (assisted) this.assisted[runKey(root, meta.id)] = true;
 		this.#save([...this.list, meta], root);
 		await this.#saving;
 		this.#lastImages.set(runKey(root, meta.id), input.message);
@@ -296,8 +446,20 @@ class Chats {
 		const onEvent = new Channel<AgentEvent>();
 		// chat.tools.global.autoApprove: tool prompts answered here (not questions, not Kingu's always-ask checks).
 		const autoApprove = autoApprover(() => settings.get<boolean>('chat.tools.global.autoApprove') === true);
+		// A usage limit Claude Code's rate_limit_event said rejects requests: its window and reset (chatLimits.ts).
+		let rejected: UsageLimit | null = null;
+		let limited = false;
 		onEvent.onmessage = (ev) => {
 			applyEvent(state, ev);
+			if (ev.kind === 'raw') rejected = rejectedRateLimit(ev.line, Date.now()) ?? rejected;
+			if (ev.kind === 'message' && ev.role === 'user' && !ev.parent_tool_use_id) limited = false;
+			if (!limited && ((ev.kind === 'result' && ev.is_error) || ev.kind === 'exit')) {
+				const limit = turnUsageLimit(state.items, Date.now(), rejected);
+				if (limit) {
+					limited = true;
+					this.#noteLimit(root, meta.id, limit);
+				}
+			}
 			for (const fn of this.#listeners) fn(meta.id, ev);
 			const approve = autoApprove(ev);
 			if (approve && state.runId !== undefined) {
@@ -315,15 +477,19 @@ class Chats {
 			// The chat's first answer (its timeline keeps earlier runs): time for an AI title.
 			if (ev.kind === 'result' && !ev.is_error && state.items.filter((i) => i.kind === 'result').length === 1) void this.#aiTitle(root, meta.id, ev.result);
 		};
+		// A new turn: the usage limit and the cut-off offer it answers are over (cleared first: its
+		// own events may report a new limit before agent_start returns).
+		if (meta.usage_limit || meta.interrupted) this.#patch(root, meta.id, { usage_limit: null, interrupted: null });
 		try {
 			state.runId = await invoke<number>('agent_start', {
 				root,
 				cwd,
 				chatId: meta.id,
 				prompt,
-				// Another agent picks its own model (no model picker for it: runtimes.ts).
-				model: runtimeOf(meta) === CLAUDE_RUNTIME ? meta.model : null,
-				permissionMode: this.allowAll[key] ? 'bypassPermissions' : meta.permission_mode,
+				// Claude's model, and Arkai's `provider/model` (Rust `arkai::run_spec`; without it a run
+				// takes the first provider's first model). Another agent picks its own (runtimes.ts).
+				model: runtimeOf(meta) === CLAUDE_RUNTIME || runtimeOf(meta) === ARKAI_RUNTIME ? meta.model : null,
+				permissionMode: this.allowAll[key] ? 'bypassPermissions' : this.assisted[key] ? 'assisted' : meta.permission_mode,
 				resume,
 				resumeAt,
 				mcpServers: Object.keys(mcp).length ? mcp : null,
@@ -369,6 +535,7 @@ class Chats {
 			const plan = chatSendPlan(run, meta.session_id);
 			if (plan.kind === 'send') {
 				if (run?.runId === undefined) throw new Error(t('team.agent.stillStarting'));
+				if (meta.usage_limit || meta.interrupted) this.#patch(root, id, { usage_limit: null, interrupted: null });
 				await invoke('agent_send', { runId: run.runId, text: message.text, images: message.images.length ? message.images : null });
 				this.#patch(root, id, { working: true });
 			} else await this.#start(root, meta, message.text, plan.resume, message.images, message.files);
@@ -580,6 +747,12 @@ class Chats {
 		await invoke('agent_answer_mcp', { runId: run.runId, requestId, action, content: content ?? null, remember: remember ?? null }).catch((e) => notifications.error(t('chat.answerFailed', { error: String(e) })));
 	}
 
+	/** The sign-in card's Sign in (agentSignIn.ts): the agent runs its own sign-in, or is asked again. */
+	async signIn(id: string) {
+		const run = this.run(id);
+		if (run?.runId !== undefined && !run.ended) await invoke('agent_sign_in', { runId: run.runId }).catch((e) => notifications.error(t('managedCli.actionFailed', { error: String(e) })));
+	}
+
 	async interrupt(id: string) {
 		const run = this.run(id);
 		if (run?.runId !== undefined && !run.ended) await invoke('agent_interrupt', { runId: run.runId }).catch((e) => notifications.error(e));
@@ -605,13 +778,16 @@ class Chats {
 		const meta = this.get(id);
 		if (!this.root || !meta) return null;
 		const key = runKey(this.root, id);
-		if (mode === 'bypassPermissions') {
+		if (mode === 'bypassPermissions' || mode === 'assisted') {
 			const when = await this.#setOption(id, { permission_mode: meta.permission_mode === 'plan' ? 'default' : meta.permission_mode }, { permissionMode: mode });
-			if (when) this.allowAll[key] = true;
+			if (when) {
+				if (mode === 'bypassPermissions') (this.allowAll[key] = true), delete this.assisted[key];
+				else (this.assisted[key] = true), delete this.allowAll[key];
+			}
 			return when;
 		}
 		const when = await this.#setOption(id, { permission_mode: mode }, { permissionMode: mode });
-		if (when) delete this.allowAll[key];
+		if (when) delete this.allowAll[key], delete this.assisted[key];
 		return when;
 	}
 
@@ -651,6 +827,11 @@ class Chats {
 	/** The chat runs with "Allow all". */
 	isAllowAll(id: string): boolean {
 		return !!this.root && !!this.allowAll[runKey(this.root, id)];
+	}
+
+	/** The chat runs with "Assisted permissions". */
+	isAssisted(id: string): boolean {
+		return !!this.root && !!this.assisted[runKey(this.root, id)];
 	}
 
 	async #setOption(id: string, patch: Partial<ChatMeta>, wire: { model?: string | null; permissionMode?: RunPermissionMode; effort?: Effort }): Promise<'live' | 'next' | null> {
@@ -705,26 +886,54 @@ class Chats {
 	}
 
 	/** Deletes the chat and its transcript; refused (by Rust too) while its agent runs. */
-	async remove(id: string): Promise<boolean> {
+	/** `stopLive`: stop its run first, even one this page does not know about (a side chat after a reload). */
+	async remove(id: string, opts: { stopLive?: boolean } = {}): Promise<boolean> {
 		const root = this.root;
 		const meta = this.get(id);
 		if (!root || !meta) return false;
 		const run = this.run(id);
-		if (run && !run.ended) {
+		if (run && !run.ended && !opts.stopLive) {
 			notifications.error(t('chat.stopFirst'));
 			return false;
 		}
 		try {
-			await invoke('chat_transcript_delete', { id, sessionId: meta.session_id });
+			await invoke('chat_transcript_delete', { id, sessionId: meta.session_id, stop: opts.stopLive ?? false });
 		} catch (e) {
 			notifications.error(t('chat.deleteFailed', { error: String(e) }));
 			return false;
 		}
+		this.#drop(root, id);
+		// Orca deletes the chat's composer draft with it; its side chats go too (their drawer is gone).
+		saveDraft(id, '');
+		for (const side of this.list.filter((c) => c.side_of === id)) if (!this.run(side.id) || this.run(side.id)!.ended) await this.remove(side.id);
+		return true;
+	}
+
+	#drop(root: string, id: string) {
+		this.#partials.delete(runKey(root, id));
 		delete this.runs[runKey(root, id)];
 		delete this.queues[runKey(root, id)];
 		delete this.allowAll[runKey(root, id)];
+		delete this.assisted[runKey(root, id)];
 		this.#save(removeChat(this.list, id), root);
-		return true;
+	}
+
+	/**
+	 * Workspace Cleanup (Orca `forgetHostNativeChats`): a chat of a deleted workspace. Rust proves again
+	 * that its worktree is gone, unlisted and the chat at rest, then deletes its transcript and edits;
+	 * the bytes freed, or null when it is kept. A chat that was opened or run in this window may be on
+	 * screen, so it is always kept.
+	 */
+	async forgetDeleted(id: string): Promise<number | null> {
+		const root = this.root;
+		const meta = this.get(id);
+		if (!root || !meta || meta.cwd.kind !== 'task' || this.runs[runKey(root, id)]) return null;
+		const freed = await invoke<number | null>('workspace_cleanup_chat_forget', { id });
+		if (freed === null) return null;
+		// Its transcript is gone now: the row goes too, unless a run started here meanwhile.
+		const run = this.runs[runKey(root, id)];
+		if (this.root === root && (!run || run.ended || run.runId === undefined)) this.#drop(root, id);
+		return freed;
 	}
 }
 

@@ -1,15 +1,17 @@
 <script lang="ts">
 	// The welcome tour starts with a concrete choice, then gives the small set of shortcuts that
-	// make the IDE + Agents split discoverable. Esc or Skip closes it for good.
+	// make the IDE + Agents split discoverable. Esc or Skip closes it for good. Orca's onboarding
+	// steps come after the first: the default agent, the theme and notifications (WelcomeSetup.svelte).
 	import type { IconName } from './Icon.svelte';
 	import Icon from './Icon.svelte';
 	import KinguMark from './KinguMark.svelte';
+	import WelcomeSetup from './WelcomeSetup.svelte';
 	import { commands } from './commands.svelte';
 	import { welcome } from './welcomeTour.svelte';
 	import { t } from '#lib/i18n/index.ts';
 
 	type Action = { label: string; command: string; primary?: boolean };
-	type Step = { icon: IconName | 'kingu'; title: string; body: string; keys: [string, string][]; actions?: Action[] };
+	type Step = { icon: IconName | 'kingu'; title: string; body: string; keys: [string, string][]; actions?: Action[]; setup?: 'agent' | 'theme' | 'integrations' | 'notify' };
 	const STEPS = $derived.by((): Step[] => [
 		{
 			icon: 'kingu',
@@ -24,6 +26,10 @@
 				{ label: t('legacyWorkbench.welcome.newProject'), command: 'kingu.newProject' }
 			]
 		},
+		{ icon: 'agent', title: t('legacyWorkbench.welcome.agentTitle'), body: t('legacyWorkbench.welcome.agentBody'), keys: [], setup: 'agent' },
+		{ icon: 'settings', title: t('legacyWorkbench.welcome.themeTitle'), body: t('legacyWorkbench.welcome.themeBody'), keys: [], setup: 'theme' },
+		{ icon: 'git', title: t('legacyWorkbench.welcome.integrationsTitle'), body: t('legacyWorkbench.welcome.integrationsBody'), keys: [], setup: 'integrations' },
+		{ icon: 'bell', title: t('legacyWorkbench.welcome.notifyTitle'), body: t('legacyWorkbench.welcome.notifyBody'), keys: [], setup: 'notify' },
 		{
 			icon: 'agent',
 			title: t('legacyWorkbench.welcome.agentsTitle'),
@@ -64,6 +70,8 @@
 		void commands.run(command);
 	}
 	function onkeydown(e: KeyboardEvent) {
+		// A connect dialog opened from a step (it sits above the tour) takes its own keys.
+		if (document.querySelector('dialog[open]')) return;
 		if (e.key === 'Escape') welcome.close();
 		else if (e.key === 'ArrowRight' && !last) step++;
 		else if (e.key === 'ArrowLeft' && step > 0) step--;
@@ -91,6 +99,9 @@
 					</span>
 				{/each}
 			</div>
+			{#if s.setup}
+				<div class="mt-1 w-full">{#key s.setup}<WelcomeSetup part={s.setup} />{/key}</div>
+			{/if}
 			{#if s.actions}
 				<div class="mt-2 flex flex-wrap justify-center gap-2">
 					{#each s.actions as action (action.command)}

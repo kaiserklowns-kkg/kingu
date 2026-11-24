@@ -36,6 +36,7 @@ export type WorkspaceCleanupKeepCause =
 	| 'project-off'
 	| 'rules-off'
 	| 'pinned'
+	| 'already-archived'
 	| 'no-rule-matched'
 	| 'waiting'
 	| 'recently-active'
@@ -48,7 +49,6 @@ export type WorkspaceCleanupKeepCause =
 	| 'unpushed-commits'
 	| 'ignored-files'
 	| 'git-unknown'
-	| 'archive-unavailable'
 	| 'archive-script'
 	| 'removing';
 
@@ -138,6 +138,7 @@ export function evaluateWorkspaceCleanup(
 	if (policy.source === 'project-off') return { action: 'keep', cause: 'project-off' };
 	if (!hasEnabledWorkspaceCleanupRule(policy.rules)) return { action: 'keep', cause: 'rules-off' };
 	if (input.blockers.includes('pinned')) return { action: 'keep', cause: 'pinned' };
+	if (input.reasons.includes('archived')) return { action: 'keep', cause: 'already-archived' };
 
 	const elapsedMs = now - input.lastActivityAt;
 	const matches = matchRules(input, policy, elapsedMs);
@@ -154,7 +155,5 @@ export function evaluateWorkspaceCleanup(
 	if (protection) return { action: 'keep', cause: protection, reason };
 
 	if (reason !== 'inactive' || policy.rules.inactive.action === 'delete') return { action: 'delete', reason };
-	return policy.inactiveActionSupported
-		? { action: 'archive', reason }
-		: { action: 'keep', cause: 'archive-unavailable', reason };
+	return { action: 'archive', reason };
 }

@@ -21,6 +21,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -62,6 +63,18 @@ type Config struct {
 	MaxStreams int
 	// PruneInterval is how often expired org_events are deleted (default 10m).
 	PruneInterval time.Duration
+	// OIDC, when set, accepts ID tokens from that provider (see oidc.go).
+	OIDC *OIDCConfig
+	// OIDCProviders are further identity providers, one org each, picked by the
+	// token's issuer (OIDC, when set, is one of them).
+	OIDCProviders []OIDCConfig
+	// RateLimitStore is "memory" (default: per replica) or "postgres" (shared
+	// by every replica through the rate_limits table).
+	RateLimitStore string
+	// TrustedProxies are the load balancers / reverse proxies in front of the
+	// API. Only for requests from them is X-Forwarded-For used to find the
+	// client IP (for the failed-auth limit and logs).
+	TrustedProxies []netip.Prefix
 }
 
 func (c Config) withDefaults() Config {
@@ -89,9 +102,9 @@ type Server struct {
 	logger  *slog.Logger
 	cfg     Config
 	auth    []Authenticator
-	limiter *rateLimiter
+	limiter limiter
 	// failLimiter throttles failed authentication attempts per client IP.
-	failLimiter *rateLimiter
+	failLimiter limiter
 	broker      *broker
 	streams     *streamCounter
 }
@@ -107,12 +120,27 @@ func New(pool *pgxpool.Pool, logger *slog.Logger, cfg Config) *Server {
 		logger:      logger,
 		cfg:         cfg,
 		limiter:     newRateLimiter(cfg.RateLimit, cfg.RateBurst),
-		failLimiter: newRateLimiter(1, 20),
+		failLimiter: newRateLimiter(failRate, failBurst),
 		broker:      newBroker(pool, logger),
 		streams:     &streamCounter{n: map[string]int{}},
 	}
-	// TODO(auth/OIDC): prepend an OIDC Authenticator here (see auth.go).
+	if cfg.RateLimitStore == "postgres" {
+		s.limiter = newPGLimiter(pool, logger, "req", cfg.RateLimit, cfg.RateBurst)
+		s.failLimiter = newPGLimiter(pool, logger, "fail", failRate, failBurst)
+	}
 	s.auth = []Authenticator{&tokenAuthenticator{pool: pool}}
+	providers := cfg.OIDCProviders
+	if cfg.OIDC != nil {
+		providers = append([]OIDCConfig{*cfg.OIDC}, providers...)
+	}
+	// First: they claim only bearer values shaped like a JWT, each its own issuer's when there are several.
+	var oidc []Authenticator
+	for _, p := range providers {
+		a := newOIDCAuthenticator(pool, p)
+		a.multi = len(providers) > 1
+		oidc = append(oidc, a)
+	}
+	s.auth = append(oidc, s.auth...)
 	if cfg.Dev {
 		s.auth = append(s.auth, devHeaderAuthenticator{})
 	}
@@ -133,16 +161,31 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.handleHealth)
 
 	mux.Handle("GET /v1/me", s.org(s.me))
+	mux.Handle("POST /v1/auth/session", s.orgSelf(s.createSession))
 	mux.Handle("POST /v1/projects", s.org(s.createProject))
 	mux.Handle("GET /v1/projects", s.org(s.listProjects))
+	mux.Handle("GET /v1/projects/{id}", s.org(s.getProject))
+	mux.Handle("PATCH /v1/projects/{id}", s.org(s.patchProject))
+	mux.Handle("DELETE /v1/projects/{id}", s.org(s.deleteProject))
 	mux.Handle("POST /v1/projects/{id}/tasks", s.org(s.createTask))
 	mux.Handle("GET /v1/projects/{id}/tasks", s.org(s.listTasks))
 	mux.Handle("GET /v1/tasks", s.org(s.listOrgTasks))
+	mux.Handle("GET /v1/tasks/{id}", s.org(s.getTask))
 	mux.Handle("PATCH /v1/tasks/{id}", s.org(s.patchTask))
+	mux.Handle("DELETE /v1/tasks/{id}", s.org(s.deleteTask))
 	mux.Handle("PUT /v1/tasks/{id}/sync", s.org(s.syncTask))
 	mux.Handle("POST /v1/tasks/{id}/runs", s.org(s.createRun))
 	mux.Handle("PUT /v1/tasks/{id}/runs/{run}/sync", s.org(s.syncRun))
 	mux.Handle("GET /v1/runs", s.org(s.listRuns))
+	mux.Handle("POST /v1/runs/{id}/close", s.org(s.closeRun))
+	mux.Handle("GET /v1/tokens", s.org(s.listTokens))
+	mux.Handle("POST /v1/tokens", s.orgSelf(s.createToken))
+	mux.Handle("DELETE /v1/tokens/{id}", s.orgSelf(s.revokeToken))
+	mux.Handle("GET /v1/members", s.org(s.listMembers))
+	mux.Handle("PUT /v1/members/{user}", s.org(s.putMember))
+	mux.Handle("DELETE /v1/members/{user}", s.org(s.deleteMember))
+	mux.Handle("PATCH /v1/org", s.org(s.patchOrg))
+	mux.Handle("GET /v1/audit", s.org(s.listAudit))
 	mux.Handle("GET /v1/snaps", s.org(s.listSnaps))
 	mux.Handle("PUT /v1/snaps/{id}", s.org(s.putSnap))
 	mux.Handle("DELETE /v1/snaps/{id}", s.org(s.deleteSnap))
@@ -240,12 +283,52 @@ type orgCtx struct {
 
 type orgHandler func(r *http.Request, oc orgCtx, tx pgx.Tx) (status int, body any, err error)
 
-func clientIP(r *http.Request) string {
+// Failed authentication: 1 per second per client IP, burst 20.
+const (
+	failRate  = 1
+	failBurst = 20
+)
+
+// clientIP is the address the request came from. When that is a trusted
+// proxy, it walks X-Forwarded-For from the right (the part trusted proxies
+// appended) and returns the first address that is not a trusted proxy, so a
+// client cannot pick its own IP by sending the header itself.
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	addr, err := netip.ParseAddr(host)
+	if err != nil || !s.trusted(addr) {
+		return host
+	}
+	var hops []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		for _, part := range strings.Split(h, ",") {
+			hops = append(hops, strings.TrimSpace(part))
+		}
+	}
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(hops[i])
+		if err != nil {
+			break // malformed: stop at the last address we could trust
+		}
+		if !s.trusted(a) {
+			return a.Unmap().String()
+		}
+		addr = a
+	}
+	return addr.Unmap().String()
+}
+
+func (s *Server) trusted(a netip.Addr) bool {
+	a = a.Unmap()
+	for _, p := range s.cfg.TrustedProxies {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // authenticate resolves the caller and applies the per-credential rate limit.
@@ -258,7 +341,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*Principa
 			e := s.toAPIError(r, err)
 			if e.Status == http.StatusUnauthorized {
 				// Slow down token guessing from one address.
-				if ok, wait := s.failLimiter.allow("ip:" + clientIP(r)); !ok {
+				if ok, wait := s.failLimiter.allow(r.Context(), "ip:"+s.clientIP(r)); !ok {
 					writeRateLimited(w, wait)
 					return nil, false
 				}
@@ -279,7 +362,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*Principa
 		}
 		return nil, false
 	}
-	if ok, wait := s.limiter.allow(p.Key); !ok {
+	if ok, wait := s.limiter.allow(r.Context(), p.Key); !ok {
 		writeRateLimited(w, wait)
 		return nil, false
 	}
@@ -294,18 +377,27 @@ func writeRateLimited(w http.ResponseWriter, wait time.Duration) {
 }
 
 // org authenticates the caller, then runs h inside a transaction with
-// app.org_id set so RLS scopes every query to the caller's org.
+// app.org_id set so RLS scopes every query to the caller's org. Viewers get
+// 403 on every method but GET/HEAD.
 func (s *Server) org(h orgHandler) http.Handler { return s.orgLimit(h, MaxBodyBytes) }
 
 // orgLimit is org with its own request body cap (a shared artifact's page is
 // far larger than any metadata body).
 func (s *Server) orgLimit(h orgHandler, limit int64) http.Handler {
+	return s.orgHandle(h, limit, false)
+}
+
+// orgSelf is org for writes that a viewer may make about themselves (their own
+// tokens). The handler must check the role itself.
+func (s *Server) orgSelf(h orgHandler) http.Handler { return s.orgHandle(h, MaxBodyBytes, true) }
+
+func (s *Server) orgHandle(h orgHandler, limit int64, viewerWrites bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := s.authenticate(w, r)
 		if !ok {
 			return
 		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !p.canWrite() {
+		if !viewerWrites && r.Method != http.MethodGet && r.Method != http.MethodHead && !p.canWrite() {
 			writeError(w, errForbidden)
 			return
 		}
@@ -422,10 +514,15 @@ func audit(ctx context.Context, tx pgx.Tx, oc orgCtx, action, targetType, target
 	if details == nil {
 		details = map[string]any{}
 	}
+	// target_id is a uuid; targets keyed by text (members) record it in details.
+	var target *string
+	if targetID != "" {
+		target = &targetID
+	}
 	_, err := tx.Exec(ctx,
 		`INSERT INTO audit_log (org_id, actor, action, target_type, target_id, details)
 		 VALUES (app_current_org(), $1, $2, $3, $4, $5)`,
-		oc.Actor, action, targetType, targetID, details)
+		oc.Actor, action, targetType, target, details)
 	return err
 }
 
@@ -449,7 +546,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		s.logger.Info("http request", "method", r.Method, "path", r.URL.Path,
+		s.logger.Info("http request", "method", r.Method, "path", r.URL.Path, "client", s.clientIP(r),
 			"status", rec.status, "duration", time.Since(start))
 	})
 }

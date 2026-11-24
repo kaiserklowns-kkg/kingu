@@ -79,6 +79,10 @@ crate::i18n::messages! {
       en: "Linear did not save the comment",
       th: "Linear ไม่ได้บันทึก comment",
     },
+    StateNotSaved {
+      en: "Linear did not change the status",
+      th: "Linear ไม่ได้เปลี่ยนสถานะ",
+    },
     OnlyLinearLinks {
       en: "Only https://linear.app links can be opened",
       th: "เปิดได้เฉพาะลิงก์ https://linear.app",

@@ -4,6 +4,8 @@
 //! Agents view.
 
 pub mod ai_text;
+pub mod antigravity;
+pub mod antigravity_auth;
 pub mod automations;
 pub mod chat_debug;
 pub mod chat_edits;
@@ -15,6 +17,7 @@ pub mod customizations;
 pub mod cli;
 pub mod events;
 pub mod forge;
+pub mod gh_account;
 pub mod home;
 pub mod gh_projects;
 pub mod hooks;
@@ -22,13 +25,16 @@ pub mod hunks;
 pub mod host;
 pub mod issues;
 pub mod kingu_yaml;
+pub mod managed_cli;
 pub mod mcp;
 pub mod mcp_chat;
+pub mod mcp_policy;
 pub mod memories;
 pub mod mr;
 pub mod notes;
 pub mod op_ledger;
 pub mod open_in;
+pub mod permission_rules;
 pub mod orchestration;
 pub mod pr;
 pub mod review;
@@ -37,6 +43,7 @@ pub mod rewind;
 pub mod arkai;
 pub mod runtimes;
 pub mod safety_asks;
+pub mod sandbox;
 pub mod session_protocol;
 pub mod scripts;
 pub mod slash_commands;
@@ -49,6 +56,9 @@ pub mod tool_sets;
 pub mod trust;
 pub mod worktree;
 pub mod worktree_from;
+
+/// VS Code's `chat.permissions.assisted.instructions` (src/vs/workbench/contrib/chat/common/constants.ts).
+pub const ASSISTED_INSTRUCTIONS: &str = "chat.permissions.assisted.instructions";
 
 use std::sync::Arc;
 
@@ -221,7 +231,8 @@ pub async fn agent_start(
   }
   let transcript = match chat_id.as_deref() {
     // Arkai's tool inputs are kept whole: they are the model's own history on the next run.
-    Some(id) => Some(chats::Transcript::new(&open_root, id)?.full_inputs(runtime == arkai::RUNTIME)),
+    // Its streamed reply is checkpointed, so a crash mid-reply loses none of it (Kingu-only).
+    Some(id) => Some(chats::Transcript::new(&open_root, id)?.full_inputs(runtime == arkai::RUNTIME).checkpointing()),
     None => None,
   };
   let owner = chat_id.as_deref().map(|id| chat_owner(&open_root, id));
@@ -261,6 +272,47 @@ pub async fn agent_start(
       }
     }
   }
+  // `chat.mcp.access` / `chat.mcp.allowedServers` / `chat.mcp.deniedServers` and the managed
+  // allowlist (mcp_policy.rs): a server they block does not start, from any source.
+  let mcp_policy = {
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || mcp_policy::Policy::from_settings(&config)).await.map_err(|e| e.to_string())?
+  };
+  if let Some(servers) = mcp_servers.as_mut() {
+    servers.retain(|name, server| match mcp_policy.check_server(name, server) {
+      Ok(()) => true,
+      Err(why) => {
+        log::warn!("mcp server {name} not started: {why}");
+        false
+      }
+    });
+  }
+  if let Some(project) = mcp_plan.project.as_mut()
+    && !project.enabled.is_empty()
+  {
+    // Claude Code starts these itself: a blocked one moves to its `disabledMcpjsonServers`.
+    let (root, dir, enabled) = (open_root.clone(), dir.clone(), project.enabled.clone());
+    let found = tauri::async_runtime::spawn_blocking(move || {
+      let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+      let env = |k: &str| std::env::var(k).ok();
+      mcp::project_servers(&root, &dir, &enabled, &mcp::Vars { folder: Some(&root), home: home.as_deref(), env: &env })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let blocked: Vec<String> = project.enabled.iter().filter(|n| found.get(*n).is_none_or(|s| mcp_policy.check_server(n, s).is_err())).cloned().collect();
+    for name in blocked {
+      log::warn!("project mcp server {name} not started: blocked by the MCP server policy or not readable");
+      project.enabled.retain(|n| n != &name);
+      project.disabled.push(name);
+    }
+  }
+  // `chat.permissions.assisted.instructions`: the Assisted reviewer's own guidance (user settings).
+  let assisted_instructions = {
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || crate::settings::user_value(&config, ASSISTED_INSTRUCTIONS).and_then(|v| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.chars().take(16_000).collect::<String>())))
+      .await
+      .map_err(|e| e.to_string())?
+  };
   // The active account of the runtime's provider; an ACP agent signs in on its own.
   let account = {
     use tauri::Manager;
@@ -271,7 +323,8 @@ pub async fn agent_start(
     };
     match provider {
       Some(p) => app.state::<crate::accounts::Accounts>().agent_env(p)?,
-      None => crate::accounts::store::AgentEnv::default(),
+      // What the agent's ACP server needs set or kept out (Orca's launch spec env).
+      None => runtimes::launch_env_for(&runtime, runtime_spec.as_ref()),
     }
   };
   // Writes outside the folder, deletes, MCP tools, protected paths: asked about in every mode.
@@ -279,10 +332,20 @@ pub async fn agent_start(
     let (root, dir, config) = (open_root.clone(), dir.clone(), crate::snap::config_dir(&app)?);
     tauri::async_runtime::spawn_blocking(move || safety_asks::from_settings(&config, &root, &dir)).await.map_err(|e| e.to_string())?
   };
+  // `chat.agent.sandbox.*` (user settings only): off unless turned on; the host checks the values.
+  let sandbox = {
+    let config = crate::snap::config_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || sandbox::from_settings(&config)).await.map_err(|e| e.to_string())??
+  };
   // `chat.mcp.serverSampling`: the servers allowed (or refused) model calls without asking.
   let mcp_sampling = {
     let config = crate::snap::config_dir(&app)?;
     tauri::async_runtime::spawn_blocking(move || mcp_chat::sampling_policy(&config)).await.map_err(|e| e.to_string())?
+  };
+  // `chat.agentHost.mcpSkills.enabled` (VS Code 1.146, default on): Arkai lists and loads MCP servers' skills.
+  let mcp_skills = {
+    let config = crate::snap::config_dir(&app)?;
+    crate::settings::user_value(&config, MCP_SKILLS_SETTING).and_then(|v| v.as_bool())
   };
   let edits = chat_id.as_ref().map(|id| {
     use tauri::Manager;
@@ -316,8 +379,18 @@ pub async fn agent_start(
     system_prompt_append,
     runtime: runtime_spec,
     mcp_sampling: (!mcp_sampling.is_empty()).then_some(mcp_sampling),
+    mcp_skills: mcp_skills.filter(|on| !on),
     effort,
+    sandbox,
+    assisted_instructions,
+    mcp_policy: mcp_policy.for_sdk(),
+    // VS Code's browser tools, off unless kingu.browser.agentTools: a token for this chat's runs.
+    browser: (chat_id.is_some() && crate::floating_browser::agent::enabled(&app))
+      .then(|| crate::floating_browser::agent::register_run(owner.as_deref(), &dir))
+      .flatten()
+      .map(|session| host::BrowserParam { session }),
     owner,
+    agent_id: Some(runtime.clone()),
   };
   let resuming = req.resume.is_some();
   // What the run was given, for the chat's Agent Debug Log (chat_debug.rs); never sent to the webview.
@@ -433,7 +506,7 @@ pub async fn agent_list_models(
     let provider = if spec.kind == "codex" { Some(crate::accounts::store::Provider::Codex) } else { None };
     let env = match provider {
       Some(p) => app.state::<crate::accounts::Accounts>().agent_env(p)?,
-      None => crate::accounts::store::AgentEnv::default(),
+      None => runtimes::launch_env_for(&runtime, Some(&spec)),
     };
     let secret = (!env.set.is_empty()).then(|| host::SecretEnv(env.set.clone()));
     let out = agents.list_models(&serde_json::to_value(&spec).map_err(|e| e.to_string())?, &cwd, secret.as_ref(), &env.unset)?;
@@ -527,6 +600,14 @@ pub async fn chat_transcript_load(ws: Workspace, id: String) -> Result<Vec<Agent
   blocking(move || chats::load_transcript(&root, &id)).await
 }
 
+/// What a chat that Kingu's exit cut off mid-turn left (chatResume.ts): whether it crashed (no
+/// `exit` in its transcript) and the streamed reply its checkpoint kept.
+#[tauri::command]
+pub async fn chat_cut_off(ws: Workspace, id: String) -> Result<chats::CutOff, String> {
+  let root = ws.root()?;
+  blocking(move || chats::cut_off(&root, &id)).await
+}
+
 /// The working tree's changes where a chat runs (`cwd`: the open folder or a task worktree), for
 /// the chat's "Source Control" context.
 #[tauri::command]
@@ -565,13 +646,19 @@ pub async fn chat_import(ws: Workspace, path: String, new_id: String) -> Result<
   .await
 }
 
-/// Deletes the chat's transcript (the webview drops it from chats.json). Refused while it runs.
+/// Deletes the chat's transcript (the webview drops it from chats.json). Refused while it runs,
+/// unless `stop`: its run is stopped first (a side chat whose drawer went with a reload).
 #[tauri::command]
-pub async fn chat_transcript_delete(ws: Workspace, agents: State<'_, Arc<AgentHost>>, id: String, session_id: Option<String>) -> Result<(), String> {
-  if session_id.as_deref().is_some_and(|s| agents.session_live(s)) {
+pub async fn chat_transcript_delete(ws: Workspace, agents: State<'_, Arc<AgentHost>>, id: String, session_id: Option<String>, stop: Option<bool>) -> Result<(), String> {
+  let root = ws.root()?;
+  let owner = chat_owner(&root, &id);
+  if stop == Some(true) {
+    let (a, o) = (agents.inner().clone(), owner.clone());
+    blocking(move || a.stop_chat(&o, std::time::Duration::from_secs(5))).await?;
+  }
+  if agents.chat_busy(session_id.as_deref(), &owner) {
     return Err(crate::tr!(crate::i18n::msg::AgentMsg::ChatBusy));
   }
-  let root = ws.root()?;
   blocking(move || {
     chats::delete_transcript(&root, &id)?;
     chat_edits::delete(&root, &id)
@@ -827,6 +914,14 @@ pub async fn agent_interrupt(agents: State<'_, Arc<AgentHost>>, run_id: u32) -> 
   on_host(&agents, move |a| a.interrupt(run_id)).await
 }
 
+/// The chat's Sign in, while its agent waits for one (its `sign_in` event): Kingu's Antigravity
+/// server starts the Google sign-in it runs itself (ACP `authenticate`); an agent signed in from a
+/// terminal is asked again. Kingu never sees the credential.
+#[tauri::command]
+pub async fn agent_sign_in(agents: State<'_, Arc<AgentHost>>, run_id: u32) -> Result<(), String> {
+  on_host(&agents, move |a| a.sign_in(run_id)).await
+}
+
 /// Ends the run; continue it later with `agent_start { resume }`.
 #[tauri::command]
 pub async fn agent_stop(agents: State<'_, Arc<AgentHost>>, run_id: u32) -> Result<(), String> {
@@ -901,6 +996,9 @@ pub async fn worktree_diff_stat(ws: Workspace, slug: String, base: String) -> Re
   let dir = review::task_dir(&ws.root()?, &slug)?;
   blocking(move || review::diff_stat(&dir, &base)).await
 }
+
+/// VS Code's Skills over MCP switch (agentHostStarter.config.contribution.ts); on unless `false`.
+const MCP_SKILLS_SETTING: &str = "chat.agentHost.mcpSkills.enabled";
 
 const DIFF_TEXT_LIMIT: usize = 2 * 1024 * 1024;
 
@@ -1011,9 +1109,16 @@ fn gh() -> Result<std::path::PathBuf, String> {
 
 /// The worktree's pull request, parsed and as gh reports it (`None` when there is none yet); an
 /// empty `slug` is the open folder itself. The one PR read every view of a worktree shares.
+/// `root`: a task of another added project (the board's PR filter over every project).
 #[tauri::command]
-pub async fn worktree_pr(ws: Workspace, slug: String) -> Result<Option<review::WorktreePr>, String> {
-  let dir = pr_dir(&ws, &slug)?;
+pub async fn worktree_pr(ws: Workspace, projects: State<'_, crate::projects::Projects>, slug: String, root: Option<String>) -> Result<Option<review::WorktreePr>, String> {
+  let dir = match root {
+    Some(r) => {
+      let root = crate::projects::root_arg(&ws, &projects, Some(r))?.ok_or("no folder")?;
+      if slug.is_empty() { root } else { review::task_dir(&root, &slug)? }
+    }
+    None => pr_dir(&ws, &slug)?,
+  };
   let slug = (!slug.is_empty()).then_some(slug);
   blocking(move || match mr::forge(&dir) {
     mr::Forge::Gitlab(p) => {
@@ -1087,7 +1192,7 @@ pub async fn worktree_pr_create(
     let url = review::pr_create(&gh, &dir, &slug, &base, &title, &body, draft)?;
     // kingu.pr.openAfterCreate: best effort, the PR exists either way.
     if open.unwrap_or(false) && url.starts_with("https://") {
-      let shown = crate::shell_env::command(&gh).current_dir(&dir).args(["pr", "view", &url, "--web"]).output();
+      let shown = gh_account::command(&gh, &dir, Some("pr")).and_then(|mut c| c.args(["pr", "view", &url, "--web"]).output().map_err(|e| e.to_string()));
       if !shown.as_ref().is_ok_and(|o| o.status.success()) {
         log::warn!("gh pr view --web {url} failed");
       }
@@ -1131,6 +1236,24 @@ pub async fn gh_issue_comment(ws: Workspace, number: u64, body: String) -> Resul
   blocking(move || issues::comment(&gh, &root, number, &body)).await?;
   log::info!("commented on issue #{number}");
   Ok(())
+}
+
+/// Closes or reopens an issue (the Issues page's issue drawer).
+#[tauri::command]
+pub async fn gh_issue_set_state(ws: Workspace, number: u64, open: bool) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
+  blocking(move || issues::set_state(&gh, &root, number, open)).await?;
+  log::info!("issue #{number} {}", if open { "reopened" } else { "closed" });
+  Ok(())
+}
+
+/// Adds or removes labels and assignees (the issue drawer).
+#[tauri::command]
+pub async fn gh_issue_edit(ws: Workspace, number: u64, edit: issues::IssueEdit) -> Result<(), String> {
+  let root = ws.root()?;
+  let gh = review::gh_bin().ok_or_else(issues::gh_missing)?;
+  blocking(move || issues::edit(&gh, &root, number, &edit)).await
 }
 
 /// Opens the issue on GitHub in the default browser.

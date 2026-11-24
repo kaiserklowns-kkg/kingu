@@ -23,6 +23,7 @@ import { terminals } from '#lib/terminal/terminals.svelte.ts';
 import { t } from '#lib/i18n/index.ts';
 import type { SuggestItem } from './SlashSuggest.svelte';
 import { savePastedImage } from './attachInput.ts';
+import { agentBrowser } from '#lib/workbench/agentBrowser.svelte.ts';
 import { pickMcpResource } from './mcpChat.svelte.ts';
 import { chats } from './chats.svelte.ts';
 import { isFileKey, type ContextText } from './chatPrompt.ts';
@@ -42,6 +43,7 @@ export const SOURCE_ICON: Record<ContextSource, IconName> = {
 	scm: 'git',
 	terminal: 'terminal',
 	clipboardImage: 'image',
+	browserScreenshot: 'globe',
 	pastChat: 'agent',
 	instructions: 'listChecks',
 	mcpResources: 'ports'
@@ -175,6 +177,8 @@ export async function resolveSource(source: ContextSource, env: ContextEnv): Pro
 			return terminalContext(lastTerminal() ?? terminalHandle(terminals.key(terminals.active)));
 		case 'clipboardImage':
 			return clipboardImage();
+		case 'browserScreenshot':
+			return browserScreenshot();
 		case 'pastChat':
 			return pickPastChat(env.chatId);
 		case 'instructions':
@@ -232,6 +236,17 @@ async function clipboardImage(): Promise<ContextPick[]> {
 	}
 	status.flash(t('chatContext.none.clipboardImage'), 5000);
 	return [];
+}
+
+/** VS Code 1.147's screenshot attach: a picture of an open browser tab (agentBrowser.svelte.ts). */
+async function browserScreenshot(): Promise<ContextPick[]> {
+	const tabs = Object.entries(agentBrowser.surfaces);
+	if (!tabs.length) return (status.flash(t('chatContext.none.browserScreenshot'), 5000), []);
+	const item = tabs.length === 1 ? { id: tabs[0][0] } : await quick.choose({ placeholder: t('chatContext.pickBrowser'), items: tabs.map(([label, s]) => ({ id: label, label: s.title || s.url || label, description: s.url })) });
+	if (!item) return [];
+	const path = await agentBrowser.capture(item.id);
+	if (!path) return (status.flash(t('agentBrowser.screenshotFailed'), 5000), []);
+	return [{ kind: 'image', path }];
 }
 
 async function pickPastChat(current: string | null): Promise<ContextPick[]> {

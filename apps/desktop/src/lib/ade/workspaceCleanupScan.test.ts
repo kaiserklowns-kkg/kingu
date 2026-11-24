@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { candidateInput, cleanupPreview, cleanupReceipt, evaluateScan, slugsToRemove, type CleanupCandidate, type CleanupScan, type CleanupTaskContext } from './workspaceCleanupScan';
+import { applyRechecked, candidateInput, candidateVerdict, cleanupPreview, cleanupReceipt, cleanupTargets, evaluateScan, type CleanupCandidate, type CleanupScan, type CleanupTaskContext } from './workspaceCleanupScan';
 import type { WorkspaceCleanupKeepCause } from './workspaceCleanupEvaluation';
 import { getDefaultWorkspaceCleanupRules, resolveWorkspaceCleanupPolicy } from './workspaceCleanupPolicy';
 
@@ -41,8 +41,15 @@ describe('workspace cleanup scan → evaluator input', () => {
 	});
 
 	test('what the app knows about the task protects it', () => {
-		const input = candidateInput(cand(), { liveAgent: true, active: true, dirtyEditor: true });
-		expect(input.blockers).toEqual(['active-workspace', 'live-agent', 'dirty-editor-buffer']);
+		const input = candidateInput(cand(), { liveAgent: true, active: true, dirtyEditor: true, pinned: true });
+		expect(input.blockers).toEqual(['active-workspace', 'live-agent', 'dirty-editor-buffer', 'pinned']);
+	});
+
+	test('a task with a terminal open is kept: removing it would kill the live PTY', () => {
+		const c: CleanupTaskContext = { liveAgent: false, active: false, dirtyEditor: false, runningTerminal: true };
+		expect(candidateInput(cand(), c).blockers).toEqual(['running-terminal']);
+		expect(evaluateScan(scan(cand()), merged, () => c).get('a')!.evaluation).toMatchObject({ action: 'keep', cause: 'terminal-running' });
+		expect(candidateInput(cand(), { ...c, runningTerminal: false }).blockers).toEqual([]);
 	});
 
 	test('the main checkout and a worktree Kingu did not create are never offered', () => {
@@ -52,13 +59,13 @@ describe('workspace cleanup scan → evaluator input', () => {
 	});
 
 	test('a clean, pushed, merged task is removed once its rule is on', () => {
-		expect(slugsToRemove(verdicts(scan(cand())))).toEqual(['a']);
+		expect(cleanupTargets(verdicts(scan(cand())))).toEqual([{ slug: 'a', action: 'delete' }]);
 	});
 
 	test('a squash-merged branch (Rust: merged, nothing unpublished) is removed by the merged rule', () => {
 		const c = cand({ merged: true, squashMerged: true, unpushed: false });
 		expect(candidateInput(c, undefined).reasons).toEqual(['merged']);
-		expect(slugsToRemove(verdicts(scan(c)))).toEqual(['a']);
+		expect(cleanupTargets(verdicts(scan(c)))).toEqual([{ slug: 'a', action: 'delete' }]);
 		// The same branch before the squash: not merged, and its commits are unpublished work.
 		expect(verdicts(scan(cand({ merged: false, unpushed: true }))).get('a')!.evaluation).toMatchObject({ action: 'keep' });
 	});
@@ -66,7 +73,7 @@ describe('workspace cleanup scan → evaluator input', () => {
 	test('a PR-merged branch (Rust: merged, nothing unpublished) is removed by the merged rule', () => {
 		const c = cand({ merged: true, prMerged: true, unpushed: false });
 		expect(candidateInput(c, undefined).reasons).toEqual(['merged']);
-		expect(slugsToRemove(verdicts(scan(c)))).toEqual(['a']);
+		expect(cleanupTargets(verdicts(scan(c)))).toEqual([{ slug: 'a', action: 'delete' }]);
 	});
 
 	test('nothing is removed while every rule is off', () => {
@@ -104,11 +111,11 @@ describe('workspace cleanup scan → evaluator input', () => {
 		delete ctx.a;
 	});
 
-	test('archive is never offered: an inactive rule set to archive keeps the task', () => {
+	test('an inactive archive rule archives the task instead of deleting its worktree', () => {
 		const rules = { ...getDefaultWorkspaceCleanupRules(), inactive: { enabled: true, afterDays: 1, action: 'archive' as const } };
 		const v = verdicts(scan(cand({ merged: false })), resolveWorkspaceCleanupPolicy({ workspaceCleanupPolicy: rules })).get('a')!;
-		expect(v.evaluation).toMatchObject({ action: 'keep', cause: 'archive-unavailable' });
-		expect(slugsToRemove(new Map([['a', v]]))).toEqual([]);
+		expect(v.evaluation).toEqual({ action: 'archive', reason: 'inactive' });
+		expect(cleanupTargets(new Map([['a', v]]))).toEqual([{ slug: 'a', action: 'archive' }]);
 	});
 
 	test('the CLI preview names the rules that are on and each task in plain words', () => {
@@ -125,8 +132,39 @@ describe('workspace cleanup scan → evaluator input', () => {
 		expect(cleanupPreview(off, new Map()).rules).toBe('off (this project)');
 	});
 
-	test('the run receipt lists what was removed, what failed and how many were kept', () => {
-		expect(cleanupReceipt(['a'], [{ slug: 'b', error: 'x' }], 3)).toEqual({ removed: ['a'], failed: [{ slug: 'b', error: 'x' }], kept: 3 });
+	test('the run receipt lists what was removed, archived, failed and how many were kept', () => {
+		expect(cleanupReceipt(['a'], ['b'], [{ slug: 'c', error: 'x' }], 3)).toEqual({ removed: ['a'], archived: ['b'], failed: [{ slug: 'c', error: 'x' }], kept: 3 });
+	});
+
+	describe('the action loop rechecks each target', () => {
+		const targets = [
+			{ slug: 'a', action: 'delete' as const },
+			{ slug: 'b', action: 'archive' as const },
+			{ slug: 'c', action: 'delete' as const }
+		];
+
+		test('acts only on targets whose verdict still matches, and keeps one that changed since the scan', async () => {
+			const calls: string[] = [];
+			const out = await applyRechecked(targets, async (t) => t.slug !== 'b', async (t) => (calls.push(t.slug), t.slug !== 'c'));
+			expect(calls).toEqual(['a', 'c']);
+			expect(out).toEqual({ removed: ['a'], archived: [], failed: [{ slug: 'c', error: 'not removed (see Kingu)' }], skipped: 1 });
+		});
+
+		test('archives an archive target instead of removing it', async () => {
+			const out = await applyRechecked(targets.slice(1, 2), async () => true, async () => true);
+			expect(out).toEqual({ removed: [], archived: ['b'], failed: [], skipped: 0 });
+		});
+
+		test('a failed rescan stops the loop and keeps the receipts so far', async () => {
+			const calls: string[] = [];
+			const recheck = async (t: (typeof targets)[number]) => {
+				if (t.slug === 'b') throw new Error('git broke');
+				return true;
+			};
+			const out = await applyRechecked(targets, recheck, async (t) => (calls.push(t.slug), true));
+			expect(calls).toEqual(['a']);
+			expect(out).toEqual({ removed: ['a'], archived: [], failed: [{ slug: 'b', error: 'recheck failed: git broke' }], skipped: 1 });
+		});
 	});
 
 	describe('automation runs and orchestration workers', () => {
@@ -138,8 +176,14 @@ describe('workspace cleanup scan → evaluator input', () => {
 			expect(decide(cand({ merged: false }), fin({ origin: 'automation' }), 'automationRuns')).toEqual({ action: 'delete', reason: 'automation-run' });
 		});
 
-		test('a finished released worker is removed by the worker rule', () => {
-			expect(decide(cand({ merged: false }), fin({ dispatchedBy: 'coordinator' }), 'orchestrationWorkers')).toEqual({ action: 'delete', reason: 'orchestration-worker' });
+		test('a finished released worker whose work landed (merged or unchanged) is removed by the worker rule', () => {
+			expect(decide(cand({ merged: true }), fin({ dispatchedBy: 'coordinator' }), 'orchestrationWorkers')).toEqual({ action: 'delete', reason: 'orchestration-worker' });
+			expect(decide(cand({ merged: false, unchanged: true }), fin({ dispatchedBy: 'coordinator' }), 'orchestrationWorkers')).toEqual({ action: 'delete', reason: 'orchestration-worker' });
+		});
+
+		test('an unmerged released worker is kept: its work has not landed', () => {
+			expect(candidateInput(cand({ merged: false }), fin({ dispatchedBy: 'coordinator' })).reasons).toEqual([]);
+			expect(decide(cand({ merged: false }), fin({ dispatchedBy: 'coordinator' }), 'orchestrationWorkers')).toMatchObject({ action: 'keep', cause: 'no-rule-matched' });
 		});
 
 		test('a run or worker still going, or one you started yourself, is not a reason', () => {
@@ -159,5 +203,22 @@ describe('workspace cleanup scan → evaluator input', () => {
 				expect([over, e.action]).toEqual([over, 'keep']);
 			}
 		});
+	});
+});
+
+describe('candidateVerdict (the per-worktree recheck)', () => {
+	test('matches evaluateScan for one candidate', () => {
+		const c = cand();
+		expect(candidateVerdict(c, merged, ctx[c.slug!], NOW)).toEqual(verdicts(scan(c)).get('a')!);
+	});
+
+	test('the main checkout and a worktree without a slug get no verdict', () => {
+		expect(candidateVerdict(cand({ isMain: true }), merged, undefined, NOW)).toBeNull();
+		expect(candidateVerdict(cand({ slug: null }), merged, undefined, NOW)).toBeNull();
+	});
+
+	test('a fact that changed since the scan changes the verdict', () => {
+		expect(candidateVerdict(cand(), merged, undefined, NOW)?.evaluation.action).toBe('delete');
+		expect(candidateVerdict(cand({ merged: false }), merged, undefined, NOW)?.evaluation.action).not.toBe('delete');
 	});
 });

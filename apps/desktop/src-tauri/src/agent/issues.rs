@@ -184,9 +184,9 @@ fn reader(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<S
 
 /// Runs `gh args…` in `dir` without prompts; stdout on success, else a user-facing error.
 pub(crate) fn run_gh(gh: &Path, dir: &Path, op: &str, args: &[String]) -> Result<String, String> {
-  let mut cmd = crate::shell_env::command(gh);
+  // The project's GitHub account, when it has one (gh_account.rs).
+  let mut cmd = super::gh_account::command(gh, dir, args.first().map(String::as_str))?;
   cmd
-    .current_dir(dir)
     .args(args)
     .env("GH_PROMPT_DISABLED", "1")
     .env("GH_NO_UPDATE_NOTIFIER", "1")
@@ -265,6 +265,77 @@ pub fn comment(gh: &Path, dir: &Path, number: u64, body: &str) -> Result<(), Str
   run_gh(gh, dir, "gh issue comment", &["issue".into(), "comment".into(), number.to_string(), format!("--body={body}")]).map(|_| ())
 }
 
+/// `gh issue close` / `gh issue reopen` arguments (Orca's issue state control).
+pub fn state_args(number: u64, open: bool) -> Vec<String> {
+  vec!["issue".into(), if open { "reopen" } else { "close" }.into(), number.to_string()]
+}
+
+pub fn set_state(gh: &Path, dir: &Path, number: u64, open: bool) -> Result<(), String> {
+  run_gh(gh, dir, "gh issue close/reopen", &state_args(number, open)).map(|_| ())
+}
+
+/// Labels and assignees to add or remove (Orca's issue edit chips).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct IssueEdit {
+  pub add_labels: Vec<String>,
+  pub remove_labels: Vec<String>,
+  pub add_assignees: Vec<String>,
+  pub remove_assignees: Vec<String>,
+  /// A new title (1-256 bytes) or body (up to 65536 bytes).
+  pub title: Option<String>,
+  pub body: Option<String>,
+}
+
+const MAX_TITLE: usize = 256;
+const MAX_ISSUE_BODY: usize = 65_536;
+
+const MAX_LABEL: usize = 100;
+
+/// `gh issue edit` arguments (values as `--flag=value`, so none can pass for an option); None
+/// when there is nothing to change.
+pub fn edit_args(number: u64, e: &IssueEdit) -> Result<Option<Vec<String>>, String> {
+  let mut args = vec!["issue".into(), "edit".into(), number.to_string()];
+  for (flag, labels) in [("--add-label", &e.add_labels), ("--remove-label", &e.remove_labels)] {
+    for l in labels {
+      let l = l.trim();
+      if l.is_empty() || l.len() > MAX_LABEL || l.contains(['\n', '\r', ',']) {
+        return Err(tr!(AgentMsg::BadLabel, name = l));
+      }
+      args.push(format!("{flag}={l}"));
+    }
+  }
+  for (flag, logins) in [("--add-assignee", &e.add_assignees), ("--remove-assignee", &e.remove_assignees)] {
+    for a in logins {
+      if !valid_login(a) {
+        return Err(tr!(AgentMsg::BadAssignee, name = a));
+      }
+      args.push(format!("{flag}={a}"));
+    }
+  }
+  if let Some(title) = &e.title {
+    let title = title.trim();
+    if title.is_empty() || title.len() > MAX_TITLE || title.contains(['\n', '\r']) {
+      return Err(tr!(AgentMsg::BadIssueTitle, max = MAX_TITLE));
+    }
+    args.push(format!("--title={title}"));
+  }
+  if let Some(body) = &e.body {
+    if body.len() > MAX_ISSUE_BODY {
+      return Err(tr!(AgentMsg::IssueBodyLength, max = MAX_ISSUE_BODY));
+    }
+    args.push(format!("--body={body}"));
+  }
+  Ok((args.len() > 3).then_some(args))
+}
+
+pub fn edit(gh: &Path, dir: &Path, number: u64, e: &IssueEdit) -> Result<(), String> {
+  match edit_args(number, e)? {
+    Some(args) => run_gh(gh, dir, "gh issue edit", &args).map(|_| ()),
+    None => Ok(()),
+  }
+}
+
 /// Opens the issue in the browser (`gh issue view --web`), whatever host the repository is on.
 pub fn open_web(gh: &Path, dir: &Path, number: u64) -> Result<(), String> {
   run_gh(gh, dir, "gh issue view --web", &["issue".into(), "view".into(), number.to_string(), "--web".into()]).map(|_| ())
@@ -284,6 +355,29 @@ mod tests {
     {"assignees":[],"author":{"login":"app/dependabot","is_bot":true},"body":null,"labels":[],
      "number":7,"state":"OPEN","title":"Bump x","updatedAt":"2026-09-01T00:00:00Z","url":"https://github.com/acme/app/issues/7"}
   ]"#;
+
+  #[test]
+  fn state_and_edit_arguments() {
+    assert_eq!(state_args(7, false), ["issue", "close", "7"]);
+    assert_eq!(state_args(7, true), ["issue", "reopen", "7"]);
+    let e = IssueEdit { add_labels: vec!["bug".into(), "good first issue".into()], remove_labels: vec!["wontfix".into()], add_assignees: vec!["@me".into()], remove_assignees: vec!["octocat".into()], ..Default::default() };
+    assert_eq!(
+      edit_args(7, &e).unwrap().unwrap(),
+      ["issue", "edit", "7", "--add-label=bug", "--add-label=good first issue", "--remove-label=wontfix", "--add-assignee=@me", "--remove-assignee=octocat"]
+    );
+    assert_eq!(edit_args(7, &IssueEdit::default()).unwrap(), None);
+    assert!(edit_args(7, &IssueEdit { add_assignees: vec!["--repo=x".into()], ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { add_labels: vec!["a,b".into()], ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { add_labels: vec![" ".into()], ..Default::default() }).is_err());
+    // Title and body: `--flag=value`, so a title starting with `--` stays a value.
+    let e = IssueEdit { title: Some(" --repo=x fix ".into()), body: Some("line 1\n\nline 2".into()), ..Default::default() };
+    assert_eq!(edit_args(7, &e).unwrap().unwrap(), ["issue", "edit", "7", "--title=--repo=x fix", "--body=line 1\n\nline 2"]);
+    assert!(edit_args(7, &IssueEdit { title: Some("  ".into()), ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { title: Some("a\nb".into()), ..Default::default() }).is_err());
+    assert!(edit_args(7, &IssueEdit { body: Some("x".repeat(70_000)), ..Default::default() }).is_err());
+    // An empty body clears it.
+    assert_eq!(edit_args(7, &IssueEdit { body: Some(String::new()), ..Default::default() }).unwrap().unwrap(), ["issue", "edit", "7", "--body="]);
+  }
 
   #[test]
   fn parses_issue_lists_with_labels_assignees_and_null_body() {

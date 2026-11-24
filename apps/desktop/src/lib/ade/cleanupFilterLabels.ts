@@ -23,7 +23,11 @@ export const cleanupFilterLabels: WorkspaceCleanupFilterLabels = {
 		if (kind === 'blocker') return t('workspaceCleanup.chip.blocker', { count });
 		return other(kind, count);
 	},
-	triState: (key, value) => other(`${key}: ${value}`, 1),
+	triState(key, value) {
+		if (key === 'archived') return t(value === 'only' ? 'workspaceCleanup.chip.archivedOnly' : 'workspaceCleanup.chip.archivedExclude');
+		if (key === 'comment') return t(value === 'only' ? 'workspaceCleanup.chip.commentOnly' : 'workspaceCleanup.chip.commentExclude');
+		return other(`${key}: ${value}`, 1);
+	},
 	minAhead: (days) => other('ahead ≥', days),
 	minBehind: (days) => other('behind ≥', days),
 	branchQuery: (query) => t('workspaceCleanup.chip.branch', { query }),

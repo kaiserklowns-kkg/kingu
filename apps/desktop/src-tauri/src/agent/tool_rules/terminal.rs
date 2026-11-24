@@ -53,6 +53,7 @@ pub struct TerminalRules {
 
 /// One sub-command's (or the line's) result.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // `NoMatch` reads better than `None` next to Option
 pub enum Match {
   Approved(String),
   Denied(String),

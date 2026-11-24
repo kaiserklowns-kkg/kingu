@@ -112,6 +112,14 @@ crate::i18n::messages! {
       en: "{id}: unknown mode {mode}",
       th: "{id}: ไม่รู้จักโหมด {mode}",
     },
+    AutomationUnknownTrigger {
+      en: "{id}: unknown trigger {trigger}",
+      th: "{id}: ไม่รู้จักทริกเกอร์ {trigger}",
+    },
+    AutomationBadTimeZone {
+      en: "{id}: invalid time zone",
+      th: "{id}: เขตเวลาไม่ถูกต้อง",
+    },
     AutomationBadLastTask {
       en: "{id}: invalid last task ({detail})",
       th: "{id}: งานล่าสุดไม่ถูกต้อง ({detail})",
@@ -279,6 +287,18 @@ crate::i18n::messages! {
     BadAssignee {
       en: "Invalid assignee name: {name}",
       th: "ชื่อผู้รับผิดชอบไม่ถูกต้อง: {name}",
+    },
+    BadIssueTitle {
+      en: "The issue title must be one line of 1-{max} bytes",
+      th: "ชื่อ issue ต้องเป็นบรรทัดเดียว ยาว 1-{max} bytes",
+    },
+    IssueBodyLength {
+      en: "The issue description must be at most {max} bytes",
+      th: "รายละเอียด issue ยาวได้ไม่เกิน {max} bytes",
+    },
+    BadLabel {
+      en: "Invalid label: {name}",
+      th: "label ไม่ถูกต้อง: {name}",
     },
     CommentLength {
       en: "The comment must be 1-{max} bytes",

@@ -2,7 +2,7 @@ import { redirect } from '@sveltejs/kit';
 import type { Handle } from '@sveltejs/kit/hooks';
 import { getToken } from '#lib/server/api.ts';
 
-const PUBLIC = new Set(['/login']);
+const PUBLIC = new Set(['/login', '/login/sso', '/login/callback']);
 
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.token = getToken(event.cookies);

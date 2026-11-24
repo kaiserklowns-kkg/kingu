@@ -1,0 +1,38 @@
+// UI strings of chat resilience (Orca 1.4.271/1.4.272): resuming chats Kingu's exit cut off
+// (agent/chatResume.ts), continuing after a usage limit (agent/chatLimits.ts) and deleting chats.
+// Keys: 'chatResume.<what>', 'chatLimits.<what>', 'chatDelete.<what>'. Thai in ../th/chatResilience.ts.
+export const chatResilience = {
+	'chatResume.offerOne': '"{title}" was working when Kingu quit.',
+	'chatResume.offerOneCrash': '"{title}" was working when Kingu closed unexpectedly.',
+	'chatResume.offer': '{count|# chat was|# chats were} working when Kingu quit.',
+	'chatResume.offerCrash': '{count|# chat was|# chats were} working when Kingu closed unexpectedly.',
+	'chatResume.resume': 'Resume',
+	'chatResume.always': 'Always Resume',
+	'chatResume.quitTitle': 'Kingu quit while this agent was working',
+	'chatResume.crashTitle': 'Kingu closed unexpectedly while this agent was working',
+	'chatResume.hint': 'Continue asks the agent to check what it already finished, then carry on.',
+	'chatResume.partialKept': 'The reply it was writing was saved up to where it stopped.',
+	'chatResume.continue': 'Continue',
+	'chatResume.dismiss': 'Dismiss',
+	'chatResume.workers': '{count|# task agent was|# task agents were} closed with Kingu.',
+	'chatResume.reopen': 'Reopen',
+	'chatResume.reopened': 'Reopened {count|# task agent|# task agents}',
+	'chatLimits.flash': '"{title}" stopped on its usage limit',
+	'chatLimits.flashAt': '"{title}" stopped on its usage limit; it resets at {time}',
+	'chatLimits.continued': 'Usage limit reset: continued "{title}"',
+	'chatLimits.titleUsage': '{agent} usage limit reached',
+	'chatLimits.titleWeekly': '{agent} weekly limit reached',
+	'chatLimits.titleCredits': '{agent} extra usage limit reached',
+	'chatLimits.resetUnknown': 'Reset time unknown.',
+	'chatLimits.canContinueAt': 'You can continue at {time}.',
+	'chatLimits.canContinueNow': '{agent} can continue now.',
+	'chatLimits.autoAt': 'Kingu will continue this chat at {time}.',
+	'chatLimits.autoOff': "Kingu won't continue this chat automatically.",
+	'chatLimits.autoCancel': 'Cancel',
+	'chatLimits.autoUndo': 'Continue automatically',
+	'chatLimits.turnOn': 'Continue chats automatically at the reset',
+	'chatLimits.continue': 'Continue',
+	'chatLimits.continueEarly': 'Continue now (the limit may not have reset yet)',
+	'chatLimits.dismiss': 'Dismiss',
+	'chatDelete.dontAsk': "Delete, Don't Ask Again"
+} as const;

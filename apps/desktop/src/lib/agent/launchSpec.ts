@@ -4,8 +4,8 @@
 // AgentPanel's start runtime and runEffort); launchSpec.test.ts holds it to them. The launch
 // paths read it (Phase 4): tasks.svelte.ts, chats.svelte.ts defaults(), AgentPanel. Pure.
 
-import { agentCommand, launchOptions, withLaunchOptions } from '#lib/ade/agentCli.ts';
-import { profileOf } from '#lib/ade/agentProfiles.ts';
+import { agentCommand, cliPermissions, launchOptions, withLaunchOptions, type CliPermissions } from '#lib/ade/agentCli.ts';
+import { profileOf, withoutClaudePromptSeparator } from '#lib/ade/agentProfiles.ts';
 import { PERMISSION_MODES, type PermissionMode } from './chats.ts';
 import { effortDefaults, type Effort } from './effort.ts';
 import { CLAUDE_RUNTIME } from './runtimes.ts';
@@ -26,7 +26,7 @@ export type AdeLaunchSpec = {
 	/** `kingu.agent.claudeAgentTeams` = `in-process` (claude only). */
 	claudeTeams: boolean;
 	/** `kingu.agent.cliPermissions`. */
-	permissionMode: 'manual' | 'yolo';
+	permissionMode: CliPermissions;
 	/** Whether the profile takes Snap MCP servers / skill plugins per run. */
 	mcp: boolean;
 	skills: boolean;
@@ -90,7 +90,7 @@ export function adeLaunchSpec(argv: readonly string[], get: Get): AdeLaunchSpec 
 		...(options.program ? { program: options.program } : {}),
 		env: options.env ?? [],
 		claudeTeams: !!options.claudeTeams,
-		permissionMode: get('kingu.agent.cliPermissions') === 'yolo' ? 'yolo' : 'manual',
+		permissionMode: cliPermissions(get),
 		mcp: profile.mcp,
 		skills: profile.skills
 	};
@@ -111,6 +111,14 @@ function chatSpec(pick: string | undefined, get: Get): ChatLaunchSpec {
 	};
 }
 
-/** A profile's launch argv with the spec's launch options (what tasks.svelte.ts does with launchOptions). */
-export const applyLaunchSpec = (launchArgv: readonly string[], spec: AdeLaunchSpec) =>
-	withLaunchOptions(launchArgv, { program: spec.program, env: spec.env, claudeTeams: spec.claudeTeams });
+/**
+ * A profile's launch argv with the spec's launch options (what tasks.svelte.ts does with
+ * launchOptions). `withPrompt`: the launch carries a prompt (argv or pasted), so the CLI's startup
+ * update prompt is kept away (Orca's suppressStartupUpdatePrompt); never for a resume or a bare start.
+ */
+export const applyLaunchSpec = (launchArgv: readonly string[], spec: AdeLaunchSpec, withPrompt = false) =>
+	withLaunchOptions(wrapperArgv(launchArgv, spec, withPrompt), { program: spec.program, env: spec.env, claudeTeams: spec.claudeTeams, ...(withPrompt ? { noUpdatePrompt: spec.agentId } : {}) });
+
+/** A claude prompt launch whose command override is not claude itself (a wrapper such as Happy) goes without the `--` before the prompt. */
+const wrapperArgv = (argv: readonly string[], spec: AdeLaunchSpec, withPrompt: boolean) =>
+	withPrompt && spec.agentId === 'claude' && spec.program && !/^claude(?:\.exe|\.cmd|\.ps1)?$/i.test(spec.program.split(/[\\/]/).pop() ?? '') ? withoutClaudePromptSeparator(argv) : argv;

@@ -31,13 +31,17 @@ export function recallPrompt(history: readonly string[], cursor: HistoryCursor, 
 /** The chat's modes: 'ask' is shown as Plan (SDK `plan`: reads and proposes a plan, changes nothing), Agent works with tools. */
 export type ChatMode = 'ask' | 'agent';
 /**
- * How Agent mode asks for permission. `bypassPermissions` is VS Code's "Allow all": no prompts,
- * confirmed by the user first and never saved with the chat (chats.svelte.ts `allowAll`).
+ * How Agent mode asks for permission. `bypassPermissions` is VS Code's "Allow all": no prompts.
+ * `assisted` is VS Code's "Assisted permissions": a reviewer lets low-risk calls through and asks
+ * you about the rest (agent-host assisted.ts; the Claude runtime only). Both are elevated levels:
+ * confirmed by the user first and never saved with the chat (chats.svelte.ts `allowAll` / `assisted`).
  */
-export type AgentApproval = Exclude<PermissionMode, 'plan'> | 'bypassPermissions';
-export const AGENT_APPROVALS: readonly AgentApproval[] = ['default', 'acceptEdits', 'bypassPermissions'];
-/** A permission mode a run can take: a saved chat's, or "Allow all". */
-export type RunPermissionMode = PermissionMode | 'bypassPermissions';
+export type AgentApproval = Exclude<PermissionMode, 'plan'> | 'assisted' | 'bypassPermissions';
+export const AGENT_APPROVALS: readonly AgentApproval[] = ['default', 'acceptEdits', 'assisted', 'bypassPermissions'];
+/** A permission mode a run can take: a saved chat's, "Assisted permissions" or "Allow all". */
+export type RunPermissionMode = PermissionMode | 'assisted' | 'bypassPermissions';
+/** VS Code's elevated levels: a warning first, and kept for the app session only. */
+export const isElevated = (a: RunPermissionMode | null | undefined) => a === 'bypassPermissions' || a === 'assisted';
 
 export const modeOf = (permission: RunPermissionMode | null | undefined): ChatMode => (permission === 'plan' ? 'ask' : 'agent');
 

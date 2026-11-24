@@ -1,6 +1,7 @@
 //! Projects on an SSH host (Orca's repos with a `connectionId`): a git repository on a saved SSH
 //! host (ssh_hosts.rs) joins the side bar, its task worktrees are made there with
-//! `git worktree add`, and its terminals and agent CLIs run there over `ssh -t`. Kingu keeps no
+//! `git worktree add`, and its terminals and agent CLIs run there over `ssh -t` (held on the host
+//! by Kingu's terminal daemon where it could be installed, ssh_holder.rs). Kingu keeps no
 //! copy of the files: every read is one `ssh -o BatchMode=yes … sh -c '<script>'` (never a
 //! password prompt; the user's keys and agent apply), and the project record is projects.rs's,
 //! with its `host` field set.
@@ -24,6 +25,7 @@ use tauri::State;
 use crate::agent::worktree::{self, WorktreeInfo};
 use crate::i18n::msg::{AgentMsg, ProjectsMsg, TasksMsg};
 use crate::projects::{Added, Project, Projects};
+use crate::ssh_holder::{self, LoopText};
 use crate::ssh_hosts::{self, Target, Targets, posix_dir, sh_quote};
 use crate::tr;
 
@@ -230,6 +232,16 @@ pub fn terminal_script(path: &str, agent: Option<&[String]>) -> String {
   }
 }
 
+/// [`terminal_script`] for an agent whose session gets `KINGU_AGENT_HOOK_FILE` (the hook file of
+/// `token` on the host), as a session the holder starts does (ssh_holder.rs `start_script`).
+pub fn agent_script(path: &str, agent: &[String], token: Option<&str>) -> String {
+  let script = terminal_script(path, Some(agent));
+  match token {
+    Some(t) => format!("mkdir -p \"$HOME/{dir}\"; export KINGU_AGENT_HOOK_FILE=\"$HOME/{dir}/{t}.jsonl\"; {script}", dir = crate::ssh_holder::HOOKS_DIR),
+    None => script,
+  }
+}
+
 /// `path` is the project's root or one of its task worktrees.
 pub fn inside_project(root: &str, path: &str) -> bool {
   let root = root.trim_end_matches('/');
@@ -309,11 +321,17 @@ pub async fn ssh_project_worktree_remove(targets: State<'_, Targets>, projects: 
 }
 
 /// The terminal argv for the project root or a task worktree of it, optionally starting `agent`.
-/// A terminal's command, and the hook token of a claude session started in it.
+/// A terminal's command, the hook token of an agent session started in it, and what happens to
+/// it when the connection drops.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TerminalRun {
   pub run: Vec<String>,
   pub hook: Option<String>,
+  /// The session's key in the host's terminal daemon, when it is held there.
+  pub key: Option<String>,
+  /// `held`: the terminal keeps running on the host and is reattached; `restart`: the agent ends
+  /// with the connection and is started again with its resume command; `plain`: it just ends.
+  pub mode: &'static str,
 }
 
 /// Orca relays an SSH agent's hooks to the client (`src/main/agent-hooks/server/server-ingest-remote.ts`);
@@ -321,8 +339,11 @@ pub struct TerminalRun {
 /// (agent/hooks.rs `settings_json`, through `--settings`, so nothing in the host's own claude
 /// settings changes), appending to `$HOME/.kingu/agent-hooks/<token>.jsonl` there, which
 /// `ssh_remote_hook_read` reads over ssh. Only the events every claude knows (Orca's floor: the
-/// host's claude version isn't probed). Other CLIs: none (their title is the status).
-pub fn with_hooks(agent: &[String], token: &str) -> Option<Vec<String>> {
+/// host's claude version isn't probed). With `hold`, PermissionRequest runs the hold script on the
+/// host instead (ssh_holder.rs `hold_command`) and waits for the card's answer, as a local claude's
+/// does. Other CLIs take no per-session hooks; theirs report through `KINGU_AGENT_HOOK_FILE` when
+/// the host's own CLI config has Kingu's entries.
+pub fn with_hooks(agent: &[String], token: &str, hold: bool) -> Option<Vec<String>> {
   let program = crate::agent::cli::program_of(agent)?;
   if program.rsplit('/').next() != Some("claude") || agent.iter().any(|w| w == "--settings") {
     return None;
@@ -331,7 +352,8 @@ pub fn with_hooks(agent: &[String], token: &str) -> Option<Vec<String>> {
   let file = format!("\"$HOME/.kingu/agent-hooks/{token}.jsonl\"");
   let command = format!("mkdir -p \"$HOME/.kingu/agent-hooks\" && {{ cat; echo; }} >> {file}");
   let entry = serde_json::json!([{ "hooks": [{ "type": "command", "command": command }] }]);
-  let hooks: serde_json::Map<String, serde_json::Value> = crate::agent::hooks::EVENTS.iter().map(|e| (e.to_string(), entry.clone())).collect();
+  let held = serde_json::json!([{ "hooks": [{ "type": "command", "command": crate::ssh_holder::hold_command(token), "timeout": crate::agent::hooks::PERMISSION_HOLD_TIMEOUT_SECONDS }] }]);
+  let hooks: serde_json::Map<String, serde_json::Value> = crate::agent::hooks::EVENTS.iter().map(|e| (e.to_string(), if hold && *e == "PermissionRequest" { held.clone() } else { entry.clone() })).collect();
   let mut out = agent.to_vec();
   out.splice(at + 1..at + 1, ["--settings".to_string(), serde_json::json!({ "hooks": hooks }).to_string()]);
   Some(out)
@@ -344,17 +366,65 @@ fn random_token() -> Option<String> {
   Some(b.iter().map(|x| format!("{x:02x}")).collect())
 }
 
+/// What a terminal of the project runs, by what the host can do ([`TerminalRun::mode`]).
+///
+/// - `holder` (the id ssh_holder.rs found or installed): the session starts in the host's terminal
+///   daemon and the tab runs the reattach loop.
+/// - else, with `agent` and its `resume` argv: the agent runs under `ssh -t` as before, and after
+///   a lost connection the loop starts `resume` once the host is back.
+/// - else: one `ssh -t`, which ends with its connection.
+///
+/// Every agent's session gets a hook file (`hook`); a claude also gets per-session hooks writing
+/// to it, with the permission hold when `hold` says the host has the hold script.
+#[allow(clippy::too_many_arguments)]
+pub fn terminal_run(t: &Target, path: &str, agent: Option<&[String]>, resume: Option<&[String]>, holder: Option<&str>, hold: bool, token: Option<&str>, key: &str, home: &Path, text: &LoopText) -> Result<TerminalRun, String> {
+  let agent = agent.filter(|a| !a.is_empty());
+  let token = token.filter(|_| agent.is_some());
+  let hooked = |argv: &[String]| token.and_then(|tok| with_hooks(argv, tok, hold)).unwrap_or_else(|| argv.to_vec());
+  let wait = ssh_holder::wait_argv(t, home);
+  let looped = |first: &[String], again: Option<&[String]>, held: bool| vec!["sh".to_string(), "-c".to_string(), ssh_holder::loop_script(first, again, wait.as_deref(), held, text)];
+  if let Some(id) = holder {
+    let first = ssh_holder::terminal_ssh(t, &ssh_holder::start_script(id, key, path, token, agent.map(hooked).as_deref())?);
+    let again = ssh_holder::terminal_ssh(t, &ssh_holder::reattach_script(id, key)?);
+    return Ok(TerminalRun { run: looped(&first, Some(&again), true), hook: token.map(str::to_string), key: Some(key.to_string()), mode: "held" });
+  }
+  let Some(agent) = agent else {
+    return Ok(TerminalRun { run: terminal_argv(t, path, None), hook: None, key: None, mode: "plain" });
+  };
+  let first = ssh_holder::terminal_ssh(t, &agent_script(path, &hooked(agent), token));
+  let again = resume.filter(|r| !r.is_empty()).map(|r| ssh_holder::terminal_ssh(t, &agent_script(path, &hooked(r), token)));
+  let mode = if again.is_some() { "restart" } else { "plain" };
+  Ok(TerminalRun { run: looped(&first, again.as_deref(), false), hook: token.map(str::to_string), key: None, mode })
+}
+
 #[tauri::command]
-pub fn ssh_project_terminal(targets: State<'_, Targets>, projects: State<'_, Projects>, host: String, root: String, path: String, agent: Option<Vec<String>>) -> Result<TerminalRun, String> {
+#[allow(clippy::too_many_arguments)]
+pub fn ssh_project_terminal(
+  app: tauri::AppHandle,
+  targets: State<'_, Targets>,
+  projects: State<'_, Projects>,
+  host: String,
+  root: String,
+  path: String,
+  agent: Option<Vec<String>>,
+  resume: Option<Vec<String>>,
+  holder: Option<String>,
+  hold: Option<bool>,
+  text: Option<LoopText>,
+) -> Result<TerminalRun, String> {
   let t = checked(&targets, &projects, &host, &root)?;
   if !inside_project(&root, &path) {
     return Err(tr!(ProjectsMsg::RemoteBadPath, path));
   }
-  let hooked = agent.as_deref().and_then(|a| random_token().and_then(|tok| with_hooks(a, &tok).map(|argv| (argv, tok))));
-  Ok(match hooked {
-    Some((argv, token)) => TerminalRun { run: terminal_argv(&t, &path, Some(&argv)), hook: Some(token) },
-    None => TerminalRun { run: terminal_argv(&t, &path, agent.as_deref()), hook: None },
-  })
+  let token = random_token();
+  let key = ssh_holder::session_key(&random_token().ok_or("no random source for a session key")?);
+  // A claude held on the host gets the browser tools, relayed to this computer's browser
+  // (ssh_browser_relay.rs; the run is the session's hook token, closing the tab ends it).
+  let agent = match (agent, token.as_deref(), holder.as_deref()) {
+    (Some(a), Some(run), Some(h)) => Some(crate::ssh_browser_relay::offer(&app, &t, h, run, &path, &a).unwrap_or(a)),
+    (a, ..) => a,
+  };
+  terminal_run(&t, &path, agent.as_deref(), resume.as_deref(), holder.as_deref(), hold.unwrap_or(false), token.as_deref(), &key, &ssh_hosts::dirs_home(), &text.unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -503,14 +573,20 @@ mod tests {
 
   #[test]
   fn a_claude_on_the_host_gets_hooks_that_append_to_its_own_file() {
-    let argv = with_hooks(&["env".into(), "A=1".into(), "/usr/bin/claude".into(), "fix it".into()], "abcdef12").unwrap();
+    let argv = with_hooks(&["env".into(), "A=1".into(), "/usr/bin/claude".into(), "fix it".into()], "abcdef12", false).unwrap();
     assert_eq!(argv[..3], ["env", "A=1", "/usr/bin/claude"]);
     assert_eq!(argv[3], "--settings");
     assert_eq!(argv[5], "fix it");
     let v: serde_json::Value = serde_json::from_str(&argv[4]).unwrap();
     let cmd = v["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap().to_string();
-    assert!(with_hooks(&["codex".into()], "abcdef12").is_none());
-    assert!(with_hooks(&["claude".into(), "--settings".into(), "x".into()], "abcdef12").is_none());
+    assert!(with_hooks(&["codex".into()], "abcdef12", false).is_none());
+    assert!(with_hooks(&["claude".into(), "--settings".into(), "x".into()], "abcdef12", false).is_none());
+    // With the hold script on the host, only PermissionRequest waits for the card's answer.
+    let held = with_hooks(&["claude".into()], "abcdef12", true).unwrap();
+    let hv: serde_json::Value = serde_json::from_str(&held[2]).unwrap();
+    assert_eq!(hv["hooks"]["PermissionRequest"][0]["hooks"][0]["command"], crate::ssh_holder::hold_command("abcdef12"));
+    assert_eq!(hv["hooks"]["PermissionRequest"][0]["hooks"][0]["timeout"], 130);
+    assert_eq!(hv["hooks"]["Stop"], v["hooks"]["Stop"]);
     // The hook command, run by a shell on the "host", appends the payload as one line.
     let tmp = tempfile::tempdir().unwrap();
     let mut c = Command::new("sh").arg("-c").arg(&cmd).env("HOME", tmp.path()).stdin(std::process::Stdio::piped()).spawn().unwrap();
@@ -524,6 +600,71 @@ mod tests {
     let (ok, out, err) = sh(&script, Path::new("/"));
     assert!(ok, "{err}");
     assert!(out.starts_with(&format!("[{}]", argv[4])), "{out}");
+  }
+
+  fn box_target() -> Target {
+    Target { id: "h".into(), label: "h".into(), config_host: Some("box".into()), host: "box".into(), port: 22, username: String::new(), identity_file: None, jump_host: None, proxy_command: None }
+  }
+
+  #[test]
+  fn a_terminal_is_held_restarted_or_plain_by_what_the_host_can_do() {
+    let t = box_target();
+    let home = tempfile::tempdir().unwrap();
+    let text = LoopText::default();
+    let id = "kingu-ptyd-0.1.0-aaaaaaaaaaaaaaaa";
+    let claude = ["claude".to_string(), "fix it".to_string()];
+    let resume = ["claude".to_string(), "--continue".to_string()];
+    let run = |agent: Option<&[String]>, resume: Option<&[String]>, holder: Option<&str>| terminal_run(&t, "/srv/app", agent, resume, holder, true, Some("abcdef123456"), "ssh:k1", home.path(), &text).unwrap();
+
+    // Held: the daemon starts the session, the loop reattaches to the same key, never the agent again.
+    let held = run(Some(&claude), Some(&resume), Some(id));
+    assert_eq!((held.mode, held.key.as_deref(), held.hook.as_deref()), ("held", Some("ssh:k1"), Some("abcdef123456")));
+    assert_eq!(held.run[..2], ["sh", "-c"]);
+    let script = &held.run[2];
+    assert!(script.contains("attach --dir") && script.contains("--key ssh:k1 --cwd"), "{script}");
+    assert_eq!(script.matches("fix it").count(), 1, "the prompt is in the start command only");
+    assert!(!script.contains("--continue"), "a held session is reattached, not resumed");
+    assert!(script.contains(&text.lost_held) && script.contains(&text.reattaching));
+    assert!(script.contains("KINGU_AGENT_HOOK_FILE=$HOME/.kingu/agent-hooks/abcdef123456.jsonl"));
+    assert!(script.contains("permission-hold.sh"), "the claude waits for the card's answer");
+    // A plain shell is held too, without a hook file.
+    let shell = run(None, None, Some(id));
+    assert_eq!((shell.mode, shell.hook), ("held", None));
+    assert!(!shell.run[2].contains("KINGU_AGENT_HOOK_FILE"));
+
+    // No holder: the agent is started again with its resume command, and that is what is said.
+    let restart = run(Some(&claude), Some(&resume), None);
+    assert_eq!((restart.mode, restart.key.as_deref(), restart.hook.as_deref()), ("restart", None, Some("abcdef123456")));
+    let script = &restart.run[2];
+    assert!(script.contains("--continue") && script.contains(&text.restarting) && script.contains(&text.lost_restart));
+    assert!(!script.contains(&text.reattaching) && !script.contains("attach --dir"));
+    assert!(script.contains("export KINGU_AGENT_HOOK_FILE="));
+    // A CLI that can't resume: the loss is only said.
+    let gone = run(Some(&["aider".to_string()]), None, None);
+    assert_eq!(gone.mode, "plain");
+    assert!(gone.run[2].contains(&text.lost_gone) && !gone.run[2].contains("while"));
+    // A plain shell without a holder is the one ssh it always was.
+    let plain = run(None, None, None);
+    assert_eq!((plain.mode, &plain.run), ("plain", &terminal_argv(&t, "/srv/app", None)));
+
+    // The agent's loop is a multi-line script: pty_spawn types a short line instead of echoing
+    // every line of it as a continuation prompt (pty.rs `run_through_env`).
+    for r in [&held, &restart, &gone] {
+      let (typed, script) = crate::pty::run_through_env(&r.run).expect("the loop goes through the environment");
+      assert_eq!(script, r.run[2]);
+      let line = kingu_ptyd::command_line(&typed).unwrap();
+      assert!(!line.contains('\n') && line.len() < 40, "{line}");
+    }
+  }
+
+  #[test]
+  fn an_agent_without_a_holder_still_gets_its_hook_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let script = agent_script("/", &["sh".into(), "-c".into(), "printf '[%s]' \"$KINGU_AGENT_HOOK_FILE\"".into()], Some("abcdef123456"));
+    let (ok, out, err) = sh(&script, tmp.path());
+    assert!(ok, "{err}");
+    assert!(out.starts_with(&format!("[{}/.kingu/agent-hooks/abcdef123456.jsonl]", tmp.path().display())), "{out}");
+    assert!(tmp.path().join(".kingu/agent-hooks").is_dir());
   }
 
   #[test]

@@ -68,5 +68,13 @@ export const chatMcp: Record<keyof typeof en, string> = {
 	'chatMcp.status.needsAuthHint': 'ลงชื่อเข้าใช้ด้วยเครื่องมือของ server เอง หรือใส่ token เป็น header ใน mcp.json',
 	'chatMcp.status.starting': 'กำลังเริ่ม MCP server: {names}',
 	'chatMcp.status.failed': 'MCP server {name} ล้มเหลว: {error}',
-	'chatMcp.status.open': 'MCP Servers'
+	'chatMcp.status.open': 'MCP Servers',
+	'chatMcp.status.summary': 'MCP server {count} ตัวต้องลงชื่อเข้าใช้หรือเริ่มไม่สำเร็จ',
+	'chatMcp.status.show': 'แสดง',
+	'chatMcp.status.hide': 'ซ่อน',
+	'chatMcp.app.title': 'MCP App: {server}',
+	'chatMcp.app.loading': 'กำลังโหลด MCP App...',
+	'chatMcp.app.failed': 'โหลด MCP App ไม่ได้: {error}',
+	'chatMcp.app.retry': 'ลองอีกครั้ง',
+	'chatMcp.app.unavailable': 'MCP server {server} ไม่ได้ทำงานอยู่ในแชตนี้ ส่งข้อความเพื่อเริ่มก่อน แล้วลองอีกครั้ง'
 };

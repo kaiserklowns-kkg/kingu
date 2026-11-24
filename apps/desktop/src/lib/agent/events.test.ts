@@ -46,6 +46,21 @@ describe('applyEvent', () => {
 		expect(s.items).toEqual([]);
 	});
 
+	test('an ask between turns (an MCP App calling a tool) leaves the run idle once answered', () => {
+		const s = fold([{ kind: 'message', role: 'user', text: 'show a chart' }, result(0)]);
+		expect(s.status).toBe('idle');
+		applyEvent(s, perm('app-1', 'mcp__demo__refresh'));
+		expect(s.status).toBe('waiting');
+		applyEvent(s, { kind: 'permission_resolved', request_id: 'app-1', decision: 'allow' });
+		expect(s.status).toBe('idle');
+		// The next turn generates again.
+		applyEvent(s, { kind: 'message', role: 'user', text: 'again' });
+		expect(s.status).toBe('running');
+		applyEvent(s, perm('r2'));
+		applyEvent(s, { kind: 'permission_resolved', request_id: 'r2', decision: 'allow' });
+		expect(s.status).toBe('running');
+	});
+
 	test('a turn with a permission prompt: running → waiting → running → idle', () => {
 		const s = initialRun();
 		expect(s.status).toBe('starting');

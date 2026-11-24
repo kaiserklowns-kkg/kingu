@@ -50,11 +50,11 @@ export function cycleMode(order: readonly ModePick[], current: ModePick, dir: 1 
 
 /** How each of Kingu's Agent approvals is named in the composer, Cursor's run modes where they match. */
 export function runModeLabel(a: AgentApproval): string {
-	return a === 'default' ? t('composer.run.ask') : a === 'acceptEdits' ? t('composer.run.edits') : t('composer.run.all');
+	return a === 'default' ? t('composer.run.ask') : a === 'acceptEdits' ? t('composer.run.edits') : a === 'assisted' ? t('composer.run.assisted') : t('composer.run.all');
 }
 
 export function runModeHint(a: AgentApproval): string {
-	return a === 'default' ? t('composer.run.askHint') : a === 'acceptEdits' ? t('composer.run.editsHint') : t('composer.run.allHint');
+	return a === 'default' ? t('composer.run.askHint') : a === 'acceptEdits' ? t('composer.run.editsHint') : a === 'assisted' ? t('composer.run.assistedHint') : t('composer.run.allHint');
 }
 
 // ---- placeholder -----------------------------------------------------------------------------

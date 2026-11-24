@@ -19,6 +19,7 @@
 	import { bashDescription, editOf, editSnippet, isSubagentTool, planOf, splitVerb, subagentStats, toolLabel, type ToolPart } from './chatParts';
 	import { settings } from '#lib/settings/settings.svelte.ts';
 	import { approvedByText } from './toolRules.ts';
+	import { assistedApprovedText } from './guardText';
 
 	let {
 		part,
@@ -45,7 +46,7 @@
 	let toggled = $state<boolean | null>(null);
 	const open = $derived(toggled ?? (settings.get<boolean>('chat.tools.autoExpandFailures') !== false && !!part.result?.isError));
 	const toggle = () => (toggled = !open);
-	const approvedBy = $derived(approvedByText(part.autoApproved));
+	const approvedBy = $derived(approvedByText(part.autoApproved) || assistedApprovedText(part.assistedApproved));
 	let openThoughts = $state<Record<number, boolean>>({});
 	const done = $derived(!!part.result || turnDone);
 	const edit = $derived(editOf(part.name, part.input));

@@ -54,9 +54,11 @@ describe('agentCatalog', () => {
 
 	test("Rust's known chat runtimes join their CLI profile by id (drift guard for agent/runtimes.rs KNOWN)", () => {
 		const rs = readFileSync(join(import.meta.dir, '../../../src-tauri/src/agent/runtimes.rs'), 'utf8');
-		const known = [...rs.matchAll(/Known \{ id: "([^"]+)", name: "([^"]+)",[^}]*protocol: Protocol::(\w+)/g)];
-		expect(known.map((m) => m[1])).toEqual(['codex', 'gemini', 'qwen', 'opencode', 'goose', 'grok', 'omp']);
-		const runtimes: RuntimeInfo[] = known.map(([, id, name, p]) => ({ id, name, protocol: p.toLowerCase() as RuntimeInfo['protocol'], features: { rewind: false, models: true }, custom: false }));
+		// `known("id", "Name", "program", …)` rows; Codex's is the one with its own protocol.
+		const known = [...rs.matchAll(/(protocol: Protocol::Codex, \.\.)?known\("([^"]+)", "([^"]+)", "[^"]+"/g)];
+		// Orca's chat agents (main/acp/launch/acp-launch-registry.ts), under the ids of their CLI profiles.
+		expect(known.map((m) => m[2])).toEqual(['codex', 'gemini', 'qwen', 'opencode', 'opencode2', 'goose', 'grok', 'omp', 'copilot', 'kimi', 'cursor', 'hermes', 'kiro', 'aug', 'kilo', 'mimo-code', 'droid', 'antigravity']);
+		const runtimes: RuntimeInfo[] = known.map(([, codex, id, name]) => ({ id, name, protocol: codex ? 'codex' : 'acp', features: { rewind: false, models: true }, custom: false }));
 		const cat = agentCatalog(runtimes);
 		for (const r of runtimes) {
 			const e = catalogEntry(cat, r.id)!;

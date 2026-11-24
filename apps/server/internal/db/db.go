@@ -107,3 +107,44 @@ func PruneEvents(ctx context.Context, pool *pgxpool.Pool) (int64, error) {
 	})
 	return n, err
 }
+
+// GrantApp gives the serving role exactly what the API needs on the schema
+// that migrations (run by a separate, owning role) created: read/write on
+// tables, sequences for identity columns and the RLS helper functions. The
+// serving role then cannot ALTER, DROP or TRUNCATE anything, nor rewrite the
+// migration history. Run it after every migration over the owner's pool.
+func GrantApp(ctx context.Context, owner *pgxpool.Pool, appRole string) error {
+	if appRole == "" {
+		return errors.New("app role is required")
+	}
+	var me string
+	if err := owner.QueryRow(ctx, `SELECT current_user`).Scan(&me); err != nil {
+		return err
+	}
+	if me == appRole {
+		return nil // one role does both; it already owns everything
+	}
+	r := pgx.Identifier{appRole}.Sanitize()
+	return pgx.BeginTxFunc(ctx, owner, pgx.TxOptions{}, func(tx pgx.Tx) error {
+		for _, stmt := range []string{
+			`GRANT USAGE ON SCHEMA public TO ` + r,
+			`GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ` + r,
+			`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ` + r,
+			`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO ` + r,
+			`REVOKE ALL ON goose_db_version FROM ` + r,
+			`GRANT SELECT ON goose_db_version TO ` + r,
+		} {
+			if _, err := tx.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("%s: %w", stmt, err)
+			}
+		}
+		return nil
+	})
+}
+
+// CurrentRole returns the role a pool connects as.
+func CurrentRole(ctx context.Context, pool *pgxpool.Pool) (string, error) {
+	var r string
+	err := pool.QueryRow(ctx, `SELECT current_user`).Scan(&r)
+	return r, err
+}
